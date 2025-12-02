@@ -1,0 +1,9 @@
+{
+    "min_spacing_all": 0.006,
+    "min_spacing_same_net": 0.0,
+    "min_spacing_diff_net": 0.006,
+    "per_net_overrides": {
+      "GND": {"min_spacing_with_other": 0.003}
+    }
+}
+  
