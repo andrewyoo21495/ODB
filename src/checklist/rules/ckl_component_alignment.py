@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import math
 
+from src.checklist.component_classifier import ComponentCategory, classify_component
 from src.checklist.engine import register_rule
 from src.checklist.rule_base import ChecklistRule
 from src.models import Component, RuleResult
@@ -21,8 +22,6 @@ class ComponentAlignmentRule(ChecklistRule):
 
     # Configuration
     alignment_tolerance = 0.010  # inches (or mm depending on units)
-    capacitor_prefixes = ("C",)
-    connector_prefixes = ("J", "CN", "CONN")
 
     def evaluate(self, job_data: dict) -> RuleResult:
         components_top = job_data.get("components_top", [])
@@ -30,11 +29,11 @@ class ComponentAlignmentRule(ChecklistRule):
 
         # Find capacitors on top
         top_caps = [c for c in components_top
-                    if any(c.comp_name.startswith(p) for p in self.capacitor_prefixes)]
+                    if classify_component(c) is ComponentCategory.CAPACITOR]
 
         # Find connectors on bottom
         bot_connectors = [c for c in components_bot
-                          if any(c.comp_name.startswith(p) for p in self.connector_prefixes)]
+                          if classify_component(c) is ComponentCategory.CONNECTOR]
 
         if not top_caps or not bot_connectors:
             return RuleResult(

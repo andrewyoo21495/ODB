@@ -143,6 +143,17 @@ Opens the viewer with both **top and bottom component overlays** available as ch
 
 Top-side components are rendered in **sky blue**; bottom-side components are rendered in **light pink** for easy visual distinction.
 
+Component geometries are derived from the EDA package data. For each placed component, the system looks up its package definition via the `pkg_ref` index and renders the actual pad shapes stored in that package:
+
+| Shape type | Description |
+|------------|-------------|
+| `RC` | Rectangular pad (lower-left corner + width/height) |
+| `CR` / `CT` | Circular pad (centre + radius) |
+| `SQ` | Square pad (centre + half-side) |
+| `CONTOUR` | Arbitrary polygon pad from arc/line contour data |
+
+Package-level courtyard and silkscreen outlines are drawn as dashed lines at reduced opacity. When a package has no outline data, a dashed bounding box is used as a fallback.
+
 ```bash
 # Outline only, toggle top/bottom components via checkboxes
 python main.py view-comp data/designodb_rigidflex.tgz
@@ -157,8 +168,9 @@ Once the viewer window opens:
 
 | Control | Action |
 |---------|--------|
-| **Layer checkboxes** (right panel) | Toggle individual layer visibility on/off. The viewer redraws automatically. The panel also includes "Components Top" and "Components Bot" entries for toggling component overlays. |
-| **Zoom** | Use the scroll wheel or the magnifying glass icon in the toolbar to zoom into a region. |
+| **Layer checkboxes** (right panel) | Toggle individual layer visibility on/off. The viewer redraws automatically. The panel also includes "Components Top" and "Components Bot" entries for toggling component overlays. DRILL and DIELECTRIC layers are excluded from this panel (they can still be loaded via `--layers`). |
+| **Scroll wheel on checkbox panel** | When the layer list is longer than the panel height, scroll up/down over the checkbox panel to reveal additional layers. |
+| **Zoom** | Use the scroll wheel over the board area, or use the magnifying glass icon in the toolbar to zoom into a region. |
 | **Pan** | Click the cross-arrow icon in the toolbar, then click and drag to pan. |
 | **Home** | Click the house icon to reset the view to the full board extent. |
 | **Save** | Click the floppy disk icon to export the current view as PNG or SVG. |
@@ -180,7 +192,9 @@ Each layer type is rendered with a distinct default color:
 | COMPONENT | Cyan |
 | DOCUMENT | Dark Gray |
 
-Component overlays are drawn with dashed outlines and reference designator labels. Top-side components are sky blue; bottom-side components are light pink.
+> **Note:** DRILL and DIELECTRIC layers are not shown in the checkbox panel because they contain no renderable features. They can still be loaded directly using `--layers d_1_2 ...` if needed.
+
+Component overlays render actual pad geometries (rectangles, circles, squares, contours) derived from the EDA package definitions, along with reference designator labels. Top-side components are sky blue; bottom-side components are light pink.
 
 ### Performance Note
 
@@ -216,7 +230,7 @@ Default output path: `output/checklist_report.xlsx`
 
 | Rule ID | Category | Description |
 |---------|----------|-------------|
-| CKL-001 | Alignment | Capacitors on the Top layer must be horizontally aligned with connectors on the Bottom layer. Checks Y-coordinate difference against a 0.010" tolerance. |
+| CKL-001 | Alignment | Capacitors on the Top layer must be horizontally aligned with connectors on the Bottom layer. Checks Y-coordinate difference against a 0.010" tolerance. Component categories are determined by the classifier (see below). |
 | CKL-002 | Spacing | Minimum spacing between components must be maintained. Uses KDTree spatial indexing to find component pairs closer than 0.008" (~0.2mm). |
 | CKL-003 | Placement | All components must be placed within the board outline. Uses the board profile polygon and Shapely point-in-polygon tests. |
 
@@ -333,6 +347,31 @@ for tp in comp.toeprints:
     tp.net_num        # Index into eda_data.nets
     tp.subnet_num     # Subnet index within that net
 ```
+
+### Component Classification
+
+The `classify_component()` utility (in `src/checklist/component_classifier.py`) assigns each component to one of the following categories using a fixed priority order. All built-in checklist rules use this classifier — avoid hardcoding name prefixes in custom rules.
+
+```python
+from src.checklist.component_classifier import ComponentCategory, classify_component
+
+category = classify_component(comp)   # returns a ComponentCategory enum value
+
+if category is ComponentCategory.IC:
+    ...
+```
+
+| Category | Rule | Priority |
+|----------|------|----------|
+| `Connector` | `comp_name` starts with `"SOC"` | 1 (highest) |
+| `SIM_Socket` | `comp_name` starts with `"SIM"` | 2 |
+| `Inductor` | `properties["TYPE"]` or `properties["DEVICE_TYPE"]` == `"inductor"` (case-insensitive), **or** `part_name` starts with `"2703-"` | 3 |
+| `Capacitor` | `properties["TYPE"]` or `properties["DEVICE_TYPE"]` == `"capacitor"` (case-insensitive), **or** `part_name` starts with `"2203-"` | 4 |
+| `IC` | `comp_name` starts with `"U"` and does **not** start with `"USB"` | 5 |
+| `INP` | `comp_name` starts with `"INP"` | 6 |
+| `Unknown` | Everything else | — |
+
+The first matching rule wins. `properties` values are read from the component's PRP records (parsed from `comp_+_top` / `comp_+_bot` files and available in the JSON cache).
 
 ---
 
