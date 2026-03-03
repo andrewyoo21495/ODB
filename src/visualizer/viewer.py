@@ -105,10 +105,10 @@ class PcbViewer:
 
     def _setup_checkboxes(self, all_layers: list[str], visible_items: list[str]):
         """Create layer toggle checkboxes including component overlays."""
-        # Filter out dielectric layers (not useful to visualize)
+        # Filter out dielectric and drill layers (not useful to visualize)
         display_layers = [
             name for name in all_layers
-            if self.layers_data[name][1].type not in ("DIELECTRIC",)
+            if self.layers_data[name][1].type not in ("DIELECTRIC", "DRILL")
         ]
 
         # Build the full display items list: layers + component entries
@@ -135,9 +135,12 @@ class PcbViewer:
         if not self._display_items:
             return
 
-        # Calculate checkbox panel dimensions (larger than before)
+        # Calculate checkbox panel dimensions
         n_items = len(self._display_items)
-        checkbox_height = min(0.92, n_items * 0.028)
+        item_height = 0.04
+        total_needed = n_items * item_height
+        max_panel_height = 0.92
+        checkbox_height = min(max_panel_height, total_needed)
         checkbox_width = 0.22
 
         # Position the checkbox panel on the right side
@@ -148,7 +151,17 @@ class PcbViewer:
 
         # Larger font for labels
         for text in self._check.labels:
-            text.set_fontsize(8)
+            text.set_fontsize(10)
+
+        # Enable scrolling if the list overflows the panel
+        self._scroll_enabled = total_needed > max_panel_height
+        if self._scroll_enabled:
+            visible_frac = checkbox_height / total_needed
+            self._scroll_visible_frac = visible_frac
+            self._scroll_pos = 1.0 - visible_frac  # start showing top items
+            self._scroll_axes = rax
+            rax.set_ylim(self._scroll_pos, self._scroll_pos + visible_frac)
+            self.fig.canvas.mpl_connect('scroll_event', self._on_scroll)
 
         self._visible_set = set(
             item for item in visible_items if item in self._display_items
@@ -157,6 +170,24 @@ class PcbViewer:
 
         # Adjust main axes to make room for the wider checkbox panel
         self.ax.set_position([0.05, 0.05, 0.70, 0.9])
+
+    def _on_scroll(self, event):
+        """Scroll the layer checkbox list when it overflows."""
+        if not self._scroll_enabled:
+            return
+        if event.inaxes != self._scroll_axes:
+            return
+
+        step = 1.0 / len(self._display_items)
+        if event.button == 'up':
+            self._scroll_pos = min(1.0 - self._scroll_visible_frac,
+                                   self._scroll_pos + step)
+        elif event.button == 'down':
+            self._scroll_pos = max(0.0, self._scroll_pos - step)
+
+        self._scroll_axes.set_ylim(self._scroll_pos,
+                                   self._scroll_pos + self._scroll_visible_frac)
+        self.fig.canvas.draw_idle()
 
     def _on_checkbox_click(self, label: str):
         """Handle checkbox toggle - full redraw approach."""
