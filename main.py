@@ -1,12 +1,11 @@
 """ODB++ Processing System - CLI Entry Point.
 
 Usage:
-    python main.py cache     <odb_path>                         Parse and cache to JSON
-    python main.py view      <odb_path> [--layers L1 L2 ...]    Launch visualizer
-    python main.py view-top  <odb_path> [--layers L1 L2 ...]    View top components
-    python main.py view-bot  <odb_path> [--layers L1 L2 ...]    View bottom components
-    python main.py check     <odb_path> [--rules R1 R2 ...]     Run checklist
-    python main.py info      <odb_path>                         Print job summary
+    python main.py cache      <odb_path>                         Parse and cache to JSON
+    python main.py view       <odb_path> [--layers L1 L2 ...]    Launch visualizer
+    python main.py view-comp  <odb_path> [--layers L1 L2 ...]    View components (top & bottom)
+    python main.py check      <odb_path> [--rules R1 R2 ...]     Run checklist
+    python main.py info       <odb_path>                         Print job summary
 """
 
 from __future__ import annotations
@@ -304,51 +303,26 @@ def cmd_view(args):
     data["job"].cleanup()
 
 
-def cmd_view_top(args):
-    """Launch viewer focused on top-side components."""
+def cmd_view_comp(args):
+    """Launch viewer with top and bottom component overlays available."""
     data = _parse_for_view(args.odb_path, layer_names=args.layers)
 
-    from src.visualizer.viewer import PcbViewer, COMP_TOP_KEY
+    from src.visualizer.viewer import PcbViewer
 
-    initial = [COMP_TOP_KEY]
+    # Default: outline only, user toggles components via checkboxes
+    initial = []
     if args.layers:
         initial.extend(l.lower() for l in args.layers)
 
-    n_comps = len(data["components_top"])
+    n_top = len(data["components_top"])
+    n_bot = len(data["components_bot"])
     n_layers = len(data["layers_data"])
-    print(f"\nLaunching top-component viewer ({n_comps} components, {n_layers} layers)...")
+    print(f"\nLaunching component viewer ({n_top} top, {n_bot} bottom, {n_layers} layers)...")
 
     viewer = PcbViewer(
         profile=data["profile"],
         layers_data=data["layers_data"],
         components_top=data["components_top"],
-        components_bot=[],
-        eda_data=data["eda_data"],
-        user_symbols=data["user_symbols"],
-        font=data["font"],
-    )
-    viewer.show(initial_visible=initial)
-    data["job"].cleanup()
-
-
-def cmd_view_bot(args):
-    """Launch viewer focused on bottom-side components."""
-    data = _parse_for_view(args.odb_path, layer_names=args.layers)
-
-    from src.visualizer.viewer import PcbViewer, COMP_BOT_KEY
-
-    initial = [COMP_BOT_KEY]
-    if args.layers:
-        initial.extend(l.lower() for l in args.layers)
-
-    n_comps = len(data["components_bot"])
-    n_layers = len(data["layers_data"])
-    print(f"\nLaunching bottom-component viewer ({n_comps} components, {n_layers} layers)...")
-
-    viewer = PcbViewer(
-        profile=data["profile"],
-        layers_data=data["layers_data"],
-        components_top=[],
         components_bot=data["components_bot"],
         eda_data=data["eda_data"],
         user_symbols=data["user_symbols"],
@@ -474,15 +448,10 @@ def main():
     p_view.add_argument("odb_path", help="Path to ODB++ archive or directory")
     p_view.add_argument("--layers", nargs="*", help="Layer names to load and display")
 
-    # view-top command
-    p_vtop = subparsers.add_parser("view-top", help="View top-side components")
-    p_vtop.add_argument("odb_path", help="Path to ODB++ archive or directory")
-    p_vtop.add_argument("--layers", nargs="*", help="Additional layer names to load and display")
-
-    # view-bot command
-    p_vbot = subparsers.add_parser("view-bot", help="View bottom-side components")
-    p_vbot.add_argument("odb_path", help="Path to ODB++ archive or directory")
-    p_vbot.add_argument("--layers", nargs="*", help="Additional layer names to load and display")
+    # view-comp command
+    p_vcomp = subparsers.add_parser("view-comp", help="View components (top & bottom)")
+    p_vcomp.add_argument("odb_path", help="Path to ODB++ archive or directory")
+    p_vcomp.add_argument("--layers", nargs="*", help="Additional layer names to load and display")
 
     # check command
     p_check = subparsers.add_parser("check", help="Run design checklist")
@@ -498,10 +467,8 @@ def main():
         cmd_cache(args)
     elif args.command == "view":
         cmd_view(args)
-    elif args.command == "view-top":
-        cmd_view_top(args)
-    elif args.command == "view-bot":
-        cmd_view_bot(args)
+    elif args.command == "view-comp":
+        cmd_view_comp(args)
     elif args.command == "check":
         cmd_check(args)
     else:

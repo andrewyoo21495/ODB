@@ -84,10 +84,10 @@ class PcbViewer:
         packages = self.eda_data.packages if self.eda_data else None
         if self.components_top and COMP_TOP_KEY in initial_visible:
             draw_components(self.ax, self.components_top, packages,
-                            color="#00CCCC", alpha=0.4)
+                            color="#87CEEB", alpha=0.4)
         if self.components_bot and COMP_BOT_KEY in initial_visible:
             draw_components(self.ax, self.components_bot, packages,
-                            color="#CCCC00", alpha=0.4)
+                            color="#FFB6C1", alpha=0.4)
 
         # Add layer toggle checkboxes
         self._setup_checkboxes(all_layers, initial_visible)
@@ -200,10 +200,10 @@ class PcbViewer:
         packages = self.eda_data.packages if self.eda_data else None
         if COMP_TOP_KEY in self._visible_set and self.components_top:
             draw_components(self.ax, self.components_top, packages,
-                            color="#00CCCC", alpha=0.4)
+                            color="#87CEEB", alpha=0.4)
         if COMP_BOT_KEY in self._visible_set and self.components_bot:
             draw_components(self.ax, self.components_bot, packages,
-                            color="#CCCC00", alpha=0.4)
+                            color="#FFB6C1", alpha=0.4)
 
         units = self.profile.units if self.profile else "INCH"
         unit_label = "inches" if units == "INCH" else "mm"

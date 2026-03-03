@@ -42,8 +42,7 @@ python main.py <command> <odb_path> [options]
 | `info` | Print a summary of the ODB++ job (layers, steps, version) |
 | `cache` | Parse all data and export to JSON cache files |
 | `view` | Launch the interactive PCB layer visualizer (outline only by default) |
-| `view-top` | Launch visualizer with top-side component overlay pre-selected |
-| `view-bot` | Launch visualizer with bottom-side component overlay pre-selected |
+| `view-comp` | Launch visualizer with top & bottom component overlays available |
 | `check` | Run the automated design checklist and export an Excel report |
 
 ---
@@ -110,9 +109,9 @@ Each layer's feature file is stored separately so that the visualizer and other 
 
 ---
 
-## 3. Visualization (`view`, `view-top`, `view-bot`)
+## 3. Visualization (`view`, `view-comp`)
 
-The visualizer renders PCB layers in a matplotlib window with interactive controls. Three commands are available depending on what you need to inspect.
+The visualizer renders PCB layers in a matplotlib window with interactive controls. Two commands are available depending on what you need to inspect.
 
 ### 3a. General Viewer (`view`)
 
@@ -138,28 +137,18 @@ python main.py view data/designodb_rigidflex.tgz --layers d_1_2 d_1_10 d_3_8
 python main.py view data/designodb_rigidflex.tgz --layers flex_5 flex_6 covertop coverbottom bend_area
 ```
 
-### 3b. Top Component Viewer (`view-top`)
+### 3b. Component Viewer (`view-comp`)
 
-Opens the viewer with the **top-side component overlay** pre-selected. Bottom-side components are excluded entirely, making it easy to inspect top placements in isolation. This is useful when reviewing checklist results that reference specific top-side components.
+Opens the viewer with both **top and bottom component overlays** available as checkbox entries. By default, only the PCB outline is shown — select "Components Top" or "Components Bot" (or both) via the checkbox panel to display component placements. This is useful when reviewing checklist results that reference specific components.
 
-```bash
-# Outline + top components only
-python main.py view-top data/designodb_rigidflex.tgz
-
-# Top components overlaid on specific copper/mask layers
-python main.py view-top data/designodb_rigidflex.tgz --layers signal_1 soldermask_top
-```
-
-### 3c. Bottom Component Viewer (`view-bot`)
-
-Same as `view-top` but for the **bottom-side component overlay**. Top-side components are excluded.
+Top-side components are rendered in **sky blue**; bottom-side components are rendered in **light pink** for easy visual distinction.
 
 ```bash
-# Outline + bottom components only
-python main.py view-bot data/designodb_rigidflex.tgz
+# Outline only, toggle top/bottom components via checkboxes
+python main.py view-comp data/designodb_rigidflex.tgz
 
-# Bottom components overlaid on specific layers
-python main.py view-bot data/designodb_rigidflex.tgz --layers signal_10 soldermask_bottom
+# Components + specific copper/mask layers
+python main.py view-comp data/designodb_rigidflex.tgz --layers signal_1 soldermask_top
 ```
 
 ### Interactive Viewer Controls
@@ -191,7 +180,7 @@ Each layer type is rendered with a distinct default color:
 | COMPONENT | Cyan |
 | DOCUMENT | Dark Gray |
 
-Component overlays are drawn with dashed outlines and reference designator labels. Top-side components are cyan; bottom-side components are yellow.
+Component overlays are drawn with dashed outlines and reference designator labels. Top-side components are sky blue; bottom-side components are light pink.
 
 ### Performance Note
 
@@ -364,10 +353,9 @@ for tp in comp.toeprints:
    python main.py view data/my_design.tgz --layers signal_1 signal_2 soldermask_top
    ```
 
-4. **Inspect components** on a specific side:
+4. **Inspect components** on top and/or bottom:
    ```bash
-   python main.py view-top data/my_design.tgz
-   python main.py view-bot data/my_design.tgz --layers signal_10
+   python main.py view-comp data/my_design.tgz
    ```
 
 5. **Run checklist** to validate design rules:
