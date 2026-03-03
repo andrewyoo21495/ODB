@@ -41,7 +41,9 @@ python main.py <command> <odb_path> [options]
 |---------|-------------|
 | `info` | Print a summary of the ODB++ job (layers, steps, version) |
 | `cache` | Parse all data and export to JSON cache files |
-| `view` | Launch the interactive PCB layer visualizer |
+| `view` | Launch the interactive PCB layer visualizer (outline only by default) |
+| `view-top` | Launch visualizer with top-side component overlay pre-selected |
+| `view-bot` | Launch visualizer with bottom-side component overlay pre-selected |
 | `check` | Run the automated design checklist and export an Excel report |
 
 ---
@@ -108,21 +110,19 @@ Each layer's feature file is stored separately so that the visualizer and other 
 
 ---
 
-## 3. Visualization (`view`)
+## 3. Visualization (`view`, `view-top`, `view-bot`)
 
-The visualizer renders PCB layers in a matplotlib window with interactive controls.
+The visualizer renders PCB layers in a matplotlib window with interactive controls. Three commands are available depending on what you need to inspect.
 
-### Launch with Default Layers
+### 3a. General Viewer (`view`)
 
-By default, the viewer loads SIGNAL, COMPONENT, and SOLDER_MASK layer types:
+By default (no `--layers`), the viewer loads **all** layers but starts with only the **PCB outline** visible. No layers or component overlays are pre-selected, allowing you to enable exactly what you need via the checkbox panel.
 
 ```bash
 python main.py view data/designodb_rigidflex.tgz
 ```
 
-### Specify Layers to Display
-
-Use `--layers` with one or more layer names (as shown by the `info` command). Names are case-insensitive:
+When `--layers` is specified, only those layers are loaded and they are pre-selected in the checkbox panel. Layer names are case-insensitive and match the names shown by the `info` command:
 
 ```bash
 # View only signal layers
@@ -138,13 +138,37 @@ python main.py view data/designodb_rigidflex.tgz --layers d_1_2 d_1_10 d_3_8
 python main.py view data/designodb_rigidflex.tgz --layers flex_5 flex_6 covertop coverbottom bend_area
 ```
 
+### 3b. Top Component Viewer (`view-top`)
+
+Opens the viewer with the **top-side component overlay** pre-selected. Bottom-side components are excluded entirely, making it easy to inspect top placements in isolation. This is useful when reviewing checklist results that reference specific top-side components.
+
+```bash
+# Outline + top components only
+python main.py view-top data/designodb_rigidflex.tgz
+
+# Top components overlaid on specific copper/mask layers
+python main.py view-top data/designodb_rigidflex.tgz --layers signal_1 soldermask_top
+```
+
+### 3c. Bottom Component Viewer (`view-bot`)
+
+Same as `view-top` but for the **bottom-side component overlay**. Top-side components are excluded.
+
+```bash
+# Outline + bottom components only
+python main.py view-bot data/designodb_rigidflex.tgz
+
+# Bottom components overlaid on specific layers
+python main.py view-bot data/designodb_rigidflex.tgz --layers signal_10 soldermask_bottom
+```
+
 ### Interactive Viewer Controls
 
 Once the viewer window opens:
 
 | Control | Action |
 |---------|--------|
-| **Layer checkboxes** (right panel) | Toggle individual layer visibility on/off. The viewer redraws automatically. |
+| **Layer checkboxes** (right panel) | Toggle individual layer visibility on/off. The viewer redraws automatically. The panel also includes "Components Top" and "Components Bot" entries for toggling component overlays. |
 | **Zoom** | Use the scroll wheel or the magnifying glass icon in the toolbar to zoom into a region. |
 | **Pan** | Click the cross-arrow icon in the toolbar, then click and drag to pan. |
 | **Home** | Click the house icon to reset the view to the full board extent. |
@@ -171,7 +195,7 @@ Component overlays are drawn with dashed outlines and reference designator label
 
 ### Performance Note
 
-Large layers (e.g., `assemt` with 370,000 features) may take several seconds to render. When exploring a design, start with specific layers of interest rather than loading all layers at once.
+When no `--layers` flag is given, the viewer loads **all** layers at startup, which may take 15-20 seconds for large designs. Once loaded, toggling layers via checkboxes is instantaneous. If you only need a few specific layers, use `--layers` to skip loading the rest.
 
 ---
 
@@ -340,7 +364,13 @@ for tp in comp.toeprints:
    python main.py view data/my_design.tgz --layers signal_1 signal_2 soldermask_top
    ```
 
-4. **Run checklist** to validate design rules:
+4. **Inspect components** on a specific side:
+   ```bash
+   python main.py view-top data/my_design.tgz
+   python main.py view-bot data/my_design.tgz --layers signal_10
+   ```
+
+5. **Run checklist** to validate design rules:
    ```bash
    python main.py check data/my_design.tgz --output reports/design_review.xlsx
    ```

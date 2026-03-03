@@ -1,10 +1,12 @@
 """ODB++ Processing System - CLI Entry Point.
 
 Usage:
-    python main.py cache  <odb_path>                         Parse and cache to JSON
-    python main.py view   <odb_path> [--layers L1 L2 ...]    Launch visualizer
-    python main.py check  <odb_path> [--rules R1 R2 ...]     Run checklist
-    python main.py info   <odb_path>                         Print job summary
+    python main.py cache     <odb_path>                         Parse and cache to JSON
+    python main.py view      <odb_path> [--layers L1 L2 ...]    Launch visualizer
+    python main.py view-top  <odb_path> [--layers L1 L2 ...]    View top components
+    python main.py view-bot  <odb_path> [--layers L1 L2 ...]    View bottom components
+    python main.py check     <odb_path> [--rules R1 R2 ...]     Run checklist
+    python main.py info      <odb_path>                         Print job summary
 """
 
 from __future__ import annotations
@@ -191,15 +193,24 @@ def cmd_cache(args):
     job.cleanup()
 
 
-def cmd_view(args):
-    """Launch the interactive PCB visualizer."""
+def _parse_for_view(odb_path: str, layer_names: list[str] = None) -> dict:
+    """Parse ODB++ data needed for the viewer.
+
+    Args:
+        odb_path: Path to ODB++ archive or directory.
+        layer_names: Layer names to load features for.
+                     None = load ALL layers.
+
+    Returns:
+        dict with keys: job, profile, layers_data, components_top,
+        components_bot, eda_data, user_symbols, font.
+    """
     import matplotlib
     matplotlib.use("TkAgg")
 
-    print(f"Loading ODB++ from: {args.odb_path}")
-    job = odb_loader.load(args.odb_path)
+    print(f"Loading ODB++ from: {odb_path}")
+    job = odb_loader.load(odb_path)
 
-    # Parse required data
     from src.parsers.matrix_parser import parse_matrix
     from src.parsers.profile_parser import parse_profile
     from src.parsers.feature_parser import parse_features
@@ -208,44 +219,29 @@ def cmd_view(args):
     from src.parsers.font_parser import parse_font
     from src.parsers.symbol_parser import parse_all_symbols
 
-    # Matrix
     steps, matrix_layers = parse_matrix(job.matrix_path)
     layer_lookup = {l.name: l for l in matrix_layers}
 
-    # Get first step
     step_name = list(job.steps.keys())[0]
     step = job.steps[step_name]
 
-    # Profile
     profile = parse_profile(step.profile) if step.profile else None
-
-    # Font
     font = parse_font(job.font_path) if job.font_path else None
-
-    # User symbols
     user_symbols = parse_all_symbols(job.symbols) if job.symbols else {}
-
-    # EDA data
     eda_data = parse_eda_data(step.eda_data) if step.eda_data else None
 
-    # Components
+    # Determine which layers to load features for
+    if layer_names:
+        target_set = set(l.lower() for l in layer_names)
+    else:
+        target_set = None  # load all
+
     components_top = []
     components_bot = []
-
-    # Determine which layers to load
-    if args.layers:
-        target_layers = [l.lower() for l in args.layers]
-    else:
-        # Default: signal + component + solder mask layers
-        target_layers = [
-            l.name for l in matrix_layers
-            if l.type in ("SIGNAL", "COMPONENT", "SOLDER_MASK")
-        ]
-
-    # Parse layer features
     layers_data = {}
+
     for layer_name, layer_paths in step.layers.items():
-        # Components
+        # Always parse components regardless of layer filter
         if layer_paths.components:
             comps = parse_components(layer_paths.components)
             if "top" in layer_name:
@@ -253,8 +249,10 @@ def cmd_view(args):
             else:
                 components_bot = comps
 
-        # Features
-        if layer_name in target_layers and layer_paths.features:
+        # Parse features (all layers if target_set is None, otherwise only targets)
+        if layer_paths.features:
+            if target_set is not None and layer_name not in target_set:
+                continue
             try:
                 features = parse_features(layer_paths.features)
                 ml = layer_lookup.get(layer_name)
@@ -264,22 +262,100 @@ def cmd_view(args):
             except Exception as e:
                 print(f"  Warning: Failed to load {layer_name}: {e}")
 
-    print(f"\nLaunching viewer with {len(layers_data)} layers...")
+    return {
+        "job": job,
+        "profile": profile,
+        "layers_data": layers_data,
+        "components_top": components_top,
+        "components_bot": components_bot,
+        "eda_data": eda_data,
+        "user_symbols": user_symbols,
+        "font": font,
+    }
+
+
+def cmd_view(args):
+    """Launch the interactive PCB visualizer.
+
+    Without --layers: loads ALL layers, starts with PCB outline only.
+    With --layers:    loads and checks only the specified layers.
+    """
+    data = _parse_for_view(args.odb_path, layer_names=args.layers)
 
     from src.visualizer.viewer import PcbViewer
 
-    viewer = PcbViewer(
-        profile=profile,
-        layers_data=layers_data,
-        components_top=components_top,
-        components_bot=components_bot,
-        eda_data=eda_data,
-        user_symbols=user_symbols,
-        font=font,
-    )
-    viewer.show(initial_layers=target_layers)
+    if args.layers:
+        initial = [l.lower() for l in args.layers]
+    else:
+        initial = []  # outline only
 
-    job.cleanup()
+    print(f"\nLaunching viewer with {len(data['layers_data'])} layers...")
+
+    viewer = PcbViewer(
+        profile=data["profile"],
+        layers_data=data["layers_data"],
+        components_top=data["components_top"],
+        components_bot=data["components_bot"],
+        eda_data=data["eda_data"],
+        user_symbols=data["user_symbols"],
+        font=data["font"],
+    )
+    viewer.show(initial_visible=initial)
+    data["job"].cleanup()
+
+
+def cmd_view_top(args):
+    """Launch viewer focused on top-side components."""
+    data = _parse_for_view(args.odb_path, layer_names=args.layers)
+
+    from src.visualizer.viewer import PcbViewer, COMP_TOP_KEY
+
+    initial = [COMP_TOP_KEY]
+    if args.layers:
+        initial.extend(l.lower() for l in args.layers)
+
+    n_comps = len(data["components_top"])
+    n_layers = len(data["layers_data"])
+    print(f"\nLaunching top-component viewer ({n_comps} components, {n_layers} layers)...")
+
+    viewer = PcbViewer(
+        profile=data["profile"],
+        layers_data=data["layers_data"],
+        components_top=data["components_top"],
+        components_bot=[],
+        eda_data=data["eda_data"],
+        user_symbols=data["user_symbols"],
+        font=data["font"],
+    )
+    viewer.show(initial_visible=initial)
+    data["job"].cleanup()
+
+
+def cmd_view_bot(args):
+    """Launch viewer focused on bottom-side components."""
+    data = _parse_for_view(args.odb_path, layer_names=args.layers)
+
+    from src.visualizer.viewer import PcbViewer, COMP_BOT_KEY
+
+    initial = [COMP_BOT_KEY]
+    if args.layers:
+        initial.extend(l.lower() for l in args.layers)
+
+    n_comps = len(data["components_bot"])
+    n_layers = len(data["layers_data"])
+    print(f"\nLaunching bottom-component viewer ({n_comps} components, {n_layers} layers)...")
+
+    viewer = PcbViewer(
+        profile=data["profile"],
+        layers_data=data["layers_data"],
+        components_top=[],
+        components_bot=data["components_bot"],
+        eda_data=data["eda_data"],
+        user_symbols=data["user_symbols"],
+        font=data["font"],
+    )
+    viewer.show(initial_visible=initial)
+    data["job"].cleanup()
 
 
 def cmd_check(args):
@@ -396,7 +472,17 @@ def main():
     # view command
     p_view = subparsers.add_parser("view", help="Launch PCB visualizer")
     p_view.add_argument("odb_path", help="Path to ODB++ archive or directory")
-    p_view.add_argument("--layers", nargs="*", help="Layer names to display")
+    p_view.add_argument("--layers", nargs="*", help="Layer names to load and display")
+
+    # view-top command
+    p_vtop = subparsers.add_parser("view-top", help="View top-side components")
+    p_vtop.add_argument("odb_path", help="Path to ODB++ archive or directory")
+    p_vtop.add_argument("--layers", nargs="*", help="Additional layer names to load and display")
+
+    # view-bot command
+    p_vbot = subparsers.add_parser("view-bot", help="View bottom-side components")
+    p_vbot.add_argument("odb_path", help="Path to ODB++ archive or directory")
+    p_vbot.add_argument("--layers", nargs="*", help="Additional layer names to load and display")
 
     # check command
     p_check = subparsers.add_parser("check", help="Run design checklist")
@@ -412,6 +498,10 @@ def main():
         cmd_cache(args)
     elif args.command == "view":
         cmd_view(args)
+    elif args.command == "view-top":
+        cmd_view_top(args)
+    elif args.command == "view-bot":
+        cmd_view_bot(args)
     elif args.command == "check":
         cmd_check(args)
     else:
