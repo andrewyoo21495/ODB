@@ -49,9 +49,9 @@ def _read_compressed(path: Path) -> list[str]:
 def _decompress_unix_z(data: bytes) -> bytes:
     """Decompress UNIX .Z (LZW) compressed data.
 
-    The .Z format starts with a 3-byte header:
-    - bytes 0-1: magic number 0x1F 0x9D
-    - byte 2: flags (max bits in bits 0-4, block mode in bit 7)
+    Closely follows the ncompress reference implementation.
+    Codes are read in block-aligned chunks of n_bits bytes;
+    after a clear code the remainder of the current block is discarded.
     """
     if len(data) < 3 or data[0] != 0x1F or data[1] != 0x9D:
         raise ValueError("Not a valid UNIX .Z compressed file")
@@ -59,74 +59,133 @@ def _decompress_unix_z(data: bytes) -> bytes:
     maxbits = data[2] & 0x1F
     block_mode = bool(data[2] & 0x80)
 
-    if maxbits > 16:
+    if maxbits < 9 or maxbits > 16:
         raise ValueError(f"Unsupported max bits: {maxbits}")
 
-    # LZW decompression
-    clear_code = 256 if block_mode else -1
-    next_code = 257 if block_mode else 256
+    INIT_BITS = 9
+    FIRST = 257 if block_mode else 256
+    CLEAR = 256
+    maxmaxcode = 1 << maxbits
 
-    # Initialize dictionary with single-byte entries
-    dictionary = {i: bytes([i]) for i in range(256)}
+    # Input stream (after 3-byte header)
+    inp = data[3:]
+    insize = len(inp)
+    inpos = 0
 
-    result = bytearray()
-    bits_in_buffer = 0
-    buffer = 0
-    nbits = 9  # Start with 9-bit codes
-    pos = 3    # Skip header
+    # Code reading state
+    n_bits = INIT_BITS
+    maxcode = (1 << n_bits) - 1
 
-    prev_entry = b""
-    first = True
+    # Block buffer for code extraction (ncompress reads n_bits bytes at a time)
+    gbuf = bytearray(maxbits)
+    goffset = 0   # bit offset within current block
+    gsize = 0     # valid bit-range in current block
+    clear_flg = False
 
-    while pos < len(data) or bits_in_buffer >= nbits:
-        # Read enough bytes into the buffer
-        while bits_in_buffer < nbits and pos < len(data):
-            buffer |= data[pos] << bits_in_buffer
-            bits_in_buffer += 8
-            pos += 1
+    # Dictionary (array-based for speed)
+    tab_prefix = [0] * maxmaxcode
+    tab_suffix = [0] * maxmaxcode
+    for i in range(256):
+        tab_suffix[i] = i
 
-        if bits_in_buffer < nbits:
-            break
+    free_ent = FIRST
 
-        code = buffer & ((1 << nbits) - 1)
-        buffer >>= nbits
-        bits_in_buffer -= nbits
+    output = bytearray()
+    oldcode = -1
+    finchar = 0
 
-        if block_mode and code == clear_code:
-            # Reset dictionary
-            next_code = 257
-            nbits = 9
-            dictionary = {i: bytes([i]) for i in range(256)}
-            prev_entry = b""
-            first = True
+    while True:
+        # ---------- getcode() ----------
+        if clear_flg or goffset >= gsize or free_ent > maxcode:
+            # Bump code width when the table outgrows the current width
+            if free_ent > maxcode:
+                n_bits += 1
+                if n_bits == maxbits:
+                    maxcode = maxmaxcode
+                else:
+                    maxcode = (1 << n_bits) - 1
+
+            # After a clear, reset width back to initial
+            if clear_flg:
+                n_bits = INIT_BITS
+                maxcode = (1 << n_bits) - 1
+                clear_flg = False
+
+            # Read a fresh block of n_bits bytes from input
+            rsize = min(n_bits, insize - inpos)
+            if rsize <= 0:
+                break
+            gbuf[:rsize] = inp[inpos:inpos + rsize]
+            inpos += rsize
+
+            goffset = 0
+            gsize = (rsize << 3) - (n_bits - 1)
+            if gsize <= 0:
+                break
+
+        # Extract one n_bits-wide code from the block buffer (LSB-first)
+        bp = goffset >> 3
+        r_off = goffset & 7
+        bits_left = n_bits
+
+        code = gbuf[bp] >> r_off
+        bp += 1
+        bits_left -= (8 - r_off)
+
+        if bits_left >= 8:
+            code |= gbuf[bp] << (8 - r_off)
+            bp += 1
+            bits_left -= 8
+
+        if bits_left > 0:
+            code |= (gbuf[bp] & ((1 << bits_left) - 1)) << (n_bits - bits_left)
+
+        goffset += n_bits
+        # ---------- end getcode() ----------
+
+        # Handle clear code
+        if block_mode and code == CLEAR:
+            clear_flg = True
+            free_ent = FIRST
+            oldcode = -1
             continue
 
-        if first:
-            if code > 255:
-                raise ValueError(f"Invalid first code: {code}")
-            result.extend(dictionary[code])
-            prev_entry = dictionary[code]
-            first = False
+        # First code after init / clear — just output the literal
+        if oldcode == -1:
+            finchar = code & 0xFF
+            output.append(finchar)
+            oldcode = code
             continue
 
-        if code in dictionary:
-            entry = dictionary[code]
-        elif code == next_code:
-            entry = prev_entry + prev_entry[:1]
-        else:
-            raise ValueError(f"Invalid LZW code: {code}, next_code: {next_code}")
+        incode = code
 
-        result.extend(entry)
+        # Build output by walking the dictionary chain
+        stack = []
+        if code >= free_ent:
+            # KwKwK special case
+            stack.append(finchar)
+            code = oldcode
 
-        if next_code < (1 << maxbits):
-            dictionary[next_code] = prev_entry + entry[:1]
-            next_code += 1
-            if next_code >= (1 << nbits) and nbits < maxbits:
-                nbits += 1
+        while code >= 256:
+            stack.append(tab_suffix[code])
+            code = tab_prefix[code]
 
-        prev_entry = entry
+        finchar = tab_suffix[code]
+        stack.append(finchar)
 
-    return bytes(result)
+        # Output in reverse order
+        for i in range(len(stack) - 1, -1, -1):
+            output.append(stack[i])
+
+        # Add new entry to dictionary
+        if free_ent < maxmaxcode:
+            tab_prefix[free_ent] = oldcode
+            tab_suffix[free_ent] = finchar
+            free_ent += 1
+
+        oldcode = incode
+
+    return bytes(output)
 
 
 def _filter_lines(lines: list[str]) -> list[str]:
