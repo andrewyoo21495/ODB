@@ -1,187 +1,422 @@
-"""
-ODB++ Processing System — CLI Entry Point
+"""ODB++ Processing System - CLI Entry Point.
 
 Usage:
-    python main.py <path_to_odb>                  # Parse and summarize
-    python main.py <path_to_odb> --visualize      # Render all layers
-    python main.py <path_to_odb> --layer <name>   # Render a single layer
-    python main.py <path_to_odb> --checklist      # Run checklist rules
-    python main.py <path_to_odb> --all            # Visualize + checklist
-    python main.py <path_to_odb> --output <dir>   # Write outputs to directory
+    python main.py cache  <odb_path>                         Parse and cache to JSON
+    python main.py view   <odb_path> [--layers L1 L2 ...]    Launch visualizer
+    python main.py check  <odb_path> [--rules R1 R2 ...]     Run checklist
+    python main.py info   <odb_path>                         Print job summary
 """
 
+from __future__ import annotations
+
 import argparse
-import os
 import sys
+import time
+from pathlib import Path
+
+# Ensure src is importable
+sys.path.insert(0, str(Path(__file__).parent))
+
+from src import odb_loader
+from src.cache_manager import cache_job, cache_layer, is_cache_valid, load_cache
+from src.models import LayerFeatures
 
 
-def parse_args():
-    parser = argparse.ArgumentParser(
-        description='ODB++ PCB Data Processing System',
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=__doc__,
-    )
-    parser.add_argument('odb_path', help='Path to ODB++ .tgz, .zip, or directory')
-    parser.add_argument('--layer', metavar='NAME',
-                        help='Render a single named layer')
-    parser.add_argument('--visualize', action='store_true',
-                        help='Render all layers to PNG')
-    parser.add_argument('--checklist', action='store_true',
-                        help='Run checklist rules and export Excel report')
-    parser.add_argument('--all', dest='run_all', action='store_true',
-                        help='Run both visualization and checklist')
-    parser.add_argument('--output', metavar='DIR', default='.',
-                        help='Output directory for generated files (default: .)')
-    parser.add_argument('--min-spacing', type=float, default=0.2,
-                        help='Minimum component spacing threshold (default: 0.2)')
-    parser.add_argument('--verbose', '-v', action='store_true',
-                        help='Enable verbose parsing output')
-    return parser.parse_args()
+def cmd_info(args):
+    """Print job summary information."""
+    job = odb_loader.load(args.odb_path)
+
+    print(f"{'='*60}")
+    print(f"ODB++ Job: {job.job_name}")
+    print(f"Root: {job.root_dir}")
+    print(f"{'='*60}")
+
+    # Parse misc/info
+    if job.misc_info_path:
+        from src.parsers.misc_parser import parse_info
+        info = parse_info(job.misc_info_path)
+        print(f"ODB++ Version: {info.odb_version_major}.{info.odb_version_minor}")
+        print(f"Source: {info.odb_source}")
+        print(f"Created: {info.creation_date}")
+        print(f"Saved: {info.save_date} by {info.save_app} ({info.save_user})")
+        print(f"Units: {info.units}")
+        print(f"Max UID: {info.max_uid}")
+
+    # Parse matrix
+    if job.matrix_path:
+        from src.parsers.matrix_parser import parse_matrix
+        steps, layers = parse_matrix(job.matrix_path)
+
+        print(f"\nSteps ({len(steps)}):")
+        for step in steps:
+            print(f"  [{step.col}] {step.name}")
+
+        print(f"\nLayers ({len(layers)}):")
+        for layer in layers:
+            type_str = f"{layer.type}"
+            if layer.add_type:
+                type_str += f" ({layer.add_type})"
+            form_str = f" [{layer.form}]" if layer.form else ""
+            print(f"  [{layer.row:3d}] {layer.name:<30s} {type_str}{form_str}")
+
+    # Steps summary
+    print(f"\nDiscovered Steps: {list(job.steps.keys())}")
+    for step_name, step_paths in job.steps.items():
+        layer_count = len(step_paths.layers)
+        print(f"  {step_name}: {layer_count} layers")
+        if step_paths.eda_data:
+            print(f"    EDA data: Yes")
+        if step_paths.netlist_cadnet:
+            print(f"    Netlist: Yes")
+
+    print(f"\nUser-defined Symbols: {len(job.symbols)}")
+    print(f"Wheels: {len(job.wheels)}")
+
+    job.cleanup()
 
 
-def load_model(odb_path: str, verbose: bool):
-    from odb_reader import ODBReader
-    reader = ODBReader(verbose=verbose)
-    print(f"Loading: {odb_path}")
-    model = reader.load(odb_path)
-    return model
+def cmd_cache(args):
+    """Parse ODB++ data and cache to JSON files."""
+    print(f"Loading ODB++ from: {args.odb_path}")
+    t0 = time.time()
+
+    job = odb_loader.load(args.odb_path)
+    cache_dir = Path(args.cache_dir) if args.cache_dir else Path("cache")
+
+    print(f"Job: {job.job_name}")
+    print(f"Cache directory: {cache_dir / job.job_name}")
+
+    data = {}
+
+    # Parse misc/info
+    if job.misc_info_path:
+        from src.parsers.misc_parser import parse_info
+        info = parse_info(job.misc_info_path)
+        data["job_info"] = info
+        print(f"  Parsed: misc/info")
+
+    # Parse matrix
+    if job.matrix_path:
+        from src.parsers.matrix_parser import parse_matrix
+        steps, layers = parse_matrix(job.matrix_path)
+        data["matrix_steps"] = steps
+        data["matrix_layers"] = layers
+        print(f"  Parsed: matrix ({len(steps)} steps, {len(layers)} layers)")
+
+    # Parse font
+    if job.font_path:
+        from src.parsers.font_parser import parse_font
+        font = parse_font(job.font_path)
+        data["font"] = font
+        print(f"  Parsed: fonts/standard ({len(font.characters)} characters)")
+
+    # Parse each step
+    for step_name, step_paths in job.steps.items():
+        print(f"\n  Step: {step_name}")
+
+        # Step header
+        if step_paths.stephdr:
+            from src.parsers.stephdr_parser import parse_stephdr
+            header = parse_stephdr(step_paths.stephdr)
+            data["step_header"] = header
+            print(f"    Parsed: stephdr (units={header.units})")
+
+        # Profile
+        if step_paths.profile:
+            from src.parsers.profile_parser import parse_profile
+            profile = parse_profile(step_paths.profile)
+            data["profile"] = profile
+            print(f"    Parsed: profile")
+
+        # EDA data
+        if step_paths.eda_data:
+            from src.parsers.eda_parser import parse_eda_data
+            eda = parse_eda_data(step_paths.eda_data)
+            data["eda_data"] = eda
+            print(f"    Parsed: eda/data ({len(eda.nets)} nets, {len(eda.packages)} packages)")
+
+        # Netlist
+        if step_paths.netlist_cadnet:
+            from src.parsers.netlist_parser import parse_netlist
+            netlist = parse_netlist(step_paths.netlist_cadnet)
+            data["netlist"] = netlist
+            print(f"    Parsed: netlist ({len(netlist.net_names)} nets)")
+
+        # Components and layer features
+        from src.parsers.component_parser import parse_components
+        from src.parsers.feature_parser import parse_features
+
+        for layer_name, layer_paths in step_paths.layers.items():
+            # Components
+            if layer_paths.components:
+                components = parse_components(layer_paths.components)
+                key = "components_top" if "top" in layer_name else "components_bot"
+                data[key] = components
+                print(f"    Parsed: {layer_name}/components ({len(components)} components)")
+
+            # Features
+            if layer_paths.features:
+                try:
+                    features = parse_features(layer_paths.features)
+                    data[f"layer_features:{layer_name}"] = features
+                    print(f"    Parsed: {layer_name}/features ({len(features.features)} features)")
+                except Exception as e:
+                    print(f"    Warning: Failed to parse {layer_name}/features: {e}")
+
+    # Parse user-defined symbols
+    if job.symbols:
+        from src.parsers.symbol_parser import parse_all_symbols
+        symbols = parse_all_symbols(job.symbols)
+        data["symbols"] = symbols
+        print(f"\n  Parsed: {len(symbols)} user-defined symbols")
+
+    # Parse stackup if available
+    if job.stackup_path:
+        from src.parsers.stackup_parser import parse_stackup
+        try:
+            stackup = parse_stackup(job.stackup_path)
+            data["stackup"] = stackup
+            print(f"  Parsed: stackup.xml")
+        except Exception as e:
+            print(f"  Warning: Failed to parse stackup.xml: {e}")
+
+    # Write cache
+    print(f"\nWriting cache...")
+    cache_job(job.job_name, data, cache_dir)
+
+    elapsed = time.time() - t0
+    print(f"\nDone! Cached in {elapsed:.1f}s")
+    print(f"Cache location: {cache_dir / job.job_name}")
+
+    job.cleanup()
 
 
-def print_summary(model):
-    from models import ODBModel
-    print("\n" + "=" * 60)
-    print(f"  Product : {model.product_name}")
-    print(f"  Units   : {model.units}")
-    print(f"  Step    : {model.step_name}")
-    print(f"  Layers  : {len(model.layers)}")
-    print(f"  Nets    : {len(model.nets)}")
+def cmd_view(args):
+    """Launch the interactive PCB visualizer."""
+    import matplotlib
+    matplotlib.use("TkAgg")
 
-    total_pads  = sum(len(ld.pads)       for ld in model.layer_data.values())
-    total_lines = sum(len(ld.lines)      for ld in model.layer_data.values())
-    total_arcs  = sum(len(ld.arcs)       for ld in model.layer_data.values())
-    total_surfs = sum(len(ld.surfaces)   for ld in model.layer_data.values())
-    total_comps = sum(len(ld.components) for ld in model.layer_data.values())
+    print(f"Loading ODB++ from: {args.odb_path}")
+    job = odb_loader.load(args.odb_path)
 
-    print(f"  Pads    : {total_pads}")
-    print(f"  Lines   : {total_lines}")
-    print(f"  Arcs    : {total_arcs}")
-    print(f"  Surfaces: {total_surfs}")
-    print(f"  Comps   : {total_comps}")
-    print("=" * 60)
+    # Parse required data
+    from src.parsers.matrix_parser import parse_matrix
+    from src.parsers.profile_parser import parse_profile
+    from src.parsers.feature_parser import parse_features
+    from src.parsers.component_parser import parse_components
+    from src.parsers.eda_parser import parse_eda_data
+    from src.parsers.font_parser import parse_font
+    from src.parsers.symbol_parser import parse_all_symbols
 
-    print("\nLayer Stack:")
-    for layer in model.layers:
-        ld = model.layer_data.get(layer.name)
-        if ld:
-            feat_count = (len(ld.pads) + len(ld.lines) +
-                          len(ld.arcs) + len(ld.surfaces))
-            comp_count = len(ld.components)
-        else:
-            feat_count, comp_count = 0, 0
-        print(f"  [{layer.index:3d}] {layer.name:<30s} "
-              f"{layer.layer_type:<15s} {layer.side:<8s} "
-              f"feats={feat_count} comps={comp_count}")
+    # Matrix
+    steps, matrix_layers = parse_matrix(job.matrix_path)
+    layer_lookup = {l.name: l for l in matrix_layers}
 
+    # Get first step
+    step_name = list(job.steps.keys())[0]
+    step = job.steps[step_name]
 
-def run_visualization(model, output_dir: str, single_layer: str = None):
-    try:
-        import matplotlib
-        matplotlib.use('Agg')  # Non-interactive backend for file output
-    except ImportError:
-        print("ERROR: matplotlib not installed. Run: pip install matplotlib")
-        return
+    # Profile
+    profile = parse_profile(step.profile) if step.profile else None
 
-    from visualizer import PCBVisualizer
-    viz = PCBVisualizer(model)
+    # Font
+    font = parse_font(job.font_path) if job.font_path else None
 
-    os.makedirs(output_dir, exist_ok=True)
+    # User symbols
+    user_symbols = parse_all_symbols(job.symbols) if job.symbols else {}
 
-    if single_layer:
-        if single_layer not in model.layer_data:
-            print(f"ERROR: Layer '{single_layer}' not found. "
-                  f"Available: {list(model.layer_data.keys())}")
-            return
-        out_path = os.path.join(output_dir, f'layer_{single_layer}.png')
-        import matplotlib.pyplot as plt
-        fig, ax = plt.subplots(figsize=(16, 12))
-        fig.patch.set_facecolor('#0d0d0d')
-        viz.render_layer(single_layer, ax=ax)
-        fig.tight_layout()
-        fig.savefig(out_path, dpi=150, bbox_inches='tight',
-                    facecolor=fig.get_facecolor())
-        plt.close(fig)
-        print(f"Layer rendered: {out_path}")
+    # EDA data
+    eda_data = parse_eda_data(step.eda_data) if step.eda_data else None
+
+    # Components
+    components_top = []
+    components_bot = []
+
+    # Determine which layers to load
+    if args.layers:
+        target_layers = [l.lower() for l in args.layers]
     else:
-        out_path = os.path.join(output_dir, 'pcb_layers.png')
-        viz.render_all_layers(output_path=out_path)
+        # Default: signal + component + solder mask layers
+        target_layers = [
+            l.name for l in matrix_layers
+            if l.type in ("SIGNAL", "COMPONENT", "SOLDER_MASK")
+        ]
 
+    # Parse layer features
+    layers_data = {}
+    for layer_name, layer_paths in step.layers.items():
+        # Components
+        if layer_paths.components:
+            comps = parse_components(layer_paths.components)
+            if "top" in layer_name:
+                components_top = comps
+            else:
+                components_bot = comps
 
-def run_checklist(model, output_dir: str, min_spacing: float):
-    from checklist.registry import RuleRegistry
-    from checklist.reporter import ExcelReporter
-    from checklist.rules import (
-        CapacitorConnectorOppositeRule,
-        MinSpacingRule,
-        ComponentCountRule,
-        PolarizedComponentOrientationRule,
+        # Features
+        if layer_name in target_layers and layer_paths.features:
+            try:
+                features = parse_features(layer_paths.features)
+                ml = layer_lookup.get(layer_name)
+                if ml:
+                    layers_data[layer_name] = (features, ml)
+                    print(f"  Loaded: {layer_name} ({len(features.features)} features)")
+            except Exception as e:
+                print(f"  Warning: Failed to load {layer_name}: {e}")
+
+    print(f"\nLaunching viewer with {len(layers_data)} layers...")
+
+    from src.visualizer.viewer import PcbViewer
+
+    viewer = PcbViewer(
+        profile=profile,
+        layers_data=layers_data,
+        components_top=components_top,
+        components_bot=components_bot,
+        eda_data=eda_data,
+        user_symbols=user_symbols,
+        font=font,
     )
+    viewer.show(initial_layers=target_layers)
 
-    registry = RuleRegistry()
-    registry.register(ComponentCountRule())
-    registry.register(CapacitorConnectorOppositeRule())
-    registry.register(MinSpacingRule(min_distance=min_spacing))
-    registry.register(PolarizedComponentOrientationRule())
+    job.cleanup()
 
-    print(f"\nRunning {registry.rule_count} checklist rule(s)...")
-    results = registry.run_all(model, verbose=True)
 
-    summary = RuleRegistry.summary(results)
-    print(f"\nSummary: PASS={summary['PASS']} FAIL={summary['FAIL']} "
-          f"WARNING={summary['WARNING']} SKIP={summary['SKIP']}")
+def cmd_check(args):
+    """Run the automated checklist."""
+    print(f"Loading ODB++ from: {args.odb_path}")
+    job = odb_loader.load(args.odb_path)
 
-    os.makedirs(output_dir, exist_ok=True)
-    out_path = os.path.join(output_dir, 'checklist_result.xlsx')
-    try:
-        reporter = ExcelReporter()
-        reporter.export(results, out_path, model.product_name)
-    except ImportError as e:
-        print(f"WARNING: {e}")
-        # Fallback: print to stdout
-        print("\nChecklist Results (text fallback):")
-        for r in results:
-            print(f"  {r}")
+    # Import rules to trigger registration
+    import src.checklist.rules.ckl_component_alignment  # noqa: F401
+    import src.checklist.rules.ckl_spacing  # noqa: F401
+    import src.checklist.rules.ckl_placement  # noqa: F401
 
-    return results
+    from src.checklist.engine import load_rules, run_checklist
+    from src.checklist.reporter import generate_report
+
+    # Parse required data
+    from src.parsers.matrix_parser import parse_matrix
+    from src.parsers.profile_parser import parse_profile
+    from src.parsers.component_parser import parse_components
+    from src.parsers.eda_parser import parse_eda_data
+    from src.parsers.misc_parser import parse_info
+
+    step_name = list(job.steps.keys())[0]
+    step = job.steps[step_name]
+
+    job_data = {}
+
+    # Job info
+    if job.misc_info_path:
+        job_data["job_info"] = parse_info(job.misc_info_path)
+
+    # Matrix
+    steps, layers = parse_matrix(job.matrix_path)
+    job_data["matrix_layers"] = layers
+
+    # Profile
+    if step.profile:
+        job_data["profile"] = parse_profile(step.profile)
+
+    # EDA
+    if step.eda_data:
+        job_data["eda_data"] = parse_eda_data(step.eda_data)
+
+    # Components
+    for layer_name, layer_paths in step.layers.items():
+        if layer_paths.components:
+            comps = parse_components(layer_paths.components)
+            if "top" in layer_name:
+                job_data["components_top"] = comps
+                print(f"  Loaded {len(comps)} top components")
+            else:
+                job_data["components_bot"] = comps
+                print(f"  Loaded {len(comps)} bottom components")
+
+    # Load rules
+    rule_ids = args.rules if args.rules else None
+    rules = load_rules(rule_ids)
+    print(f"\nRunning {len(rules)} checklist rule(s)...")
+
+    # Run checklist
+    results = run_checklist(job_data, rules)
+
+    # Print results
+    print(f"\n{'='*60}")
+    print(f"CHECKLIST RESULTS")
+    print(f"{'='*60}")
+
+    passed = sum(1 for r in results if r.passed)
+    failed = len(results) - passed
+
+    for result in results:
+        status = "PASS" if result.passed else "FAIL"
+        marker = "[+]" if result.passed else "[X]"
+        print(f"  {marker} {result.rule_id}: {result.description}")
+        print(f"      Status: {status} - {result.message}")
+        if result.affected_components:
+            comps_str = ", ".join(result.affected_components[:10])
+            if len(result.affected_components) > 10:
+                comps_str += f" ... (+{len(result.affected_components) - 10} more)"
+            print(f"      Components: {comps_str}")
+
+    print(f"\nSummary: {passed} passed, {failed} failed out of {len(results)} rules")
+
+    # Generate Excel report
+    output_path = Path(args.output) if args.output else Path("output/checklist_report.xlsx")
+    job_name = job_data.get("job_info", {})
+    if hasattr(job_name, "job_name"):
+        job_name = job_name.job_name
+    else:
+        job_name = job.job_name
+
+    generate_report(results, output_path, job_name=job_name)
+
+    job.cleanup()
 
 
 def main():
-    args = parse_args()
+    parser = argparse.ArgumentParser(
+        description="ODB++ Processing System",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=__doc__,
+    )
+    subparsers = parser.add_subparsers(dest="command", help="Command to run")
 
-    # Validate input path
-    if not os.path.exists(args.odb_path):
-        print(f"ERROR: Path not found: {args.odb_path}")
-        sys.exit(1)
+    # info command
+    p_info = subparsers.add_parser("info", help="Print job summary")
+    p_info.add_argument("odb_path", help="Path to ODB++ archive or directory")
 
-    # Load model
-    model = load_model(args.odb_path, args.verbose)
-    print_summary(model)
+    # cache command
+    p_cache = subparsers.add_parser("cache", help="Parse and cache to JSON")
+    p_cache.add_argument("odb_path", help="Path to ODB++ archive or directory")
+    p_cache.add_argument("--cache-dir", default="cache", help="Cache output directory")
 
-    # Determine what to do
-    do_vis = args.visualize or args.run_all or bool(args.layer)
-    do_chk = args.checklist or args.run_all
+    # view command
+    p_view = subparsers.add_parser("view", help="Launch PCB visualizer")
+    p_view.add_argument("odb_path", help="Path to ODB++ archive or directory")
+    p_view.add_argument("--layers", nargs="*", help="Layer names to display")
 
-    if not do_vis and not do_chk:
-        # Default: just show the summary (already done above)
-        print("\nTip: Use --visualize, --checklist, or --all to generate outputs.")
-        return
+    # check command
+    p_check = subparsers.add_parser("check", help="Run design checklist")
+    p_check.add_argument("odb_path", help="Path to ODB++ archive or directory")
+    p_check.add_argument("--rules", nargs="*", help="Rule IDs to run (default: all)")
+    p_check.add_argument("--output", help="Output Excel path")
 
-    out_dir = args.output
-    if do_vis:
-        run_visualization(model, out_dir, single_layer=args.layer)
+    args = parser.parse_args()
 
-    if do_chk:
-        run_checklist(model, out_dir, min_spacing=args.min_spacing)
+    if args.command == "info":
+        cmd_info(args)
+    elif args.command == "cache":
+        cmd_cache(args)
+    elif args.command == "view":
+        cmd_view(args)
+    elif args.command == "check":
+        cmd_check(args)
+    else:
+        parser.print_help()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

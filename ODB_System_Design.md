@@ -1,654 +1,567 @@
-# ODB++ Based PCB Data Processing System
-## Design & Implementation Guide
-### Visualization Program · Checklist Automation Program
+# ODB++ Processing System - Design Document
 
-> Based on ODB++ Design Format Specification 8.1
+## 1. High-Level System Architecture
+
+The system is composed of three major subsystems that share a common data foundation:
+
+```
+                        +---------------------------+
+                        |     ODB++ Archive File    |
+                        |  (.tgz / directory tree)  |
+                        +-------------+-------------+
+                                      |
+                                      v
+                        +-------------+-------------+
+                        |        odb_loader         |
+                        |  (Extract + Discover)     |
+                        +-------------+-------------+
+                                      |
+                    +-----------------+-----------------+
+                    |                 |                 |
+                    v                 v                 v
+          +---------+------+  +------+--------+  +-----+---------+
+          |    parsers/    |  |    parsers/   |  |    parsers/   |
+          | matrix_parser  |  | feature_parser|  | component_    |
+          | eda_parser     |  | symbol_parser |  |   parser      |
+          | profile_parser |  | font_parser   |  | netlist_parser|
+          | stackup_parser |  |               |  | misc_parser   |
+          +-------+--------+  +------+--------+  +------+--------+
+                  |                   |                   |
+                  +-------------------+-------------------+
+                                      |
+                                      v
+                        +-------------+-------------+
+                        |         models.py         |
+                        |   (Dataclass definitions)  |
+                        +-------------+-------------+
+                                      |
+                    +-----------------+-----------------+
+                    |                 |                 |
+                    v                 v                 v
+          +---------+------+  +------+--------+  +-----+---------+
+          |   JSON Cache   |  |  Visualizer   |  |   Checklist   |
+          | (cache_manager)|  | (visualizer/) |  | (checklist/)  |
+          +----------------+  +---------------+  +---------------+
+```
+
+### Data Flow Summary
+
+1. **Input**: ODB++ `.tgz` archive or extracted directory
+2. **Loading**: `odb_loader` extracts the archive (if needed) and discovers the directory structure
+3. **Parsing**: Dedicated parsers read each file type into Python dataclass models
+4. **Caching**: Parsed data is serialized to JSON files for fast subsequent access
+5. **Visualization**: Renders PCB layers using matplotlib, reading from cache or parsed models
+6. **Checklist**: Evaluates design rules against component/geometry data, exports results to Excel
 
 ---
 
-## 1. Understanding the ODB++ File Structure
-
-ODB++ is a hierarchical file system structure for transferring PCB design data. The entire product model is organized as a directory tree, typically distributed as a compressed `.tgz` or `.zip` archive.
-
-### 1.1 Directory Hierarchy
-
-| Path | Role |
-|------|------|
-| `<product_model>/` | Root directory (entire product model) |
-| `misc/` | Global information (units, info, attrlist, metadata.xml) |
-| `matrix/` | Layer stackup definition (matrix file, stackup.xml) |
-| `steps/<step_name>/` | Step-level data (typically 'pcb' or 'panel') |
-| `steps/<step>/layers/<layer>/` | Per-layer feature data (features, components, etc.) |
-| `steps/<step>/eda/` | EDA data (data file: nets, components, packages) |
-| `symbols/` | User-defined symbol shape definitions |
-| `fonts/` | Font definitions |
-| `wheels/` | Drill symbol definitions |
-
-### 1.2 Key File Roles
-
-#### matrix/matrix — Layer Definition
-Defines the complete list of all PCB layers, their order, type (SIGNAL/POWER/DRILL/SOLDER_MASK, etc.), and polarity (POSITIVE/NEGATIVE). Layer ordering and color mapping for visualization are determined from this file.
-
-#### steps/\<step\>/layers/\<layer\>/features — Feature Data
-The core file where actual geometry data (pads, lines, arcs, surfaces, text) for each layer is stored. This is the primary data source for visualization.
-
-#### steps/\<step\>/layers/\<layer\>/components — Component Placement
-Contains the position (x, y), rotation angle, mirror flag, reference designator, and pin coordinates of components placed on that layer (TOP/BOTTOM). This is the primary data source for checklist automation.
-
-#### steps/\<step\>/eda/data — Netlist & EDA
-EDA data containing NET, CMP (component), PKG (package), PIN, and SNT (subnet) records. Used for electrical connectivity information and component-to-package mapping.
-
----
-
-## 2. Python Parser Design
-
-### 2.1 Overall Parser Architecture
-
-ODB++ files are a mix of structured text-based Line Record format and XML format. Separating the parser into modules ensures maintainability and extensibility.
-
-| Module | Responsible File | Output Data |
-|--------|-----------------|-------------|
-| `ODBReader` | Entry point, decompression, directory traversal | ODBModel object |
-| `MatrixParser` | matrix/matrix | Layer list + type information |
-| `FeaturesParser` | layers/\<layer\>/features | Pad/Line/Arc/Surface/Text lists |
-| `ComponentParser` | layers/\<layer\>/components | Component + Pin lists |
-| `EDAParser` | eda/data | Net/Package/Pin connection info |
-| `SymbolResolver` | symbols/ + standard spec symbols | Symbol → geometry conversion |
-| `StackupParser` | matrix/stackup.xml | Layer physical properties |
-
-### 2.2 Features File Parsing
-
-The features file consists of a header section followed by a record section.
-
-#### File Structure
+## 2. Proposed Directory Structure
 
 ```
-UNITS=INCH
-ID=<id>
-$0 r120          # Symbol index table
-$1 rect20x60 M
-@0 .smd          # Attribute name table
-&0 some_string   # Attribute string table
-# Record section
-P 1.0 2.0 0 P 4 0          # Pad record
-L 0.0 0.0 1.0 1.0 1 P 0 0  # Line record
-A xs ys xe ye xc yc sym P 0 Y  # Arc record
-S P 0              # Surface start
-OB x y I           # Outline begin
-OS                 # Outline end
-SE                 # Surface end
-```
-
-#### Record Type Parsing Rules
-
-| Record | Format Summary | Key Fields |
-|--------|---------------|------------|
-| `P` (Pad) | `P x y apt_def pol dcode orient_def` | x,y position, symbol index, polarity, rotation/mirror |
-| `L` (Line) | `L xs ys xe ye sym_num pol dcode` | Start/end points, symbol (line width), polarity |
-| `A` (Arc) | `A xs ys xe ye xc yc sym pol dcode cw` | Start/end/center points, direction (CW/CCW) |
-| `S` (Surface) | `S pol dcode` | Polygon area, island + hole structure |
-| `T` (Text) | `T x y font pol orient xsize ysize width 'text'` | Position, font, orientation, size, string |
-| `OB/OC` | `OB x y type` | Surface outline begin (I=island) |
-| `OS` | `OS` | Outline end |
-| `SE` | `SE` | Surface end |
-
-#### orient_def Decoding
-
-Orientation values come in two formats: legacy (0–7) and new-style (8/9 + angle).
-
-```python
-def decode_orient(orient_str):
-    parts = orient_str.split()
-    mode = int(parts[0])
-    if mode <= 7:  # Legacy: 45-degree increments
-        angles = [0, 90, 180, 270, 0, 90, 180, 270]
-        mirror = mode >= 4
-        return angles[mode], mirror
-    else:  # New-style: arbitrary angle
-        angle = float(parts[1]) if len(parts) > 1 else 0.0
-        mirror = (mode == 9)
-        return angle, mirror
-```
-
-### 2.3 Component File Parsing
-
-The CMP record holds component placement information, and subsequent TOP/BOT records represent the position of each pin.
-
-```
-CMP <idx> <x> <y> <rot> <mirror> <refdes> <pkg_ref>
-TOP <pin_idx> <x> <y> <rot> <mirror> <net_idx> <subnet_idx> <pin_num>
-```
-
-| Field | Description |
-|-------|-------------|
-| `idx` | Component index (0-based) |
-| `x, y` | Component origin coordinates (inches or mm) |
-| `rot` | Rotation angle (degrees, counter-clockwise) |
-| `mirror` | Y = mirrored (bottom placement), N = not mirrored (top placement) |
-| `refdes` | Reference designator (e.g., C400, U1, J10) |
-| `pkg_ref` | Package reference (symbol name) |
-| `TOP/BOT` | Pin position records (TOP = top-side pins, BOT = bottom-side pins) |
-
-### 2.4 Symbol Processing
-
-ODB++ symbols fall into two categories: standard symbols and user-defined symbols. For visualization, symbol names must be converted into actual geometry parameters.
-
-#### Key Standard Symbol Parsing Rules
-
-| Symbol Pattern | Shape | Parameter Extraction |
-|---------------|-------|---------------------|
-| `r<d>` | Round (circle) | d = diameter |
-| `rect<w>x<h>` | Rectangle | w = width, h = height |
-| `oval<w>x<h>` | Oval | w = width, h = height |
-| `sq<s>` | Square | s = size |
-| `di<w>x<h>` | Diamond | w = width, h = height |
-| `oct<w>x<h>x<cx>x<cy>` | Octagon | w,h = outer size, cx,cy = corner cut |
-| `hex_l<w>x<h>x<r>` | Horizontal hexagon | w,h = size, r = corner radius |
-| `donut_r<od>x<id>` | Round donut | od = outer diameter, id = inner diameter |
-| `rc_tho<w>x<h>x...` | Rectangular thermal | Spoke pattern |
-
-```python
-import re
-
-def parse_symbol(name):
-    # Round
-    m = re.match(r'^r([\d.]+)$', name)
-    if m: return {'type': 'circle', 'diameter': float(m[1])}
-    # Rectangle
-    m = re.match(r'^rect([\d.]+)x([\d.]+)$', name)
-    if m: return {'type': 'rect', 'w': float(m[1]), 'h': float(m[2])}
-    # Oval
-    m = re.match(r'^oval([\d.]+)x([\d.]+)$', name)
-    if m: return {'type': 'oval', 'w': float(m[1]), 'h': float(m[2])}
-    # User-defined symbol → refer to symbols/<n>/features
-    return {'type': 'user_defined', 'name': name}
+ODB/
+├── data/                          # ODB++ input files (.tgz archives)
+│   └── designodb_rigidflex.tgz
+├── cache/                         # Generated JSON cache output
+│   └── <job_name>/
+│       ├── job_info.json          # misc/info data
+│       ├── matrix.json            # Layer stack definition
+│       ├── stackup.json           # Stackup XML data (if present)
+│       ├── profile.json           # Board outline
+│       ├── nets.json              # Net names and connectivity
+│       ├── packages.json          # EDA package definitions
+│       ├── components_top.json    # Top-side components
+│       ├── components_bot.json    # Bottom-side components
+│       ├── symbols/               # Resolved symbol geometries
+│       │   ├── standard.json      # Standard symbol parameter cache
+│       │   └── user_defined.json  # User-defined symbol features
+│       └── layers/                # Per-layer feature data
+│           ├── signal_1.json
+│           ├── soldermask_top.json
+│           └── ...
+├── output/                        # Generated outputs
+│   └── checklist_report.xlsx
+│
+├── src/                           # Source code root
+│   ├── __init__.py
+│   ├── models.py                  # All dataclass/data model definitions
+│   ├── odb_loader.py              # Archive extraction + directory discovery
+│   ├── cache_manager.py           # JSON serialization/deserialization
+│   │
+│   ├── parsers/                   # One parser per ODB++ file type
+│   │   ├── __init__.py
+│   │   ├── base_parser.py         # Shared parsing utilities
+│   │   ├── matrix_parser.py       # matrix/matrix file
+│   │   ├── misc_parser.py         # misc/info, misc/attrlist
+│   │   ├── profile_parser.py      # step profile + layer profiles
+│   │   ├── feature_parser.py      # layer features files (L/P/A/T/B/S)
+│   │   ├── component_parser.py    # comp_+_top, comp_+_bot components
+│   │   ├── eda_parser.py          # eda/data (PKG, NET, PIN, SNT, FID)
+│   │   ├── netlist_parser.py      # netlists/cadnet/netlist
+│   │   ├── symbol_resolver.py     # Standard symbol geometry generation
+│   │   ├── symbol_parser.py       # User-defined symbol features
+│   │   ├── font_parser.py         # fonts/standard
+│   │   ├── stackup_parser.py      # matrix/stackup.xml
+│   │   └── stephdr_parser.py      # step header
+│   │
+│   ├── visualizer/                # Layer-by-layer PCB visualization
+│   │   ├── __init__.py
+│   │   ├── renderer.py            # Main rendering orchestrator
+│   │   ├── layer_renderer.py      # Render features (pads/lines/arcs/surfaces)
+│   │   ├── symbol_renderer.py     # Render standard + user-defined symbols
+│   │   ├── component_overlay.py   # Component outlines + reference designators
+│   │   └── viewer.py              # Interactive matplotlib viewer (layer toggle)
+│   │
+│   └── checklist/                 # Automated design-rule checklist
+│       ├── __init__.py
+│       ├── engine.py              # Rule evaluation engine
+│       ├── rule_base.py           # Base class for checklist rules
+│       ├── reporter.py            # Excel report generation (openpyxl)
+│       └── rules/                 # Individual rule implementations
+│           ├── __init__.py
+│           ├── ckl_component_alignment.py
+│           ├── ckl_spacing.py
+│           ├── ckl_placement.py
+│           └── ...
+│
+├── main.py                        # CLI entry point
+├── requirements.txt
+└── ODB_System_Design.md           # This document
 ```
 
 ---
 
-## 3. Python Data Model Design
+## 3. Module Responsibilities
 
-Below is the Python class structure for holding parsed data. `dataclass` is used to build a clear, type-safe model.
+### 3.1 `src/models.py` - Data Models
 
-### 3.1 Core Data Classes
+Central dataclass definitions that all modules share. No parsing logic lives here.
 
-```python
-from dataclasses import dataclass, field
-from typing import List, Optional, Tuple
+| Model | Purpose | Key Fields |
+|-------|---------|------------|
+| `JobInfo` | Product model metadata | `job_name`, `odb_version`, `units`, `creation_date`, `max_uid` |
+| `MatrixStep` | Step entry in matrix | `col`, `name`, `id` |
+| `MatrixLayer` | Layer entry in matrix | `row`, `name`, `context`, `type`, `polarity`, `add_type`, `start_name`, `end_name`, `form` |
+| `StepHeader` | Step header data | `units`, `x_datum`, `y_datum`, `x_origin`, `y_origin`, `step_repeats[]` |
+| `StepRepeat` | Step-and-repeat entry | `name`, `x`, `y`, `dx`, `dy`, `nx`, `ny`, `angle`, `flip`, `mirror` |
+| `Point` | 2D coordinate | `x`, `y` |
+| `Contour` | Closed polygon | `is_island`, `segments[]` (LineSegment or ArcSegment) |
+| `LineSegment` | Straight segment | `end: Point` |
+| `ArcSegment` | Arc segment | `end: Point`, `center: Point`, `clockwise: bool` |
+| `Surface` | Polygon area | `polarity`, `contours[]` |
+| `Profile` | Board/layer outline | `surface: Surface` |
+| `SymbolRef` | Symbol table entry | `index`, `name`, `unit_override` (None/'I'/'M') |
+| `StandardSymbol` | Parsed standard symbol | `type` (round/rect/oval/...), `params: dict` |
+| `UserSymbol` | User-defined symbol | `name`, `features[]` |
+| `PadRecord` | Pad feature | `x`, `y`, `symbol_idx`, `polarity`, `rotation`, `mirror`, `attributes` |
+| `LineRecord` | Line feature | `xs`, `ys`, `xe`, `ye`, `symbol_idx`, `polarity`, `attributes` |
+| `ArcRecord` | Arc feature | `xs`, `ys`, `xe`, `ye`, `xc`, `yc`, `symbol_idx`, `polarity`, `clockwise`, `attributes` |
+| `TextRecord` | Text feature | `x`, `y`, `font`, `polarity`, `orient`, `xsize`, `ysize`, `width_factor`, `text` |
+| `SurfaceRecord` | Surface feature | `polarity`, `contours[]`, `attributes` |
+| `LayerFeatures` | All features in a layer | `units`, `symbols[]`, `attr_names{}`, `attr_texts{}`, `features[]` |
+| `Net` | Electrical net | `name`, `index`, `subnets[]`, `attributes` |
+| `Subnet` | Subnet within a net | `type` (VIA/TRC/PLN/TOP), `feature_ids[]` |
+| `FeatureId` | Cross-reference | `type` (C/L/H), `layer_idx`, `feature_idx` |
+| `Package` | EDA package def | `name`, `pitch`, `bbox`, `pins[]`, `outlines[]` |
+| `Pin` | Pin in package | `name`, `type`, `center`, `finished_hole_size`, `electrical_type`, `mount_type` |
+| `Component` | Placed component | `pkg_ref`, `x`, `y`, `rotation`, `mirror`, `comp_name`, `part_name`, `properties{}`, `toeprints[]`, `bom_data` |
+| `Toeprint` | Pin placement | `pin_num`, `x`, `y`, `rotation`, `mirror`, `net_num`, `subnet_num`, `name` |
+| `FontChar` | Font character def | `char`, `strokes[]` |
+| `StrokeFont` | Complete font | `xsize`, `ysize`, `characters{}` |
 
-@dataclass
-class Layer:
-    name: str
-    layer_type: str       # SIGNAL, POWER, DRILL, SOLDER_MASK, SILK_SCREEN, ...
-    polarity: str         # POSITIVE, NEGATIVE
-    side: str             # TOP, BOTTOM, INNER
-    index: int            # Stack order
-    color: Optional[str] = None
+### 3.2 `src/odb_loader.py` - Archive Extraction & Discovery
 
-@dataclass
-class Pad:
-    x: float; y: float
-    symbol_name: str      # Resolved symbol name
-    polarity: str         # P/N
-    rotation: float = 0.0
-    mirror: bool = False
-    attributes: dict = field(default_factory=dict)
+**Responsibility**: Given a `.tgz` file path or an extracted directory path, discover and validate the ODB++ structure.
 
-@dataclass
-class Line:
-    x1: float; y1: float; x2: float; y2: float
-    symbol_name: str      # Line width symbol
-    polarity: str
+| Function | Description |
+|----------|-------------|
+| `load(path) -> OdbJob` | Main entry: extract if `.tgz`, validate directory tree, return `OdbJob` handle |
+| `extract_archive(tgz_path, dest_dir)` | Extract `.tgz` to a working directory |
+| `discover_structure(root_dir) -> OdbJob` | Walk the directory tree, identify steps, layers, symbols |
+| `decompress_file(path)` | Handle `.Z` (UNIX compress) files transparently |
 
-@dataclass
-class Arc:
-    xs: float; ys: float  # Start point
-    xe: float; ye: float  # End point
-    xc: float; yc: float  # Center point
-    symbol_name: str
-    polarity: str
-    clockwise: bool
+`OdbJob` is a lightweight container holding resolved paths:
+- `root_dir`, `matrix_path`, `misc_info_path`, `font_path`
+- `steps: dict[str, StepPaths]` where `StepPaths` holds paths to `stephdr`, `profile`, `eda/data`, `netlists/`, and `layers/`
+- `symbols: dict[str, Path]` mapping symbol names to their feature files
+- `wheels: dict[str, Path]`
 
-@dataclass
-class Surface:
-    polarity: str
-    islands: List[List[Tuple]]  # Outer polygon + holes
+### 3.3 `src/parsers/base_parser.py` - Shared Utilities
 
-@dataclass
-class Pin:
-    pin_num: int
-    x: float; y: float
-    rotation: float
-    net_index: int
-    net_name: Optional[str] = None
+Common parsing functions reused by all parsers:
 
-@dataclass
-class Component:
-    index: int
-    refdes: str           # e.g., C400, U1
-    x: float; y: float
-    rotation: float
-    mirror: bool          # True = bottom side
-    package_ref: str
-    pins: List[Pin] = field(default_factory=list)
-    attributes: dict = field(default_factory=dict)
-    part_number: Optional[str] = None
-    value: Optional[str] = None
+| Function | Description |
+|----------|-------------|
+| `read_file(path) -> list[str]` | Read file, strip comments (`#` lines), handle `.Z` decompression |
+| `parse_units(line) -> str` | Extract `UNITS=MM\|INCH` |
+| `parse_structured_text(lines) -> dict` | Parse `KEY=VALUE` + `NAME { ... }` blocks |
+| `parse_symbol_table(lines) -> list[SymbolRef]` | Parse `$N <name> [I\|M]` entries |
+| `parse_attr_lookup(lines) -> (dict, dict)` | Parse `@N <name>` and `&N <value>` tables |
+| `parse_attributes(attr_str) -> dict` | Decode `;0=1,2=0;ID=123` into `{attr_name: value}` |
+| `parse_contour(lines, idx) -> (Contour, int)` | Parse `OB/OS/OC/OE` block, return contour + next line index |
+| `parse_surface(lines, idx) -> (Surface, int)` | Parse `S ... SE` block |
 
-@dataclass
-class LayerData:
-    layer: Layer
-    pads: List[Pad] = field(default_factory=list)
-    lines: List[Line] = field(default_factory=list)
-    arcs: List[Arc] = field(default_factory=list)
-    surfaces: List[Surface] = field(default_factory=list)
-    components: List[Component] = field(default_factory=list)
+### 3.4 `src/parsers/matrix_parser.py` - Matrix Parser
 
-@dataclass
-class ODBModel:
-    product_name: str
-    units: str            # INCH / MM
-    layers: List[Layer]
-    layer_data: dict      # {layer_name: LayerData}
-    nets: dict            # {net_name: [Pin, ...]}
-```
+**Input**: `matrix/matrix` (structured text)
+**Output**: `list[MatrixStep]`, `list[MatrixLayer]`
 
----
+Parses `STEP { ... }` and `LAYER { ... }` blocks. Sorts layers by `ROW` for physical stacking order. Identifies layer types (SIGNAL, COMPONENT, DRILL, etc.) and flex/rigid form.
 
-## 4. Layer Visualization Program
+### 3.5 `src/parsers/misc_parser.py` - Miscellaneous Parser
 
-### 4.1 Visualization Library Selection
+**Input**: `misc/info`, `misc/attrlist`
+**Output**: `JobInfo`
 
-| Library | Pros | Cons | Recommended Use |
-|---------|------|------|-----------------|
-| Matplotlib | General-purpose, simple static output | Slow for large feature sets | Prototyping, reports |
-| Shapely + Matplotlib | Strong complex polygon handling | Limited interactivity | Surface rendering |
-| PyQtGraph | Fast rendering, zoom/pan | Qt dependency | Real-time interactive |
-| Plotly | Web-based, easy sharing | No PCB-specific features | Sharing results |
-| Vispy/OpenGL | Ultra-fast for large datasets | Complex to implement | Millions of features |
+Parses simple key=value files for job name, ODB version, units, creation date, etc.
 
-> **Recommended**: Dual support structure — Matplotlib (static/basic) + PyQtGraph or Plotly (interactive)
+### 3.6 `src/parsers/stephdr_parser.py` - Step Header Parser
 
-### 4.2 Symbol Rendering Implementation
+**Input**: `steps/<step>/stephdr` (structured text)
+**Output**: `StepHeader`
 
-#### Standard Symbol → Matplotlib Patch Conversion
+Parses step header including datum/origin coordinates and `STEP-REPEAT { ... }` blocks for panelization data.
 
-```python
-from matplotlib.patches import Circle, Rectangle, Ellipse, Polygon
-from matplotlib.transforms import Affine2D
-import numpy as np
+### 3.7 `src/parsers/profile_parser.py` - Profile Parser
 
-def symbol_to_patch(sym_info, x, y, rotation, mirror, polarity, layer_color):
-    color = layer_color if polarity == 'P' else 'white'
-    t = Affine2D().rotate_deg(rotation)
-    if mirror:
-        t = t.scale(-1, 1)
-    t = t.translate(x, y)
+**Input**: `steps/<step>/profile` or `layers/<layer>/profile` (features file with single surface)
+**Output**: `Profile`
 
-    stype = sym_info['type']
-    if stype == 'circle':
-        d = sym_info['diameter']
-        patch = Circle((0, 0), d / 2, color=color)
-    elif stype == 'rect':
-        w, h = sym_info['w'], sym_info['h']
-        patch = Rectangle((-w / 2, -h / 2), w, h, color=color)
-    elif stype == 'oval':
-        w, h = sym_info['w'], sym_info['h']
-        patch = Ellipse((0, 0), w, h, color=color)
-    # ... handle additional symbol types
-    patch.set_transform(t + ax.transData)
-    return patch
-```
+Parses the board outline (or layer outline for rigid-flex). The profile is a single surface feature containing one island contour (the board boundary) and optional hole contours (internal cutouts).
 
-#### Surface (Polygon) Rendering
+### 3.8 `src/parsers/feature_parser.py` - Layer Features Parser (Core)
 
-```python
-from matplotlib.patches import PathPatch
-from matplotlib.path import Path
+**Input**: `layers/<layer>/features` (line record text, may be `.Z` compressed)
+**Output**: `LayerFeatures`
 
-def surface_to_patch(surface, color):
-    # First island is the outer boundary; remaining are holes
-    verts = []
-    codes = []
-    for i, island in enumerate(surface.islands):
-        verts.extend(island)
-        codes.append(Path.MOVETO)
-        codes.extend([Path.LINETO] * (len(island) - 2))
-        codes.append(Path.CLOSEPOLY)
-    path = Path(verts, codes)
-    return PathPatch(path, facecolor=color, edgecolor='none')
-```
+This is the most complex and performance-critical parser. It handles:
 
-### 4.3 Layer Visualization Class
+1. Parse `UNITS`, `ID`, `F` (feature count) header
+2. Build symbol table from `$` lines
+3. Build attribute lookup tables from `@` and `&` lines
+4. Parse feature records:
+   - **L** (Line): start point, end point, symbol index, polarity
+   - **P** (Pad): center, symbol/aperture, polarity, orientation (0-9 system)
+   - **A** (Arc): start, end, center, symbol, polarity, clockwise flag
+   - **T** (Text): position, font, size, text string
+   - **B** (Barcode): position, type, dimensions, text
+   - **S...SE** (Surface): polarity + contour polygons (OB/OS/OC/OE)
 
-```python
-class PCBVisualizer:
-    LAYER_COLORS = {
-        'SIGNAL':      {'TOP': '#CC0000', 'BOTTOM': '#0000CC', 'INNER': '#CC6600'},
-        'SOLDER_MASK': {'TOP': '#00CC44', 'BOTTOM': '#009933'},
-        'SILK_SCREEN': {'TOP': '#FFFFFF', 'BOTTOM': '#FFFF00'},
-        'DRILL':       '#888888',
-        'POWER':       '#FF6600',
+Pad orientation decoding:
+- `0-3`: 0/90/180/270 degrees, no mirror
+- `4-7`: 0/90/180/270 degrees, mirrored
+- `8 <angle>`: arbitrary angle, no mirror
+- `9 <angle>`: arbitrary angle, mirrored
+
+### 3.9 `src/parsers/component_parser.py` - Component Parser
+
+**Input**: `layers/comp_+_top/components`, `layers/comp_+_bot/components`
+**Output**: `list[Component]`
+
+Parses:
+- Attribute lookup tables (`@`/`&` lines)
+- `CMP` records: package reference, placement (x, y, rotation, mirror), reference designator, part name
+- `PRP` records: component properties (part number, type, description, value)
+- `TOP` records: toeprint/pin placements with net connectivity
+- BOM data records: `CPN`, `PKG`, `IPN`, `DSC`, `VPL_VND`, `VPL_MPN`, `VND`, `MPN`
+
+### 3.10 `src/parsers/eda_parser.py` - EDA Data Parser
+
+**Input**: `steps/<step>/eda/data` (line record text, compressed)
+**Output**: `EdaData` containing nets, packages, pins
+
+Parses:
+- `HDR`: EDA source identifier
+- `LYR`: Layer name list (establishes index-to-name mapping for FID records)
+- `NET`: Net records with names and attribute assignments
+- `SNT`: Subnet records (TOP/VIA/TRC/PLN) with connectivity type
+- `FID`: Feature ID cross-references (type, layer index, feature index)
+- `PKG`: Package definitions with bounding box and pitch
+- `PIN`: Pin definitions (name, type, center, hole size, electrical/mount type)
+- Outline records (`RC/CR/SQ/CT/OB/OS/OC/OE/CE`): Package and pin outlines
+
+### 3.11 `src/parsers/netlist_parser.py` - Netlist Parser
+
+**Input**: `steps/<step>/netlists/cadnet/netlist`
+**Output**: `dict[int, str]` (net index to net name mapping)
+
+Parses the header (`H optimize ...`) and indexed net name table (`$N <net_name>`).
+
+### 3.12 `src/parsers/symbol_resolver.py` - Standard Symbol Resolver
+
+**Input**: Symbol name string (e.g., `r120`, `rect20x60`, `donut_r78.74x27.559`)
+**Output**: `StandardSymbol` with computed geometry (vertices/arcs for rendering)
+
+Implements the complete standard symbol naming grammar from Appendix A:
+
+| Pattern | Symbol Type | Example |
+|---------|------------|---------|
+| `r<d>` | Round (circle) | `r120` |
+| `s<s>` | Square | `s50` |
+| `rect<w>x<h>` | Rectangle | `rect20x60` |
+| `rect<w>x<h>xr<rad>` | Rounded rectangle | `rect100x50xr10` |
+| `rect<w>x<h>xc<rad>` | Chamfered rectangle | `rect100x50xc8` |
+| `oval<w>x<h>` | Oval/oblong | `oval30x80` |
+| `di<w>x<h>` | Diamond | `di40x60` |
+| `oct<w>x<h>x<r>` | Octagon | `oct50x50x10` |
+| `donut_r<od>x<id>` | Round donut | `donut_r78.74x27.559` |
+| `donut_s<od>x<id>` | Square donut | `donut_s100x60` |
+| `donut_rc<ow>x<oh>x<lw>` | Rectangular donut | `donut_rc100x80x10` |
+| `thr<od>x<id>x<a>x<n>x<g>` | Round thermal (rounded) | `thr200x100x45x4x30` |
+| `ths<od>x<id>x<a>x<n>x<g>` | Round thermal (squared) | `ths200x100x0x4x20` |
+| `s_ths<os>x<is>x<a>x<n>x<g>` | Square thermal | `s_ths200x100x45x4x20` |
+| `el<w>x<h>` | Ellipse | `el30x50` |
+| `moire<rw>x<rg>x<nr>x...` | Moire pattern | (test/alignment) |
+
+Symbol dimensions are in **mils** (imperial) or **microns** (metric), determined by the `I`/`M` suffix on the `$` line, or the file's `UNITS` setting.
+
+### 3.13 `src/parsers/symbol_parser.py` - User-Defined Symbol Parser
+
+**Input**: `symbols/<name>/features`
+**Output**: `UserSymbol`
+
+Uses the same feature parsing logic as `feature_parser.py` to parse user-defined symbol geometry. These symbols are typically pad shapes (SMD footprint pads) defined as surface contours.
+
+### 3.14 `src/parsers/font_parser.py` - Font Parser
+
+**Input**: `fonts/standard`
+**Output**: `StrokeFont`
+
+Parses character definitions (`CHAR <c>` ... `ECHAR` blocks) where each character is composed of `LINE` stroke records. Used by the visualizer to render text features.
+
+### 3.15 `src/parsers/stackup_parser.py` - Stackup XML Parser
+
+**Input**: `matrix/stackup.xml` (if present)
+**Output**: Stackup data (materials, dielectric properties, impedance specs)
+
+Uses Python's `xml.etree.ElementTree` to parse the XML stackup file. Not all ODB++ files include this.
+
+### 3.16 `src/cache_manager.py` - JSON Cache Manager
+
+**Responsibility**: Serialize parsed data to JSON and load from cache for fast access.
+
+| Function | Description |
+|----------|-------------|
+| `cache_job(job, parsed_data, cache_dir)` | Write all parsed data to JSON files |
+| `load_cache(cache_dir) -> dict` | Load all cached JSON data |
+| `is_cache_valid(cache_dir, source_path) -> bool` | Check if cache is newer than source |
+| `cache_layer(layer_name, features, cache_dir)` | Cache individual layer data |
+| `load_layer(layer_name, cache_dir)` | Load individual layer from cache |
+
+**JSON Cache Structure**:
+
+```json
+// job_info.json
+{
+  "job_name": "designodb_rigidflex",
+  "odb_version": "8.1",
+  "units": "INCH",
+  "creation_date": "20161024.101454"
+}
+
+// matrix.json
+{
+  "steps": [{"col": 1, "name": "cellular_flip-phone", "id": 544796}],
+  "layers": [
+    {"row": 1, "name": "comp_+_top", "type": "COMPONENT", "context": "BOARD", "polarity": "POSITIVE"},
+    {"row": 4, "name": "signal_1", "type": "SIGNAL", "context": "BOARD", "polarity": "POSITIVE"},
+    ...
+  ]
+}
+
+// components_top.json
+{
+  "components": [
+    {
+      "comp_name": "R56",
+      "part_name": "1000-0243",
+      "pkg_ref": 48,
+      "x": 1.6755908, "y": 0.9277626,
+      "rotation": 90.0, "mirror": false,
+      "properties": {"PART_NO": "1000-0243", "TYPE": "Resistor", "VALUE": "3.3Kohms"},
+      "toeprints": [{"pin_num": 1, "x": 1.675, "y": 0.917, "net_num": 20}]
     }
+  ]
+}
 
-    def __init__(self, odb_model: ODBModel):
-        self.model = odb_model
+// layers/signal_1.json
+{
+  "units": "INCH",
+  "symbols": [{"index": 0, "name": "r10.827"}, ...],
+  "features": [
+    {"type": "pad", "x": 2.385, "y": 0.116, "symbol_idx": 0, "polarity": "P"},
+    {"type": "line", "xs": 0.003, "ys": 1.19, "xe": 0.003, "ye": 1.22, "symbol_idx": 0, "polarity": "P"},
+    {"type": "surface", "polarity": "P", "contours": [{"is_island": true, "segments": [...]}]}
+  ]
+}
+```
 
-    def render_layer(self, layer_name, ax=None, show_components=True):
-        import matplotlib.pyplot as plt
-        if ax is None:
-            fig, ax = plt.subplots(figsize=(16, 12))
-        ax.set_aspect('equal')
-        ax.set_facecolor('#1a1a1a')
+### 3.17 `src/visualizer/renderer.py` - Main Rendering Orchestrator
 
-        ld = self.model.layer_data[layer_name]
-        color = self._get_layer_color(ld.layer)
+**Responsibility**: Coordinates the rendering pipeline.
 
-        # Surfaces (filled areas) first
-        for surf in ld.surfaces:
-            patch = surface_to_patch(surf, color)
-            ax.add_patch(patch)
+| Function | Description |
+|----------|-------------|
+| `render_board(job_data, layers, options)` | Render selected layers to a matplotlib figure |
+| `setup_figure(profile)` | Create figure with board outline, set axis limits/aspect |
+| `apply_layer_colors(layer_type)` | Assign default colors by layer type |
 
-        # Lines
-        for line in ld.lines:
-            sym = parse_symbol(line.symbol_name)
-            lw = sym.get('diameter', 0.01)
-            ax.plot([line.x1, line.x2], [line.y1, line.y2],
-                    color=color, lw=lw * 100, solid_capstyle='round')
+### 3.18 `src/visualizer/layer_renderer.py` - Feature Renderer
 
-        # Pads
-        for pad in ld.pads:
-            sym = parse_symbol(pad.symbol_name)
-            patch = symbol_to_patch(sym, pad.x, pad.y,
-                                    pad.rotation, pad.mirror,
-                                    pad.polarity, color)
-            ax.add_patch(patch)
+**Responsibility**: Convert parsed feature records into matplotlib drawing primitives.
 
-        # Component overlay
-        if show_components:
-            for comp in ld.components:
-                ax.text(comp.x, comp.y, comp.refdes,
-                        color='white', fontsize=5, ha='center')
-        return ax
+| Function | Description |
+|----------|-------------|
+| `render_layer(ax, layer_features, color, alpha)` | Render all features of a layer |
+| `draw_line(ax, line_rec, symbol, color)` | Draw a line with proper width from symbol |
+| `draw_pad(ax, pad_rec, symbol, color)` | Draw a pad with resolved symbol geometry |
+| `draw_arc(ax, arc_rec, symbol, color)` | Draw an arc with proper width |
+| `draw_surface(ax, surface_rec, color)` | Draw filled polygon(s) with holes |
+| `draw_text(ax, text_rec, font, color)` | Render text using stroke font |
 
-    def render_all_layers(self, output_path=None):
-        import matplotlib.pyplot as plt
-        n = len(self.model.layers)
-        cols = min(4, n)
-        rows = (n + cols - 1) // cols
-        fig, axes = plt.subplots(rows, cols, figsize=(cols * 6, rows * 5))
-        for i, layer in enumerate(self.model.layers):
-            ax = axes.flat[i]
-            self.render_layer(layer.name, ax)
-            ax.set_title(f"{layer.name} ({layer.layer_type})")
-        if output_path:
-            plt.savefig(output_path, dpi=150, bbox_inches='tight')
-        else:
-            plt.show()
+Key rendering considerations:
+- **Polarity**: Positive features add material; negative features remove. Use clipping or layered rendering with background color.
+- **Symbol width**: Lines and arcs have width defined by their symbol (e.g., `r10.827` = 10.827 mil round aperture).
+- **Pad rotation**: Apply the 0-9 orientation system correctly.
+- **Surfaces**: Render as matplotlib `PathPatch` with island/hole winding rules.
+- **Arc discretization**: Convert arc segments to polyline approximation for matplotlib.
+
+### 3.19 `src/visualizer/symbol_renderer.py` - Symbol Renderer
+
+**Responsibility**: Generate drawable geometry from symbol definitions.
+
+| Function | Description |
+|----------|-------------|
+| `resolve_symbol(name, units) -> Polygon/Circle` | Parse standard symbol name, return shapely geometry |
+| `render_user_symbol(symbol_features) -> Polygon` | Convert user-defined symbol features to geometry |
+| `get_symbol_width(name, units) -> float` | Get line width for trace symbols (round apertures) |
+
+### 3.20 `src/visualizer/component_overlay.py` - Component Overlay
+
+**Responsibility**: Render component outlines and reference designators on top of layer rendering.
+
+| Function | Description |
+|----------|-------------|
+| `draw_components(ax, components, packages)` | Draw component bounding boxes and ref-des labels |
+| `draw_package_outline(ax, pkg, x, y, rot, mirror)` | Draw package outline from PKG outlines |
+| `draw_pin_markers(ax, toeprints)` | Mark pin 1 indicators |
+
+### 3.21 `src/visualizer/viewer.py` - Interactive Viewer
+
+**Responsibility**: Provide an interactive matplotlib window with layer toggling.
+
+| Feature | Description |
+|---------|-------------|
+| Layer checkboxes | Toggle visibility of individual layers |
+| Layer type groups | Toggle all signal/mask/drill layers at once |
+| Zoom/pan | Standard matplotlib navigation toolbar |
+| Component info | Click to identify component (reference designator, part, net) |
+| Coordinate display | Show cursor position in board units |
+| Export | Save current view as PNG/SVG |
+
+### 3.22 `src/checklist/engine.py` - Checklist Engine
+
+**Responsibility**: Orchestrate rule evaluation.
+
+| Function | Description |
+|----------|-------------|
+| `run_checklist(job_data, rules) -> list[RuleResult]` | Evaluate all rules against job data |
+| `load_rules(config) -> list[Rule]` | Load rule definitions from config |
+| `evaluate_rule(rule, job_data) -> RuleResult` | Run a single rule, return pass/fail with details |
+
+### 3.23 `src/checklist/rule_base.py` - Rule Base Class
+
+```python
+class ChecklistRule:
+    """Base class for all checklist rules."""
+    rule_id: str        # e.g., "CKL-001"
+    description: str    # Human-readable description
+    category: str       # "placement", "spacing", "alignment", etc.
+
+    def evaluate(self, job_data) -> RuleResult:
+        """Override in subclasses. Return pass/fail with details."""
+        raise NotImplementedError
+```
+
+`RuleResult` contains: `rule_id`, `passed: bool`, `message: str`, `affected_components: list`, `details: dict`
+
+### 3.24 `src/checklist/rules/` - Individual Rules
+
+Example rules that can be implemented:
+
+| Rule ID | Description | Logic |
+|---------|-------------|-------|
+| CKL-001 | Capacitor-connector alignment | Check if specific capacitors on Top are horizontally aligned with connectors on Bottom |
+| CKL-002 | Component spacing | Verify minimum distance between components using KDTree (scipy) |
+| CKL-003 | Component placement zone | Check components are within board outline profile |
+| CKL-004 | Solder paste coverage | Verify paste layer features cover component pads |
+| CKL-005 | Via-to-component clearance | Check minimum distance from vias to component bodies |
+
+Rules use `shapely` for geometric operations (containment, distance, intersection) and `scipy.spatial.KDTree` for efficient nearest-neighbor spacing checks.
+
+### 3.25 `src/checklist/reporter.py` - Excel Report Generator
+
+**Responsibility**: Generate a formatted Excel report using `openpyxl`.
+
+Report structure:
+| Column | Content |
+|--------|---------|
+| Rule ID | CKL-001 |
+| Category | Alignment |
+| Description | Capacitor-connector horizontal alignment |
+| Status | PASS / FAIL |
+| Affected Components | R56, C12, ... |
+| Details | Detailed finding message |
+
+Includes conditional formatting (green=PASS, red=FAIL), summary sheet, and per-rule detail sheets.
+
+### 3.26 `main.py` - CLI Entry Point
+
+```
+Usage:
+  python main.py cache   <odb_path>              # Parse and cache to JSON
+  python main.py view    <odb_path> [--layers ...]  # Launch visualizer
+  python main.py check   <odb_path> [--rules ...]   # Run checklist
+  python main.py info    <odb_path>              # Print job summary
 ```
 
 ---
 
-## 5. Checklist Automation Program
+## 4. Key Design Decisions
 
-### 5.1 Design Overview
+### 4.1 Parsing Strategy
+- **Lazy parsing**: Only parse files when requested (e.g., don't parse all layer features upfront)
+- **Streaming for large files**: Feature files can have 10,000+ records. Use line-by-line parsing, not full file loading into memory for processing
+- **Decompression handling**: Transparently handle `.Z` compressed files using Python's `zlib` or subprocess call to `uncompress`
 
-The checklist automation system takes an ODBModel as input, executes a set of pre-defined rules, and outputs Pass/Fail results to an Excel file.
+### 4.2 Coordinate System
+- All internal coordinates stored in the file's native units (INCH or MM)
+- Conversion to a common unit (MM) happens at the visualization/analysis layer
+- Symbol dimensions are in mils (imperial) or microns (metric) - converted at symbol resolution time
 
-| Component | Role |
-|-----------|------|
-| `RuleBase` (abstract class) | Defines the common interface for all checklist rules |
-| `RuleRegistry` | Registers/manages rules and runs them in batch |
-| `CheckResult` | Stores Pass/Fail/WARNING + detailed messages for each rule |
-| `ExcelReporter` | Outputs results to a formatted Excel file using openpyxl |
-| `SpatialIndex` | Optimizes inter-component distance calculations (rtree or KDTree) |
+### 4.3 Symbol Resolution
+- Standard symbols are generated on-the-fly from their name parameters
+- User-defined symbols are parsed once and cached
+- For visualization, symbols are converted to `shapely` polygons
+- For simple apertures (round, square), optimized rendering paths are used (matplotlib Circle, Rectangle)
 
-### 5.2 Rule-Based Class Structure
+### 4.4 Caching Strategy
+- Cache is keyed by job name and source file modification timestamp
+- Individual layers can be cached/loaded independently (important for large designs)
+- JSON chosen for human-readability and debugging; MessagePack or pickle could be used for performance if needed
 
-```python
-from abc import ABC, abstractmethod
-from dataclasses import dataclass
-from enum import Enum
-from typing import List
+### 4.5 Technology Stack
 
-class CheckStatus(Enum):
-    PASS    = 'PASS'
-    FAIL    = 'FAIL'
-    WARNING = 'WARNING'
-    SKIP    = 'SKIP'      # Not applicable
-
-@dataclass
-class CheckResult:
-    rule_id:   str
-    rule_name: str
-    status:    CheckStatus
-    message:   str
-    details:   list = None  # Failure locations, related component list, etc.
-
-class RuleBase(ABC):
-    rule_id:     str = ''
-    rule_name:   str = ''
-    description: str = ''
-
-    @abstractmethod
-    def check(self, model: 'ODBModel') -> CheckResult:
-        pass
-
-class RuleRegistry:
-    def __init__(self):
-        self._rules: List[RuleBase] = []
-
-    def register(self, rule: RuleBase):
-        self._rules.append(rule)
-
-    def run_all(self, model) -> List[CheckResult]:
-        return [rule.check(model) for rule in self._rules]
-```
-
-### 5.3 Checklist Rule Implementation Examples
-
-#### Example 1: Capacitor–Connector Horizontal Alignment Check
-
-```python
-class CapacitorConnectorOppositeRule(RuleBase):
-    rule_id   = 'CKL-001'
-    rule_name = 'Capacitor-Connector Opposite-Side Horizontal Alignment'
-    CAP_PREFIX  = ['C']        # Capacitor reference prefix
-    CON_PREFIX  = ['J', 'CN']  # Connector reference prefix
-    TOLERANCE_Y = 0.5          # Horizontal tolerance (mm or inch)
-
-    def check(self, model) -> CheckResult:
-        caps = self._get_comps_by_prefix(model, self.CAP_PREFIX, side='TOP')
-        cons = self._get_comps_by_prefix(model, self.CON_PREFIX, side='BOTTOM')
-        fails = []
-        for cap in caps:
-            for con in cons:
-                # Check if Y-coordinate difference exceeds tolerance
-                if abs(cap.y - con.y) > self.TOLERANCE_Y:
-                    fails.append(
-                        f'{cap.refdes} vs {con.refdes}: dy={abs(cap.y - con.y):.3f}'
-                    )
-        if fails:
-            return CheckResult(self.rule_id, self.rule_name,
-                               CheckStatus.FAIL, f'{len(fails)} violation(s)', fails)
-        return CheckResult(self.rule_id, self.rule_name, CheckStatus.PASS, 'All passed')
-```
-
-#### Example 2: Minimum Component Spacing Check
-
-```python
-from scipy.spatial import KDTree
-import numpy as np
-
-class MinSpacingRule(RuleBase):
-    rule_id      = 'CKL-002'
-    rule_name    = 'Minimum Component Spacing'
-    MIN_DISTANCE = 0.2  # inch
-
-    def check(self, model) -> CheckResult:
-        top_comps = [c for ld in model.layer_data.values()
-                     for c in ld.components if not c.mirror]
-        positions = np.array([[c.x, c.y] for c in top_comps])
-        if len(positions) < 2:
-            return CheckResult(self.rule_id, self.rule_name,
-                               CheckStatus.SKIP, 'Insufficient component count')
-        tree  = KDTree(positions)
-        pairs = tree.query_pairs(self.MIN_DISTANCE)
-        fails = [(top_comps[i].refdes, top_comps[j].refdes) for i, j in pairs]
-        if fails:
-            return CheckResult(self.rule_id, self.rule_name,
-                               CheckStatus.FAIL, f'{len(fails)} spacing violation(s)', fails)
-        return CheckResult(self.rule_id, self.rule_name, CheckStatus.PASS, 'All passed')
-```
-
-### 5.4 Excel Output
-
-```python
-import openpyxl
-from openpyxl.styles import PatternFill, Font, Alignment
-
-class ExcelReporter:
-    STATUS_COLORS = {
-        'PASS':    '00CC44',
-        'FAIL':    'CC0000',
-        'WARNING': 'FFAA00',
-        'SKIP':    '888888',
-    }
-
-    def export(self, results: list, output_path: str, pcb_name: str):
-        wb = openpyxl.Workbook()
-        ws = wb.active
-        ws.title = 'Checklist Results'
-
-        # Header row
-        headers = ['ID', 'Rule Name', 'Result', 'Message', 'Details']
-        for col, h in enumerate(headers, 1):
-            cell = ws.cell(1, col, h)
-            cell.font = Font(bold=True, color='FFFFFF')
-            cell.fill = PatternFill('solid', fgColor='1F4E79')
-
-        # Data rows
-        for row, result in enumerate(results, 2):
-            ws.cell(row, 1, result.rule_id)
-            ws.cell(row, 2, result.rule_name)
-            status_cell = ws.cell(row, 3, result.status.value)
-            color = self.STATUS_COLORS[result.status.value]
-            status_cell.fill = PatternFill('solid', fgColor=color)
-            status_cell.font = Font(bold=True, color='FFFFFF')
-            ws.cell(row, 4, result.message)
-            ws.cell(row, 5, str(result.details or ''))
-
-        # Summary sheet
-        ws2 = wb.create_sheet('Summary')
-        pass_count = sum(1 for r in results if r.status.value == 'PASS')
-        fail_count = sum(1 for r in results if r.status.value == 'FAIL')
-        ws2['A1'] = f'PCB: {pcb_name}'
-        ws2['A2'] = f'PASS: {pass_count}'
-        ws2['A3'] = f'FAIL: {fail_count}'
-        wb.save(output_path)
-```
-
----
-
-## 6. Full System Execution Flow
-
-### 6.1 Entry Point Code
-
-```python
-from odb_reader import ODBReader
-from visualizer import PCBVisualizer
-from checklist import RuleRegistry, ExcelReporter
-from rules import CapacitorConnectorOppositeRule, MinSpacingRule
-
-# 1. Load ODB++ file
-reader = ODBReader()
-model = reader.load('path/to/design.tgz')   # Also supports .zip and directory
-
-# 2. Visualization
-viz = PCBVisualizer(model)
-viz.render_layer('comp_top', show_components=True)  # Single layer
-viz.render_all_layers(output_path='pcb_layers.png') # All layers
-
-# 3. Checklist
-registry = RuleRegistry()
-registry.register(CapacitorConnectorOppositeRule())
-registry.register(MinSpacingRule())
-# ... add more rules as needed
-
-results = registry.run_all(model)
-
-reporter = ExcelReporter()
-reporter.export(results, 'checklist_result.xlsx', model.product_name)
-print(f'PASS: {sum(1 for r in results if r.status.value == "PASS")}')
-print(f'FAIL: {sum(1 for r in results if r.status.value == "FAIL")}')
-```
-
-### 6.2 Package Structure
-
-| File | Role |
-|------|------|
-| `odb_reader.py` | Decompression, directory traversal, parsing orchestration |
-| `parsers/matrix_parser.py` | Parses matrix/matrix → Layer list |
-| `parsers/features_parser.py` | Parses features file → Pad/Line/Arc/Surface/Text |
-| `parsers/component_parser.py` | Parses components file → Component/Pin |
-| `parsers/eda_parser.py` | Parses eda/data → Net/Package information |
-| `parsers/symbol_resolver.py` | Symbol name → geometry parameter conversion |
-| `models.py` | Data classes: ODBModel, Layer, Component, Pad, etc. |
-| `visualizer.py` | Per-layer Matplotlib/Plotly rendering |
-| `checklist/rule_base.py` | RuleBase, CheckResult, CheckStatus |
-| `checklist/rules/*.py` | Individual checklist rule implementations |
-| `checklist/registry.py` | RuleRegistry — rule management and batch execution |
-| `checklist/reporter.py` | ExcelReporter — Excel output of results |
-| `main.py` | CLI entry point |
-
-### 6.3 Required Python Packages
-
-| Package | Purpose |
+| Library | Purpose |
 |---------|---------|
-| `matplotlib` | Per-layer static visualization |
-| `shapely` | Polygon operations (Surface processing, distance calculation) |
-| `numpy` | Numerical computation, coordinate transformation |
-| `scipy` | KDTree-based spatial indexing (spacing checks) |
-| `openpyxl` | Excel result output |
-| `lxml` / `xml.etree` | XML file parsing (stackup.xml, metadata.xml) |
-| `plotly` *(optional)* | Interactive web-based visualization |
-| `pyqtgraph` *(optional)* | High-performance desktop GUI visualization |
-
----
-
-## 7. Implementation Roadmap
-
-| Phase | Task | Deliverable |
-|-------|------|-------------|
-| Phase 1 | Parse matrix → confirm layer list | Layer list output |
-| Phase 2 | Parse features → basic Pad/Line/Arc/Surface handling | Simple layer visualization |
-| Phase 3 | Implement standard symbol rendering (r, rect, oval first) | Accurate symbol rendering |
-| Phase 4 | Parse components + map pin coordinates | Component overlay visualization |
-| Phase 5 | Parse EDA (net) → pin-to-net connectivity | Net highlighting |
-| Phase 6 | Build checklist Rule framework | Rule-based check execution |
-| Phase 7 | Implement individual checklist rules (highest priority first) | Pass/Fail verdicts |
-| Phase 8 | Implement Excel reporter | Result file output |
-| Phase 9 | Performance optimization (large feature set handling) | Capable of processing real PCBs |
-
----
-
-## 8. Key Implementation Considerations
-
-### Coordinate Unit Conversion
-ODB++ files use either INCH or MM units. Always check the `units` value at parse time and normalize to a single unit system internally. MM units are generally more intuitive for visualization output.
-
-### Negative Polarity Handling
-Features with Negative polarity (`N`) in ODB++ act as erasers, removing previously added features. During rendering, these should be drawn in the layer background color (or substrate color). A Negative Surface effectively punches a hole through any underlying Surface.
-
-### Surface Island/Hole Handling
-A Surface consists of one or more islands (outer boundary, clockwise winding) and their interior holes (counter-clockwise winding). These can be processed using Matplotlib's `PathPatch` or converted into Shapely's `Polygon(exterior, interiors)` structure.
-
-### Large File Performance Optimization
-Feature files for real-world PCBs can contain hundreds of thousands of features or more. Consider per-layer lazy loading, viewport-based culling (skip rendering features outside the visible area), and using Matplotlib's blitting or PyQtGraph for better performance.
-
-### User-Defined Symbols
-User-defined symbols under the `symbols/` directory have their own features file. Recursively invoke `FeaturesParser` to convert symbols into geometry, and cache results to maintain performance.
-
----
-
-*Following this document and implementing each module in order will allow you to build a complete visualization and checklist automation system for real-world PCB ODB++ files.*
+| `matplotlib` | Layer visualization and interactive viewer |
+| `shapely` | Polygon operations, geometry validation, distance calculations |
+| `numpy` | Coordinate transforms, array operations |
+| `scipy` | KDTree for spatial indexing (spacing checks) |
+| `openpyxl` | Excel report generation |
+| `zlib` / `gzip` | `.Z` file decompression |
+| `xml.etree.ElementTree` | Stackup XML parsing |
+| `dataclasses` | Model definitions (stdlib) |
+| `json` | Cache serialization (stdlib) |
+| `argparse` | CLI argument parsing (stdlib) |
+| `tarfile` | `.tgz` extraction (stdlib) |
+| `re` | Symbol name pattern matching (stdlib) |
