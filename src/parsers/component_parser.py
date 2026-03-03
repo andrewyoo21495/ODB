@@ -11,7 +11,7 @@ from src.parsers.base_parser import (
 )
 
 
-def parse_components(path: Path) -> list[Component]:
+def parse_components(path: Path) -> tuple[list[Component], str]:
     """Parse a components file.
 
     Format:
@@ -29,10 +29,14 @@ def parse_components(path: Path) -> list[Component]:
         VPL_MPN <mpn>
         VND <vendor>
         MPN <qualify_status> <chosen> <mpn>
+
+    Returns:
+        Tuple of (list of Component, units string e.g. "INCH" or "MM").
     """
     lines = read_file(path)
     attr_names, attr_texts = parse_attr_lookup(lines)
 
+    units = "INCH"
     components = []
     current_comp = None
     current_bom = None
@@ -41,7 +45,10 @@ def parse_components(path: Path) -> list[Component]:
     for line in lines:
         stripped = line.strip()
 
-        if stripped.startswith("UNITS=") or stripped.startswith("@") or stripped.startswith("&"):
+        if stripped.startswith("UNITS="):
+            units = stripped[6:].strip()
+            continue
+        if stripped.startswith("@") or stripped.startswith("&"):
             continue
         if stripped.startswith("ID=") or stripped.startswith("F "):
             continue
@@ -117,7 +124,7 @@ def parse_components(path: Path) -> list[Component]:
             current_comp.bom_data = current_bom
         components.append(current_comp)
 
-    return components
+    return components, units
 
 
 def _parse_cmp_record(line: str, attr_names: dict, attr_texts: dict) -> Component:

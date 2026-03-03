@@ -83,10 +83,12 @@ python main.py cache data/designodb_rigidflex.tgz --cache-dir my_cache
 
 ### What Gets Cached
 
+The cache folder is named after the **input file** (without extension), not the internal ODB++ job name. For example, caching `data/designodb_rigidflex.tgz` creates `cache/designodb_rigidflex/`.
+
 The cache directory will contain:
 
 ```
-cache/<job_name>/
+cache/<input_filename>/
     job_info.json            # ODB++ version, source, dates, units
     matrix_steps.json        # Step definitions
     matrix_layers.json       # Full layer stackup
@@ -162,19 +164,40 @@ python main.py view-comp data/designodb_rigidflex.tgz
 python main.py view-comp data/designodb_rigidflex.tgz --layers signal_1 soldermask_top
 ```
 
-### Interactive Viewer Controls
+### Viewer Layout
 
-Once the viewer window opens:
+The viewer window is divided into three sections:
+
+| Section | Location | Content |
+|---------|----------|---------|
+| **Board canvas** | Left (main area) | The PCB visualization — layers, pads, outlines, and board profile. |
+| **Layer checkboxes** | Top-right | Toggle individual layers, component overlays, and outlines on/off. |
+| **Component info** | Bottom-right | Displays metadata for the component selected by clicking on the board. |
+
+### Interactive Controls
 
 | Control | Action |
 |---------|--------|
-| **Layer checkboxes** (right panel) | Toggle individual layer visibility on/off. The viewer redraws automatically. The panel also includes "Components Top" and "Components Bot" entries for toggling component overlays. DRILL and DIELECTRIC layers are excluded from this panel (they can still be loaded via `--layers`). |
+| **Layer checkboxes** (top-right) | Toggle individual layer visibility on/off. The viewer redraws automatically. Includes "Components Top", "Components Bot", and "Comp. Outlines" entries. DRILL and DIELECTRIC layers are excluded (they can still be loaded via `--layers`). |
+| **Comp. Outlines checkbox** | Draws yellow dashed outlines around component boundaries. When neither Top nor Bot components are checked, outlines are drawn for all components. |
+| **Click on board** | Click on or near a component pin to select it. The component's metadata appears in the bottom-right info panel. |
 | **Scroll wheel on checkbox panel** | When the layer list is longer than the panel height, scroll up/down over the checkbox panel to reveal additional layers. |
 | **Zoom** | Use the scroll wheel over the board area, or use the magnifying glass icon in the toolbar to zoom into a region. |
 | **Pan** | Click the cross-arrow icon in the toolbar, then click and drag to pan. |
 | **Home** | Click the house icon to reset the view to the full board extent. |
 | **Save** | Click the floppy disk icon to export the current view as PNG or SVG. |
 | **Coordinate display** | The bottom-left of the window shows the cursor position in board units (inches or mm). |
+
+### Component Info Panel
+
+When you click on a component pin in the board canvas, the bottom-right panel shows:
+
+- **Component name** (ref-des) and **part name**
+- **Classification** (Capacitor, Connector, IC, etc. from the component classifier)
+- **Properties** — TYPE, DEVICE_TYPE, VALUE (when available)
+- **Position** and **rotation**
+- **Net names** connected to the component (up to 6)
+- **BOM data** — CPN, description, MPN (when available)
 
 ### Layer Color Coding
 
@@ -194,7 +217,11 @@ Each layer type is rendered with a distinct default color:
 
 > **Note:** DRILL and DIELECTRIC layers are not shown in the checkbox panel because they contain no renderable features. They can still be loaded directly using `--layers d_1_2 ...` if needed.
 
-Component overlays render actual pad geometries (rectangles, circles, squares, contours) derived from the EDA package definitions, along with reference designator labels. Top-side components are sky blue; bottom-side components are light pink.
+Component overlays render actual pad geometries (rectangles, circles, squares, contours) derived from the EDA package definitions. Top-side components are sky blue; bottom-side components are light pink. Component names are not shown on the board — click a pin to see component details in the info panel instead.
+
+### Unit Normalization
+
+ODB++ files may declare different units (INCH vs MM) across component files, EDA data, and the board profile. The viewer automatically detects these discrepancies and normalizes all coordinates to the profile's unit system at load time. A console message is printed when scaling is applied (e.g., `Units: scaled component positions INCH → MM`).
 
 ### Performance Note
 
@@ -255,15 +282,15 @@ Summary: 2 passed, 1 failed out of 3 rules
 
 ### Excel Report Structure
 
-The generated `.xlsx` file contains two sheets:
+The generated `.xlsx` file contains a **Summary** sheet, a **Details** sheet, and one **dedicated tab per rule**, sorted numerically by rule ID.
 
-**Summary sheet:**
-- Title with job name
-- Pass/fail statistics
-- Table with columns: Rule ID, Category, Description, Status (color-coded), Message, Affected Components
+| Tab | Content |
+|-----|---------|
+| **Summary** | Title with job name, pass/fail statistics, and a table with columns: Rule ID, Category, Description, Status (color-coded), Message, Affected Components. |
+| **Details** | Same columns as Summary plus a Details column with expanded violation information (e.g., exact distances, coordinate pairs). |
+| **CKL-001**, **CKL-002**, ... | One tab per rule. Contains a metadata header (rule ID, category, description, status, message), an affected components list, and detailed findings tables. |
 
-**Details sheet:**
-- Same columns as Summary plus a Details column with expanded violation information (e.g., exact distances, coordinate pairs)
+Rule tabs are automatically sorted so that they appear in numerical order (e.g. CKL-001, CKL-002, CKL-003, ..., CKL-01-001, CKL-03-010). This ordering is maintained regardless of the naming convention used for rule IDs.
 
 ---
 

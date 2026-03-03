@@ -20,7 +20,81 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from src import odb_loader
 from src.cache_manager import cache_job, cache_layer, is_cache_valid, load_cache
-from src.models import LayerFeatures
+from src.models import ArcSegment, LayerFeatures, LineSegment
+
+
+# ---------------------------------------------------------------------------
+# Unit normalisation helpers
+# ---------------------------------------------------------------------------
+
+def _unit_scale(from_units: str, to_units: str) -> float:
+    """Return the multiplier to convert *from_units* coordinates to *to_units*."""
+    if from_units == to_units:
+        return 1.0
+    if from_units == "INCH" and to_units == "MM":
+        return 25.4
+    if from_units == "MM" and to_units == "INCH":
+        return 1.0 / 25.4
+    return 1.0
+
+
+def _scale_components(comps: list, factor: float) -> None:
+    """Scale component board coordinates (x, y and toeprint positions) in place."""
+    for comp in comps:
+        comp.x *= factor
+        comp.y *= factor
+        for tp in comp.toeprints:
+            tp.x *= factor
+            tp.y *= factor
+
+
+def _scale_outline_params(outline, factor: float) -> None:
+    """Scale a PinOutline's coordinate parameters in place."""
+    p = outline.params
+    if outline.type == "RC":
+        for k in ("llx", "lly", "width", "height"):
+            if k in p:
+                p[k] *= factor
+    elif outline.type in ("CR", "CT"):
+        for k in ("xc", "yc", "radius"):
+            if k in p:
+                p[k] *= factor
+    elif outline.type == "SQ":
+        for k in ("xc", "yc", "half_side"):
+            if k in p:
+                p[k] *= factor
+    elif outline.type == "CONTOUR" and outline.contour:
+        c = outline.contour
+        c.start.x *= factor
+        c.start.y *= factor
+        for seg in c.segments:
+            if isinstance(seg, LineSegment):
+                seg.end.x *= factor
+                seg.end.y *= factor
+            elif isinstance(seg, ArcSegment):
+                seg.end.x *= factor
+                seg.end.y *= factor
+                seg.center.x *= factor
+                seg.center.y *= factor
+
+
+def _scale_eda_data(eda, factor: float) -> None:
+    """Scale EDA package coordinate data (bounding boxes, pin centres, outlines) in place."""
+    for pkg in eda.packages:
+        if pkg.bbox:
+            pkg.bbox.xmin *= factor
+            pkg.bbox.xmax *= factor
+            pkg.bbox.ymin *= factor
+            pkg.bbox.ymax *= factor
+        pkg.pitch *= factor
+        for pin in pkg.pins:
+            pin.center.x *= factor
+            pin.center.y *= factor
+            pin.finished_hole_size *= factor
+            for ol in pin.outlines:
+                _scale_outline_params(ol, factor)
+        for ol in pkg.outlines:
+            _scale_outline_params(ol, factor)
 
 
 def cmd_info(args):
@@ -84,8 +158,11 @@ def cmd_cache(args):
     job = odb_loader.load(args.odb_path)
     cache_dir = Path(args.cache_dir) if args.cache_dir else Path("cache")
 
+    # Use the input file name (without extension) as the cache folder name
+    cache_name = Path(args.odb_path).stem
+
     print(f"Job: {job.job_name}")
-    print(f"Cache directory: {cache_dir / job.job_name}")
+    print(f"Cache directory: {cache_dir / cache_name}")
 
     data = {}
 
@@ -150,7 +227,7 @@ def cmd_cache(args):
         for layer_name, layer_paths in step_paths.layers.items():
             # Components
             if layer_paths.components:
-                components = parse_components(layer_paths.components)
+                components, _cu = parse_components(layer_paths.components)
                 key = "components_top" if "top" in layer_name else "components_bot"
                 data[key] = components
                 print(f"    Parsed: {layer_name}/components ({len(components)} components)")
@@ -183,11 +260,11 @@ def cmd_cache(args):
 
     # Write cache
     print(f"\nWriting cache...")
-    cache_job(job.job_name, data, cache_dir)
+    cache_job(cache_name, data, cache_dir)
 
     elapsed = time.time() - t0
     print(f"\nDone! Cached in {elapsed:.1f}s")
-    print(f"Cache location: {cache_dir / job.job_name}")
+    print(f"Cache location: {cache_dir / cache_name}")
 
     job.cleanup()
 
@@ -238,15 +315,19 @@ def _parse_for_view(odb_path: str, layer_names: list[str] = None) -> dict:
     components_top = []
     components_bot = []
     layers_data = {}
+    comp_top_units = "INCH"
+    comp_bot_units = "INCH"
 
     for layer_name, layer_paths in step.layers.items():
         # Always parse components regardless of layer filter
         if layer_paths.components:
-            comps = parse_components(layer_paths.components)
+            comps, comp_units = parse_components(layer_paths.components)
             if "top" in layer_name:
                 components_top = comps
+                comp_top_units = comp_units
             else:
                 components_bot = comps
+                comp_bot_units = comp_units
 
         # Parse features (all layers if target_set is None, otherwise only targets)
         if layer_paths.features:
@@ -260,6 +341,22 @@ def _parse_for_view(odb_path: str, layer_names: list[str] = None) -> dict:
                     print(f"  Loaded: {layer_name} ({len(features.features)} features)")
             except Exception as e:
                 print(f"  Warning: Failed to load {layer_name}: {e}")
+
+    # Normalise units – scale component and EDA coordinates to match the
+    # profile's coordinate space when files declare different units.
+    profile_units = profile.units if profile else "INCH"
+    for comps, cu in [(components_top, comp_top_units),
+                      (components_bot, comp_bot_units)]:
+        if comps and cu != profile_units:
+            f = _unit_scale(cu, profile_units)
+            _scale_components(comps, f)
+            print(f"  Units: scaled component positions {cu} → {profile_units}")
+
+    if eda_data and eda_data.units != profile_units:
+        f = _unit_scale(eda_data.units, profile_units)
+        _scale_eda_data(eda_data, f)
+        eda_data.units = profile_units
+        print(f"  Units: scaled EDA package data to {profile_units}")
 
     return {
         "job": job,
@@ -376,7 +473,7 @@ def cmd_check(args):
     # Components
     for layer_name, layer_paths in step.layers.items():
         if layer_paths.components:
-            comps = parse_components(layer_paths.components)
+            comps, _cu = parse_components(layer_paths.components)
             if "top" in layer_name:
                 job_data["components_top"] = comps
                 print(f"  Loaded {len(comps)} top components")

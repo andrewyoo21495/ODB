@@ -9,6 +9,14 @@ For each placed component the renderer looks up its Package via pkg_ref
 
 All outline coordinates are in package-local space and are transformed to
 board coordinates by applying mirror → rotate → translate.
+
+draw_components() accepts:
+  show_pads=True          Draw pin-level pad shapes.
+  show_pkg_outlines=True  Draw package-level courtyard / silkscreen outlines.
+  show_labels=False       Annotate each component with its ref-des.
+
+Set show_pads=False, show_pkg_outlines=True (with a yellow color) to render
+only the component boundary outlines as a separate pass.
 """
 
 from __future__ import annotations
@@ -26,18 +34,22 @@ from src.visualizer.symbol_renderer import contour_to_vertices
 def draw_components(ax: Axes, components: list[Component],
                     packages: list[Package] = None,
                     color: str = "#00CCCC", alpha: float = 0.5,
-                    show_labels: bool = True, font_size: float = 4):
+                    show_labels: bool = False, font_size: float = 4,
+                    show_pads: bool = True,
+                    show_pkg_outlines: bool = True):
     """Draw component geometries derived from EDA package definitions.
 
     Args:
-        ax:           matplotlib Axes to draw on.
-        components:   Placed components (top or bottom layer).
-        packages:     Package definitions from EdaData.packages.
-                      comp.pkg_ref is the 0-based index into this list.
-        color:        Fill / stroke colour for pads and outlines.
-        alpha:        Opacity for pad fills.
-        show_labels:  Whether to annotate each component with its ref-des.
-        font_size:    Font size for ref-des labels.
+        ax:                matplotlib Axes to draw on.
+        components:        Placed components (top or bottom layer).
+        packages:          Package definitions from EdaData.packages.
+                           comp.pkg_ref is the 0-based index into this list.
+        color:             Fill / stroke colour for pads and outlines.
+        alpha:             Opacity for pad fills.
+        show_labels:       Whether to annotate each component with its ref-des.
+        font_size:         Font size for ref-des labels.
+        show_pads:         Draw pin-level pad shapes.
+        show_pkg_outlines: Draw package-level courtyard / silkscreen outlines.
     """
     pkg_lookup: dict[int, Package] = (
         {i: pkg for i, pkg in enumerate(packages)} if packages else {}
@@ -45,13 +57,16 @@ def draw_components(ax: Axes, components: list[Component],
 
     for comp in components:
         pkg = pkg_lookup.get(comp.pkg_ref)
-        drew = _draw_component_geometry(ax, comp, pkg, color, alpha)
+        drew = _draw_component_geometry(ax, comp, pkg, color, alpha,
+                                        draw_pads=show_pads,
+                                        draw_pkg_outlines=show_pkg_outlines)
 
         if not drew:
-            # Fallback: dashed bounding box from Package.bbox or toeprints
+            # Fallback: dashed bounding box
             bbox = _get_component_bbox(comp, pkg)
             if bbox:
-                _draw_comp_outline(ax, bbox, color, alpha)
+                _draw_comp_outline(ax, bbox, color,
+                                   alpha if show_pads else alpha * 0.7)
 
         if show_labels:
             ax.annotate(
@@ -71,8 +86,10 @@ def draw_components(ax: Axes, components: list[Component],
 
 def _draw_component_geometry(ax: Axes, comp: Component,
                               pkg: Package | None,
-                              color: str, alpha: float) -> bool:
-    """Render pin pads and package outlines for one component.
+                              color: str, alpha: float,
+                              draw_pads: bool = True,
+                              draw_pkg_outlines: bool = True) -> bool:
+    """Render pin pads and/or package outlines for one component.
 
     Returns True when at least one patch was added to *ax*.
     """
@@ -82,30 +99,33 @@ def _draw_component_geometry(ax: Axes, comp: Component,
     drew_any = False
 
     # -- Pin-level pad shapes ------------------------------------------------
-    for pin in pkg.pins:
-        if pin.outlines:
-            for outline in pin.outlines:
-                patch = _outline_to_patch(outline, comp, color, alpha)
-                if patch is not None:
-                    ax.add_patch(patch)
-                    drew_any = True
-        else:
-            # No explicit outline – draw a small circle at the pin centre
-            bx, by = _transform_point(pin.center.x, pin.center.y, comp)
-            fhs = pin.finished_hole_size
-            r = fhs / 2 if fhs > 0 else 0.004
-            ax.add_patch(Circle((bx, by), r,
-                                facecolor=color, edgecolor=color,
-                                alpha=alpha * 0.7, linewidth=0))
-            drew_any = True
+    if draw_pads:
+        for pin in pkg.pins:
+            if pin.outlines:
+                for outline in pin.outlines:
+                    patch = _outline_to_patch(outline, comp, color, alpha)
+                    if patch is not None:
+                        ax.add_patch(patch)
+                        drew_any = True
+            else:
+                # No explicit outline – draw a small circle at the pin centre
+                bx, by = _transform_point(pin.center.x, pin.center.y, comp)
+                fhs = pin.finished_hole_size
+                r = fhs / 2 if fhs > 0 else 0.004
+                ax.add_patch(Circle((bx, by), r,
+                                    facecolor=color, edgecolor=color,
+                                    alpha=alpha * 0.7, linewidth=0))
+                drew_any = True
 
     # -- Package-level courtyard / silkscreen outlines -----------------------
-    for outline in pkg.outlines:
-        patch = _outline_to_patch(outline, comp, color, alpha * 0.5,
-                                  filled=False, linestyle="--")
-        if patch is not None:
-            ax.add_patch(patch)
-            drew_any = True
+    if draw_pkg_outlines:
+        ol_alpha = alpha * 0.5 if draw_pads else alpha
+        for outline in pkg.outlines:
+            patch = _outline_to_patch(outline, comp, color, ol_alpha,
+                                      filled=False, linestyle="--")
+            if patch is not None:
+                ax.add_patch(patch)
+                drew_any = True
 
     return drew_any
 
