@@ -340,14 +340,18 @@ class PcbViewer:
                          font=self.font)
 
         packages = self.eda_data.packages if self.eda_data else None
+        eda_u = self.eda_data.units if self.eda_data else None
+        board_u = self.profile.units if self.profile else None
         if COMP_TOP_KEY in self._visible_set and self.components_top:
             draw_components(self.ax, self.components_top, packages,
                             color="#00B7FF", alpha=0.99,
-                            show_pads=True, show_pkg_outlines=False)
+                            show_pads=True, show_pkg_outlines=False,
+                            eda_units=eda_u, board_units=board_u)
         if COMP_BOT_KEY in self._visible_set and self.components_bot:
             draw_components(self.ax, self.components_bot, packages,
                             color="#FF3150", alpha=0.99,
-                            show_pads=True, show_pkg_outlines=False)
+                            show_pads=True, show_pkg_outlines=False,
+                            eda_units=eda_u, board_units=board_u)
         if COMP_OUTLINE_KEY in self._visible_set:
             self._draw_outlines(packages)
 
@@ -368,20 +372,25 @@ class PcbViewer:
     def _draw_outlines(self, packages):
         drew_top = COMP_TOP_KEY in self._visible_set
         drew_bot = COMP_BOT_KEY in self._visible_set
+        eda_u = self.eda_data.units if self.eda_data else None
+        board_u = self.profile.units if self.profile else None
         if drew_top and self.components_top:
             draw_components(self.ax, self.components_top, packages,
                             color="#FFFF00", alpha=0.95,
-                            show_pads=False, show_pkg_outlines=True)
+                            show_pads=False, show_pkg_outlines=True,
+                            eda_units=eda_u, board_units=board_u)
         if drew_bot and self.components_bot:
             draw_components(self.ax, self.components_bot, packages,
                             color="#FFFF00", alpha=0.95,
-                            show_pads=False, show_pkg_outlines=True)
+                            show_pads=False, show_pkg_outlines=True,
+                            eda_units=eda_u, board_units=board_u)
         if not drew_top and not drew_bot:
             all_comps = self.components_top + self.components_bot
             if all_comps:
                 draw_components(self.ax, all_comps, packages,
                                 color="#FFFF00", alpha=0.95,
-                                show_pads=False, show_pkg_outlines=True)
+                                show_pads=False, show_pkg_outlines=True,
+                                eda_units=eda_u, board_units=board_u)
 
     # ------------------------------------------------------------------
     # Click handler
@@ -655,6 +664,8 @@ class ComponentViewer:
             _draw_profile(self.ax, self.profile)
 
         packages = self.eda_data.packages if self.eda_data else None
+        eda_u = self.eda_data.units if self.eda_data else None
+        board_u = self.profile.units if self.profile else None
         if comps and (show_pins or show_outline):
             top_set   = {c.comp_name for c in self.components_top}
             top_comps = [c for c in comps if c.comp_name in top_set]
@@ -663,12 +674,14 @@ class ComponentViewer:
                 draw_components(self.ax, top_comps, packages,
                                 color="#00B7FF", alpha=0.99,
                                 show_pads=show_pins,
-                                show_pkg_outlines=show_outline)
+                                show_pkg_outlines=show_outline,
+                                eda_units=eda_u, board_units=board_u)
             if bot_comps:
                 draw_components(self.ax, bot_comps, packages,
                                 color="#FF3150", alpha=0.99,
                                 show_pads=show_pins,
-                                show_pkg_outlines=show_outline)
+                                show_pkg_outlines=show_outline,
+                                eda_units=eda_u, board_units=board_u)
 
         self._apply_axis_labels()
         self.canvas.draw()
