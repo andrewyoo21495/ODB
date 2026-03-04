@@ -135,7 +135,7 @@ def _draw_profile(ax: Axes, profile: Profile,
         if fill and contour.is_island:
             from matplotlib.patches import Polygon
             patch = Polygon(verts, closed=True,
-                            facecolor="#4f4f4f", edgecolor=outline_color,
+                            facecolor="#ffffff", edgecolor=outline_color,
                             linewidth=1.0, linestyle='--',
                             alpha=0.95, zorder=0)
             ax.add_patch(patch)
