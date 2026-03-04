@@ -72,7 +72,7 @@ def draw_components(ax: Axes, components: list[Component],
         eda_units:         Unit system of EDA package data ("INCH" or "MM").
         board_units:       Unit system of board coordinates ("INCH" or "MM").
                            When these differ a scale factor is applied to all
-                           package-local coordinates so they match the board.
+                           coordinates so they match the board.
     """
     scale = _pkg_scale_factor(eda_units, board_units)
 
@@ -85,19 +85,23 @@ def draw_components(ax: Axes, components: list[Component],
         drew = _draw_component_geometry(ax, comp, pkg, color, alpha,
                                         draw_pads=show_pads,
                                         draw_pkg_outlines=show_pkg_outlines,
-                                        pkg_scale=scale)
+                                        pkg_scale=scale,
+                                        comp_scale=scale)
 
         if not drew:
             # Fallback: dashed bounding box
-            bbox = _get_component_bbox(comp, pkg, pkg_scale=scale)
+            bbox = _get_component_bbox(comp, pkg, pkg_scale=scale,
+                                       comp_scale=scale)
             if bbox:
                 _draw_comp_outline(ax, bbox, color,
                                    alpha if show_pads else alpha * 0.7)
 
         if show_labels:
+            lx = comp.x * scale
+            ly = comp.y * scale
             ax.annotate(
                 comp.comp_name,
-                (comp.x, comp.y),
+                (lx, ly),
                 fontsize=font_size,
                 color=color,
                 alpha=min(1.0, alpha + 0.3),
@@ -115,10 +119,12 @@ def _draw_component_geometry(ax: Axes, comp: Component,
                               color: str, alpha: float,
                               draw_pads: bool = True,
                               draw_pkg_outlines: bool = True,
-                              pkg_scale: float = 1.0) -> bool:
+                              pkg_scale: float = 1.0,
+                              comp_scale: float = 1.0) -> bool:
     """Render pin pads and/or package outlines for one component.
 
     *pkg_scale* converts EDA package-local dimensions to board units.
+    *comp_scale* converts component placement coordinates to board units.
     Returns True when at least one patch was added to *ax*.
     """
     if pkg is None:
@@ -132,7 +138,8 @@ def _draw_component_geometry(ax: Axes, comp: Component,
             if pin.outlines:
                 for outline in pin.outlines:
                     patch = _outline_to_patch(outline, comp, color, alpha,
-                                              pkg_scale=pkg_scale)
+                                              pkg_scale=pkg_scale,
+                                              comp_scale=comp_scale)
                     if patch is not None:
                         ax.add_patch(patch)
                         drew_any = True
@@ -140,7 +147,8 @@ def _draw_component_geometry(ax: Axes, comp: Component,
                 # No explicit outline – draw a small circle at the pin centre
                 cx = pin.center.x * pkg_scale
                 cy = pin.center.y * pkg_scale
-                bx, by = _transform_point(cx, cy, comp)
+                bx, by = _transform_point(cx, cy, comp,
+                                          comp_scale=comp_scale)
                 fhs = pin.finished_hole_size * pkg_scale
                 r = fhs / 2 if fhs > 0 else 0.1  # 0.1 mm fallback
                 ax.add_patch(Circle((bx, by), r,
@@ -154,7 +162,8 @@ def _draw_component_geometry(ax: Axes, comp: Component,
         for outline in pkg.outlines:
             patch = _outline_to_patch(outline, comp, color, ol_alpha,
                                       filled=False, linestyle="--",
-                                      pkg_scale=pkg_scale)
+                                      pkg_scale=pkg_scale,
+                                      comp_scale=comp_scale)
             if patch is not None:
                 ax.add_patch(patch)
                 drew_any = True
@@ -166,10 +175,12 @@ def _outline_to_patch(outline: PinOutline, comp: Component,
                       color: str, alpha: float,
                       filled: bool = True,
                       linestyle: str = "-",
-                      pkg_scale: float = 1.0):
+                      pkg_scale: float = 1.0,
+                      comp_scale: float = 1.0):
     """Convert a PinOutline to a board-coordinate matplotlib patch.
 
     *pkg_scale* converts package-local dimensions to board coordinate units.
+    *comp_scale* converts component placement coordinates to board units.
     Returns None for unknown or degenerate shapes.
     """
     p = outline.params
@@ -179,7 +190,8 @@ def _outline_to_patch(outline: PinOutline, comp: Component,
     # -- Circle (CR) or rounded/chamfered circle (CT) -----------------------
     if outline.type in ("CR", "CT"):
         xc, yc = _transform_point(
-            p.get("xc", 0.0) * s, p.get("yc", 0.0) * s, comp)
+            p.get("xc", 0.0) * s, p.get("yc", 0.0) * s, comp,
+            comp_scale=comp_scale)
         r = p.get("radius", 0.001) * s
         if r <= 0:
             return None
@@ -201,7 +213,7 @@ def _outline_to_patch(outline: PinOutline, comp: Component,
             [llx + w, lly + h],
             [llx,     lly + h],
         ])
-        pts = _transform_pts(corners, comp)
+        pts = _transform_pts(corners, comp, comp_scale=comp_scale)
         return Polygon(pts, closed=True,
                        facecolor=fc, edgecolor=color,
                        alpha=alpha, linewidth=0.4, linestyle=linestyle)
@@ -219,7 +231,7 @@ def _outline_to_patch(outline: PinOutline, comp: Component,
             [xc + hs, yc + hs],
             [xc - hs, yc + hs],
         ])
-        pts = _transform_pts(corners, comp)
+        pts = _transform_pts(corners, comp, comp_scale=comp_scale)
         return Polygon(pts, closed=True,
                        facecolor=fc, edgecolor=color,
                        alpha=alpha, linewidth=0.4, linestyle=linestyle)
@@ -231,7 +243,7 @@ def _outline_to_patch(outline: PinOutline, comp: Component,
             return None
         if s != 1.0:
             verts = verts * s
-        pts = _transform_pts(verts, comp)
+        pts = _transform_pts(verts, comp, comp_scale=comp_scale)
         return Polygon(pts, closed=True,
                        facecolor=fc, edgecolor=color,
                        alpha=alpha, linewidth=0.4, linestyle=linestyle)
@@ -240,8 +252,13 @@ def _outline_to_patch(outline: PinOutline, comp: Component,
 
 
 def _transform_point(px: float, py: float,
-                     comp: Component) -> tuple[float, float]:
-    """Transform a single package-local point to board coordinates."""
+                     comp: Component,
+                     comp_scale: float = 1.0) -> tuple[float, float]:
+    """Transform a single package-local point to board coordinates.
+
+    *comp_scale* converts component placement coordinates (comp.x, comp.y)
+    to board units when they are in a different unit system.
+    """
     if comp.mirror:
         py = -py
     # Bottom-side (mirrored) components require a negated rotation because
@@ -250,12 +267,17 @@ def _transform_point(px: float, py: float,
     angle = math.radians(-comp.rotation if comp.mirror else comp.rotation)
     cos_a = math.cos(angle)
     sin_a = math.sin(angle)
-    return (px * cos_a - py * sin_a + comp.x,
-            px * sin_a + py * cos_a + comp.y)
+    return (px * cos_a - py * sin_a + comp.x * comp_scale,
+            px * sin_a + py * cos_a + comp.y * comp_scale)
 
 
-def _transform_pts(pts: np.ndarray, comp: Component) -> np.ndarray:
-    """Transform an (N, 2) array of package-local points to board coordinates."""
+def _transform_pts(pts: np.ndarray, comp: Component,
+                   comp_scale: float = 1.0) -> np.ndarray:
+    """Transform an (N, 2) array of package-local points to board coordinates.
+
+    *comp_scale* converts component placement coordinates (comp.x, comp.y)
+    to board units when they are in a different unit system.
+    """
     out = pts.copy().astype(float)
     if comp.mirror:
         out[:, 1] = -out[:, 1]
@@ -264,7 +286,8 @@ def _transform_pts(pts: np.ndarray, comp: Component) -> np.ndarray:
     sin_a = math.sin(angle)
     x_rot = out[:, 0] * cos_a - out[:, 1] * sin_a
     y_rot = out[:, 0] * sin_a + out[:, 1] * cos_a
-    return np.column_stack([x_rot + comp.x, y_rot + comp.y])
+    return np.column_stack([x_rot + comp.x * comp_scale,
+                            y_rot + comp.y * comp_scale])
 
 
 def draw_pin_markers(ax: Axes, components: list[Component],
@@ -276,23 +299,25 @@ def draw_pin_markers(ax: Axes, components: list[Component],
 
 
 def _get_component_bbox(comp: Component, pkg: Package | None,
-                        pkg_scale: float = 1.0) -> BBox | None:
+                        pkg_scale: float = 1.0,
+                        comp_scale: float = 1.0) -> BBox | None:
     """Compute a board-coordinate bounding box for the fallback outline.
 
     *pkg_scale* converts package-local dimensions to board coordinate units.
+    *comp_scale* converts component placement coordinates to board units.
     """
     if pkg and pkg.bbox:
         bx = pkg.bbox
         hw = (bx.xmax - bx.xmin) / 2 * pkg_scale
         hh = (bx.ymax - bx.ymin) / 2 * pkg_scale
         corners = np.array([[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]])
-        pts = _transform_pts(corners, comp)
+        pts = _transform_pts(corners, comp, comp_scale=comp_scale)
         return BBox(float(pts[:, 0].min()), float(pts[:, 1].min()),
                     float(pts[:, 0].max()), float(pts[:, 1].max()))
 
     if comp.toeprints:
-        xs = [t.x for t in comp.toeprints]
-        ys = [t.y for t in comp.toeprints]
+        xs = [t.x * comp_scale for t in comp.toeprints]
+        ys = [t.y * comp_scale for t in comp.toeprints]
         m = 0.13  # ~0.13 mm margin (or ~5 mil)
         return BBox(min(xs) - m, min(ys) - m, max(xs) + m, max(ys) + m)
 
