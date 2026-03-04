@@ -7,8 +7,6 @@ from typing import Optional
 
 import numpy as np
 from matplotlib.axes import Axes
-from matplotlib.collections import LineCollection, PatchCollection
-from matplotlib.lines import Line2D
 from matplotlib.patches import Circle, Polygon, Rectangle
 
 from src.models import (
@@ -77,6 +75,8 @@ def render_layer(ax: Axes, features: LayerFeatures,
             _draw_arc(ax, feature, sym_lookup, features.units, color, alpha)
         elif isinstance(feature, TextRecord):
             _draw_text(ax, feature, font, color, alpha)
+        elif isinstance(feature, BarcodeRecord):
+            _draw_barcode(ax, feature, color, alpha)
         elif isinstance(feature, SurfaceRecord):
             _draw_surface(ax, feature, color, alpha)
 
@@ -115,43 +115,89 @@ def _draw_pad(ax: Axes, pad: PadRecord, sym_lookup: dict[int, SymbolRef],
 
 def _draw_line(ax: Axes, line: LineRecord, sym_lookup: dict[int, SymbolRef],
                units: str, color: str = "blue", alpha: float = 0.7):
-    """Draw a line feature with proper width from its symbol."""
+    """Draw a line feature as a filled polygon with data-coordinate width.
+
+    The line width comes from the referenced symbol (e.g., r10.827 → diameter
+    10.827 mils → 0.010827 inches).  Rendering as a polygon ensures the trace
+    width is correct regardless of zoom level.
+    """
     sym_ref = sym_lookup.get(line.symbol_idx)
     width = 0.001  # Default thin line
     if sym_ref:
         width = get_line_width_for_symbol(sym_ref.name, units, sym_ref.unit_override)
+    if width <= 0:
+        width = 0.001
 
-    ax.plot(
-        [line.xs, line.xe], [line.ys, line.ye],
-        color=color, alpha=alpha,
-        linewidth=max(0.1, width * _get_points_per_unit(ax, units)),
-        solid_capstyle="round",
-    )
+    dx = line.xe - line.xs
+    dy = line.ye - line.ys
+    length = math.sqrt(dx * dx + dy * dy)
+
+    if length < 1e-10:
+        # Zero-length line → draw as a dot (circle)
+        ax.add_patch(Circle((line.xs, line.ys), width / 2,
+                            color=color, alpha=alpha, edgecolor="none"))
+        return
+
+    # Perpendicular offset for half-width
+    hw = width / 2
+    nx = -dy / length * hw
+    ny = dx / length * hw
+
+    verts = [
+        (line.xs + nx, line.ys + ny),
+        (line.xe + nx, line.ye + ny),
+        (line.xe - nx, line.ye - ny),
+        (line.xs - nx, line.ys - ny),
+    ]
+    ax.add_patch(Polygon(verts, closed=True, color=color, alpha=alpha,
+                         edgecolor="none"))
 
 
 def _draw_arc(ax: Axes, arc: ArcRecord, sym_lookup: dict[int, SymbolRef],
               units: str, color: str = "blue", alpha: float = 0.7):
-    """Draw an arc feature."""
+    """Draw an arc feature as a filled polygon with data-coordinate width."""
     sym_ref = sym_lookup.get(arc.symbol_idx)
     width = 0.001
     if sym_ref:
         width = get_line_width_for_symbol(sym_ref.name, units, sym_ref.unit_override)
+    if width <= 0:
+        width = 0.001
 
-    # Convert arc to polyline
     from src.visualizer.symbol_renderer import _arc_to_points
     points = _arc_to_points(
         arc.xs, arc.ys, arc.xe, arc.ye,
         arc.xc, arc.yc, arc.clockwise, 32,
     )
 
-    if len(points) >= 2:
-        xs, ys = zip(*points)
-        ax.plot(
-            xs, ys,
-            color=color, alpha=alpha,
-            linewidth=max(0.1, width * _get_points_per_unit(ax, units)),
-            solid_capstyle="round",
-        )
+    if len(points) < 2:
+        return
+
+    # Build a thick arc as a filled polygon by offsetting the polyline
+    hw = width / 2
+    pts = np.array(points)
+    n = len(pts)
+
+    # Compute normals at each point using adjacent segments
+    outer = np.empty((n, 2))
+    inner = np.empty((n, 2))
+    for i in range(n):
+        if i == 0:
+            dx, dy = pts[1] - pts[0]
+        elif i == n - 1:
+            dx, dy = pts[-1] - pts[-2]
+        else:
+            dx, dy = pts[i + 1] - pts[i - 1]
+        seg_len = math.sqrt(dx * dx + dy * dy)
+        if seg_len < 1e-12:
+            nx, ny = 0.0, 0.0
+        else:
+            nx, ny = -dy / seg_len * hw, dx / seg_len * hw
+        outer[i] = pts[i, 0] + nx, pts[i, 1] + ny
+        inner[i] = pts[i, 0] - nx, pts[i, 1] - ny
+
+    verts = np.concatenate([outer, inner[::-1]])
+    ax.add_patch(Polygon(verts, closed=True, color=color, alpha=alpha,
+                         edgecolor="none"))
 
 
 def _draw_text(ax: Axes, text: TextRecord, font: StrokeFont = None,
@@ -207,6 +253,42 @@ def _draw_stroke_text(ax: Axes, text: TextRecord, font: StrokeFont,
         cursor_x += text.xsize
 
 
+def _draw_barcode(ax: Axes, barcode: BarcodeRecord,
+                  color: str = "blue", alpha: float = 0.7):
+    """Draw a barcode feature as a rectangle with text label."""
+    w = barcode.width if barcode.width > 0 else 0.1
+    h = barcode.height if barcode.height > 0 else 0.05
+
+    # Build rectangle corners, then apply rotation
+    x0, y0 = barcode.x, barcode.y
+    corners = np.array([
+        [x0, y0], [x0 + w, y0], [x0 + w, y0 + h], [x0, y0 + h],
+    ])
+
+    if barcode.rotation:
+        angle_rad = math.radians(-barcode.rotation)
+        cos_a, sin_a = math.cos(angle_rad), math.sin(angle_rad)
+        rel = corners - [x0, y0]
+        rotated = np.column_stack([
+            rel[:, 0] * cos_a - rel[:, 1] * sin_a,
+            rel[:, 0] * sin_a + rel[:, 1] * cos_a,
+        ])
+        corners = rotated + [x0, y0]
+
+    patch = Polygon(corners, closed=True, facecolor=color, alpha=alpha * 0.3,
+                    edgecolor=color, linewidth=0.8)
+    ax.add_patch(patch)
+
+    # Draw text label if present
+    if barcode.text:
+        cx = barcode.x + w / 2
+        cy = barcode.y + h / 2
+        ax.text(cx, cy, barcode.text,
+                fontsize=max(2, h * 100), color=color, alpha=alpha,
+                rotation=-barcode.rotation,
+                ha="center", va="center")
+
+
 def _draw_surface(ax: Axes, surface: SurfaceRecord,
                   color: str = "blue", alpha: float = 0.7):
     """Draw a surface (filled polygon with potential holes)."""
@@ -223,19 +305,3 @@ def _draw_surface(ax: Axes, surface: SurfaceRecord,
             ax.add_patch(patch)
 
 
-def _get_points_per_unit(ax: Axes, units: str) -> float:
-    """Estimate the scale factor from data units to display points.
-
-    Used for line width scaling. Returns approximate points per unit.
-    """
-    try:
-        xlim = ax.get_xlim()
-        fig = ax.get_figure()
-        bbox = ax.get_window_extent(renderer=fig.canvas.get_renderer())
-        data_width = xlim[1] - xlim[0]
-        if data_width > 0:
-            return bbox.width / data_width
-    except Exception:
-        pass
-    # Default fallback
-    return 72.0 * (1.0 if units == "INCH" else 1.0 / 25.4)

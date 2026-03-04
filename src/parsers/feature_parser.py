@@ -212,12 +212,16 @@ def _parse_text_record(line: str, attr_names: dict, attr_texts: dict) -> TextRec
     try:
         main_part, attr_suffix = split_record_and_attrs(line)
 
-        # Text field is quoted - need special handling
-        # Find the quoted text string
+        # Text field is quoted (single or double quotes) - need special handling
         quote_start = main_part.find("'")
+        quote_char = "'"
+        dq_start = main_part.find('"')
+        if quote_start == -1 or (dq_start != -1 and dq_start < quote_start):
+            quote_start = dq_start
+            quote_char = '"'
         if quote_start == -1:
             return None
-        quote_end = main_part.find("'", quote_start + 1)
+        quote_end = main_part.find(quote_char, quote_start + 1)
         if quote_end == -1:
             return None
 
@@ -272,27 +276,79 @@ def _parse_text_record(line: str, attr_names: dict, attr_texts: dict) -> TextRec
 
 
 def _parse_barcode_record(line: str, attr_names: dict, attr_texts: dict) -> BarcodeRecord | None:
-    """Parse barcode record. These are rare - basic implementation."""
+    """Parse: B <x> <y> <barcode> <font> <pol> <orient> E <w> <h> <fasc> <cs> <bg> <astr> <astr_pos> <text>;attrs;ID=uid"""
     try:
         main_part, attr_suffix = split_record_and_attrs(line)
 
-        # Find quoted text
-        quote_start = main_part.find("'")
+        # Find quoted text (single or double quotes)
         text = ""
-        if quote_start != -1:
-            quote_end = main_part.find("'", quote_start + 1)
+        quote_char = None
+        quote_start = -1
+        for qc in ("'", '"'):
+            pos = main_part.find(qc)
+            if pos != -1 and (quote_start == -1 or pos < quote_start):
+                quote_start = pos
+                quote_char = qc
+        if quote_start != -1 and quote_char:
+            quote_end = main_part.find(quote_char, quote_start + 1)
             if quote_end != -1:
                 text = main_part[quote_start + 1:quote_end]
 
-        parts = main_part.split()
+        # Parse fields before the quoted text
+        before_text = main_part[:quote_start].strip() if quote_start != -1 else main_part
+        parts = before_text.split()
+
+        if len(parts) < 6:
+            return None
+
+        x = float(parts[1])
+        y = float(parts[2])
+        barcode = parts[3]
+        font = parts[4]
+        polarity = FeaturePolarity(parts[5])
+
+        # Parse orientation (same scheme as pad/text)
+        idx = 6
+        rotation, mirror = (0.0, False)
+        if idx < len(parts):
+            rotation, mirror = parse_orient(parts, idx)
+            orient_val = int(parts[idx])
+            idx += 2 if orient_val >= 8 else 1
+
+        # Skip 'E' constant
+        if idx < len(parts) and parts[idx] == "E":
+            idx += 1
+
+        width = float(parts[idx]) if idx < len(parts) else 0.0
+        idx += 1
+        height = float(parts[idx]) if idx < len(parts) else 0.0
+        idx += 1
+        fasc = parts[idx] if idx < len(parts) else ""
+        idx += 1
+        cs = parts[idx] if idx < len(parts) else ""
+        idx += 1
+        bg = parts[idx] if idx < len(parts) else ""
+        idx += 1
+        astr = parts[idx] if idx < len(parts) else ""
+        idx += 1
+        astr_pos = parts[idx] if idx < len(parts) else ""
+
         attributes, uid = parse_attributes(attr_suffix, attr_names, attr_texts)
 
         return BarcodeRecord(
-            x=float(parts[1]) if len(parts) > 1 else 0.0,
-            y=float(parts[2]) if len(parts) > 2 else 0.0,
-            barcode=parts[3] if len(parts) > 3 else "",
-            font=parts[4] if len(parts) > 4 else "",
-            polarity=FeaturePolarity(parts[5]) if len(parts) > 5 else FeaturePolarity.P,
+            x=x, y=y,
+            barcode=barcode,
+            font=font,
+            polarity=polarity,
+            rotation=rotation,
+            mirror=mirror,
+            width=width,
+            height=height,
+            fasc=fasc,
+            cs=cs,
+            bg=bg,
+            astr=astr,
+            astr_pos=astr_pos,
             text=text,
             attributes=attributes,
             id=uid,

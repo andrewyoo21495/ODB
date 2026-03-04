@@ -290,6 +290,11 @@ def _transform_pts(pts: np.ndarray, comp: Component,
                             y_rot + comp.y * comp_scale])
 
 
+# Public aliases so other modules can import the transform helpers.
+transform_point = _transform_point
+transform_pts = _transform_pts
+
+
 def draw_pin_markers(ax: Axes, components: list[Component],
                      color: str = "#FF4444", size: float = 0.002):
     """Draw small dot markers at toeprint (pin) locations."""

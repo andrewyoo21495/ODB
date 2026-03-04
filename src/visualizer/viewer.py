@@ -516,7 +516,7 @@ class ComponentViewer:
         _divider(left).pack(fill=tk.X, pady=(0, 4))
         _section_label(left, "Component Selection").pack(anchor="w", pady=(0, 4))
 
-        lb_frame, self._comp_lb = _make_listbox(left, height=12)
+        lb_frame, self._comp_lb = _make_listbox(left, height=10)
         lb_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 4))
 
         # Selection control buttons
@@ -567,8 +567,8 @@ class ComponentViewer:
         _divider(left).pack(fill=tk.X, pady=(0, 4))
         _section_label(left, "Component Info").pack(anchor="w", pady=(0, 4))
         info_frame = tk.Frame(left, bg=_BG)
-        info_frame.pack(fill=tk.BOTH, expand=False, padx=2, pady=(0, 4))
-        self._info_text = _make_info_text(info_frame, height=10)
+        info_frame.pack(fill=tk.BOTH, expand=True, padx=2, pady=(0, 4))
+        self._info_text = _make_info_text(info_frame, height=12)
         self._info_text.pack(fill=tk.BOTH, expand=True)
         self._info_text.config(state=tk.NORMAL)
         self._info_text.insert(
@@ -673,18 +673,32 @@ class ComponentViewer:
             top_set   = {c.comp_name for c in self.components_top}
             top_comps = [c for c in comps if c.comp_name in top_set]
             bot_comps = [c for c in comps if c.comp_name not in top_set]
-            if top_comps:
-                draw_components(self.ax, top_comps, packages,
-                                color="#00B7FF", alpha=0.99,
-                                show_pads=show_pins,
-                                show_pkg_outlines=show_outline,
-                                eda_units=eda_u, board_units=board_u)
-            if bot_comps:
-                draw_components(self.ax, bot_comps, packages,
-                                color="#FF3150", alpha=0.99,
-                                show_pads=show_pins,
-                                show_pkg_outlines=show_outline,
-                                eda_units=eda_u, board_units=board_u)
+            if show_pins:
+                if top_comps:
+                    draw_components(self.ax, top_comps, packages,
+                                    color="#00B7FF", alpha=0.99,
+                                    show_pads=True,
+                                    show_pkg_outlines=False,
+                                    eda_units=eda_u, board_units=board_u)
+                if bot_comps:
+                    draw_components(self.ax, bot_comps, packages,
+                                    color="#FF3150", alpha=0.99,
+                                    show_pads=True,
+                                    show_pkg_outlines=False,
+                                    eda_units=eda_u, board_units=board_u)
+            if show_outline:
+                if top_comps:
+                    draw_components(self.ax, top_comps, packages,
+                                    color="#00F5FF", alpha=0.99,
+                                    show_pads=False,
+                                    show_pkg_outlines=True,
+                                    eda_units=eda_u, board_units=board_u)
+                if bot_comps:
+                    draw_components(self.ax, bot_comps, packages,
+                                    color="#FF10F0", alpha=0.99,
+                                    show_pads=False,
+                                    show_pkg_outlines=True,
+                                    eda_units=eda_u, board_units=board_u)
 
         self._apply_axis_labels()
         self.canvas.draw()

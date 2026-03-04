@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import asdict, is_dataclass
+from dataclasses import fields, is_dataclass
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
@@ -17,31 +18,54 @@ from src.models import (
     Toeprint, UserSymbol,
 )
 
+# Type discriminators added during serialization so features can be
+# reconstructed from JSON back into their original dataclass types.
+_FEATURE_TYPE_MAP: dict[type, tuple[str, str]] = {
+    LineRecord:    ("_type", "line"),
+    PadRecord:     ("_type", "pad"),
+    ArcRecord:     ("_type", "arc"),
+    TextRecord:    ("_type", "text"),
+    BarcodeRecord: ("_type", "barcode"),
+    SurfaceRecord: ("_type", "surface"),
+    LineSegment:   ("_seg_type", "line"),
+    ArcSegment:    ("_seg_type", "arc"),
+}
+
+
+def _serialize(obj: Any) -> Any:
+    """Recursively serialize dataclasses, adding type discriminators.
+
+    Unlike dataclasses.asdict(), this visits each nested dataclass
+    individually so that _type / _seg_type tags are injected at every level.
+    """
+    if is_dataclass(obj) and not isinstance(obj, type):
+        d: dict[str, Any] = {}
+        for f in fields(obj):
+            d[f.name] = _serialize(getattr(obj, f.name))
+        # Inject discriminator if this type needs one
+        disc = _FEATURE_TYPE_MAP.get(type(obj))
+        if disc:
+            d[disc[0]] = disc[1]
+        return d
+    if isinstance(obj, list):
+        return [_serialize(v) for v in obj]
+    if isinstance(obj, dict):
+        return {k: _serialize(v) for k, v in obj.items()}
+    if isinstance(obj, FeaturePolarity):
+        return obj.value
+    if isinstance(obj, Path):
+        return str(obj)
+    if isinstance(obj, Enum):
+        return obj.value
+    return obj
+
 
 class OdbEncoder(json.JSONEncoder):
     """Custom JSON encoder for ODB++ dataclasses."""
 
     def default(self, obj: Any) -> Any:
         if is_dataclass(obj) and not isinstance(obj, type):
-            d = asdict(obj)
-            # Add type discriminator for feature records
-            if isinstance(obj, LineRecord):
-                d["_type"] = "line"
-            elif isinstance(obj, PadRecord):
-                d["_type"] = "pad"
-            elif isinstance(obj, ArcRecord):
-                d["_type"] = "arc"
-            elif isinstance(obj, TextRecord):
-                d["_type"] = "text"
-            elif isinstance(obj, BarcodeRecord):
-                d["_type"] = "barcode"
-            elif isinstance(obj, SurfaceRecord):
-                d["_type"] = "surface"
-            elif isinstance(obj, LineSegment):
-                d["_seg_type"] = "line"
-            elif isinstance(obj, ArcSegment):
-                d["_seg_type"] = "arc"
-            return d
+            return _serialize(obj)
         if isinstance(obj, FeaturePolarity):
             return obj.value
         if isinstance(obj, Path):
@@ -238,6 +262,25 @@ def _reconstruct_feature(data: dict):
             width_factor=data.get("width_factor", 1.0),
             text=data.get("text", ""),
             version=data.get("version", 0),
+            attributes=data.get("attributes", {}),
+            id=data.get("id"),
+        )
+    elif ftype == "barcode":
+        return BarcodeRecord(
+            x=data["x"], y=data["y"],
+            barcode=data.get("barcode", ""),
+            font=data.get("font", ""),
+            polarity=polarity,
+            rotation=data.get("rotation", 0.0),
+            mirror=data.get("mirror", False),
+            width=data.get("width", 0.0),
+            height=data.get("height", 0.0),
+            fasc=data.get("fasc", ""),
+            cs=data.get("cs", ""),
+            bg=data.get("bg", ""),
+            astr=data.get("astr", ""),
+            astr_pos=data.get("astr_pos", ""),
+            text=data.get("text", ""),
             attributes=data.get("attributes", {}),
             id=data.get("id"),
         )
