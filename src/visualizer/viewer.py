@@ -57,7 +57,7 @@ _FONT   = ("Segoe UI", 10)
 
 def _style_axes(ax) -> None:
     """Apply dark-theme styling to a matplotlib Axes after ax.clear()."""
-    ax.set_facecolor("black")
+    ax.set_facecolor("#d0d0d0")
     ax.tick_params(colors="#000000")
     for spine in ax.spines.values():
         spine.set_color("#000000")
