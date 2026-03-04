@@ -57,7 +57,7 @@ _FONT   = ("Segoe UI", 10)
 
 def _style_axes(ax) -> None:
     """Apply dark-theme styling to a matplotlib Axes after ax.clear()."""
-    ax.set_facecolor("#d0d0d0")
+    ax.set_facecolor("#000000")
     ax.tick_params(colors="#000000")
     for spine in ax.spines.values():
         spine.set_color("#000000")
@@ -269,7 +269,7 @@ class PcbViewer:
         _section_label(left, "Layer Selection").pack(anchor="w", pady=(4, 4))
 
         lb_frame, self._layer_lb = _make_listbox(left, height=14)
-        lb_frame.pack(fill=tk.X, expand=False, pady=(0, 6))
+        lb_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 6))
 
         for lbl in labels:
             self._layer_lb.insert(tk.END, lbl)
@@ -355,14 +355,17 @@ class PcbViewer:
         if COMP_OUTLINE_KEY in self._visible_set:
             self._draw_outlines(packages)
 
-        units      = self.profile.units if self.profile else "INCH"
-        unit_label = "inches" if units == "INCH" else "mm"
-        self.ax.set_xlabel(f"X ({unit_label})", color="#000000")
-        self.ax.set_ylabel(f"Y ({unit_label})", color="#000000")
-        self.ax.set_title(
-            "ODB++ PCB Viewer  —  select layers in the panel",
-            color="#000000",
-        )
+        self.ax.set_xlabel("X", color="#000000")
+        self.ax.set_ylabel("Y", color="#000000")
+
+        # Build dynamic title from selected layers
+        visible_names = [name for name in self._visible_set
+                         if not name.startswith("__")]
+        if visible_names:
+            title = "Layers: " + ", ".join(sorted(visible_names))
+        else:
+            title = "ODB++ PCB Viewer"
+        self.ax.set_title(title, color="#000000")
         self.ax.grid(False)
         self.ax.set_aspect("equal")
         self.ax.format_coord = self._format_coord
@@ -514,7 +517,7 @@ class ComponentViewer:
         _section_label(left, "Component Selection").pack(anchor="w", pady=(0, 4))
 
         lb_frame, self._comp_lb = _make_listbox(left, height=12)
-        lb_frame.pack(fill=tk.X, expand=False, pady=(0, 4))
+        lb_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 4))
 
         # Selection control buttons
         sel_btn_frame = tk.Frame(left, bg=_BG)
@@ -560,12 +563,12 @@ class ComponentViewer:
             command=self._on_update_click,
         ).pack(fill=tk.X, pady=(0, 8), padx=2)
 
-        # Component info
+        # Component info (~40% of panel height)
         _divider(left).pack(fill=tk.X, pady=(0, 4))
         _section_label(left, "Component Info").pack(anchor="w", pady=(0, 4))
         info_frame = tk.Frame(left, bg=_BG)
-        info_frame.pack(fill=tk.BOTH, expand=True, padx=2, pady=(0, 4))
-        self._info_text = _make_info_text(info_frame, height=4)
+        info_frame.pack(fill=tk.BOTH, expand=False, padx=2, pady=(0, 4))
+        self._info_text = _make_info_text(info_frame, height=10)
         self._info_text.pack(fill=tk.BOTH, expand=True)
         self._info_text.config(state=tk.NORMAL)
         self._info_text.insert(
@@ -687,11 +690,12 @@ class ComponentViewer:
         self.canvas.draw()
 
     def _apply_axis_labels(self):
-        units      = self.profile.units if self.profile else "INCH"
-        unit_label = "inches" if units == "INCH" else "mm"
-        self.ax.set_xlabel(f"X ({unit_label})", color="#000000")
-        self.ax.set_ylabel(f"Y ({unit_label})", color="#000000")
-        self.ax.set_title("ODB++ Component Viewer", color="#000000")
+        self.ax.set_xlabel("X", color="#000000")
+        self.ax.set_ylabel("Y", color="#000000")
+
+        # Dynamic title based on selected layer
+        layer = self._layer_var.get() if hasattr(self, '_layer_var') else "Both"
+        self.ax.set_title(f"Components: {layer}", color="#000000")
         self.ax.grid(False)
         self.ax.set_aspect("equal")
         self.ax.format_coord = self._format_coord

@@ -83,10 +83,8 @@ def render_board(profile: Profile,
         draw_components(ax, components_bot, packages, color="#CCCC00", alpha=0.4)
 
     # Set axis labels
-    units = profile.units if profile else "INCH"
-    unit_label = "inches" if units == "INCH" else "mm"
-    ax.set_xlabel(f"X ({unit_label})")
-    ax.set_ylabel(f"Y ({unit_label})")
+    ax.set_xlabel("X")
+    ax.set_ylabel("Y")
     ax.grid(False)
 
     fig.tight_layout()
@@ -111,10 +109,8 @@ def render_single_layer(features: LayerFeatures,
     render_layer(ax, features, color=color, layer_type=matrix_layer.type,
                  alpha=0.8, user_symbols=user_symbols, font=font)
 
-    units = features.units
-    unit_label = "inches" if units == "INCH" else "mm"
-    ax.set_xlabel(f"X ({unit_label})")
-    ax.set_ylabel(f"Y ({unit_label})")
+    ax.set_xlabel("X")
+    ax.set_ylabel("Y")
     ax.grid(False)
 
     fig.tight_layout()
@@ -135,14 +131,14 @@ def _draw_profile(ax: Axes, profile: Profile,
         if fill and contour.is_island:
             from matplotlib.patches import Polygon
             patch = Polygon(verts, closed=True,
-                            facecolor="#ffffff", edgecolor=outline_color,
-                            linewidth=1.0, linestyle='--',
+                            facecolor="#000000", edgecolor=outline_color,
+                            linewidth=1.0, linestyle='-',
                             alpha=0.95, zorder=0)
             ax.add_patch(patch)
         else:
             ax.plot(verts[:, 0], verts[:, 1],
                     color=outline_color, linewidth=2.0,
-                    linestyle='--', alpha=0.9)
+                    linestyle='-', alpha=0.9)
 
         # Auto-fit axes to board outline
         if contour.is_island:
