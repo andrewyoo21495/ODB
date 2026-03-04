@@ -344,14 +344,16 @@ class PcbViewer:
         board_u = self.profile.units if self.profile else None
         if COMP_TOP_KEY in self._visible_set and self.components_top:
             draw_components(self.ax, self.components_top, packages,
-                            color="#00B7FF", alpha=0.99,
+                            color="#3EE2CC", alpha=0.99,
                             show_pads=True, show_pkg_outlines=False,
-                            eda_units=eda_u, board_units=board_u)
+                            eda_units=eda_u, board_units=board_u,
+                            is_bottom=False)
         if COMP_BOT_KEY in self._visible_set and self.components_bot:
             draw_components(self.ax, self.components_bot, packages,
-                            color="#FF3150", alpha=0.99,
+                            color="#F85BB6", alpha=0.99,
                             show_pads=True, show_pkg_outlines=False,
-                            eda_units=eda_u, board_units=board_u)
+                            eda_units=eda_u, board_units=board_u,
+                            is_bottom=True)
         if COMP_OUTLINE_KEY in self._visible_set:
             self._draw_outlines(packages)
 
@@ -376,21 +378,32 @@ class PcbViewer:
         board_u = self.profile.units if self.profile else None
         if drew_top and self.components_top:
             draw_components(self.ax, self.components_top, packages,
-                            color="#FFFF00", alpha=0.95,
+                            color="#FFEA00", alpha=0.95,
                             show_pads=False, show_pkg_outlines=True,
-                            eda_units=eda_u, board_units=board_u)
+                            eda_units=eda_u, board_units=board_u,
+                            is_bottom=False)
         if drew_bot and self.components_bot:
             draw_components(self.ax, self.components_bot, packages,
-                            color="#FFFF00", alpha=0.95,
+                            color="#FFEA00", alpha=0.95,
                             show_pads=False, show_pkg_outlines=True,
-                            eda_units=eda_u, board_units=board_u)
+                            eda_units=eda_u, board_units=board_u,
+                            is_bottom=True)
         if not drew_top and not drew_bot:
             all_comps = self.components_top + self.components_bot
             if all_comps:
-                draw_components(self.ax, all_comps, packages,
-                                color="#FFFF00", alpha=0.95,
-                                show_pads=False, show_pkg_outlines=True,
-                                eda_units=eda_u, board_units=board_u)
+                # Mixed pass: draw top and bottom separately to get correct rotation
+                if self.components_top:
+                    draw_components(self.ax, self.components_top, packages,
+                                    color="#FFEA00", alpha=0.95,
+                                    show_pads=False, show_pkg_outlines=True,
+                                    eda_units=eda_u, board_units=board_u,
+                                    is_bottom=False)
+                if self.components_bot:
+                    draw_components(self.ax, self.components_bot, packages,
+                                    color="#FFEA00", alpha=0.95,
+                                    show_pads=False, show_pkg_outlines=True,
+                                    eda_units=eda_u, board_units=board_u,
+                                    is_bottom=True)
 
     # ------------------------------------------------------------------
     # Click handler
@@ -675,13 +688,15 @@ class ComponentViewer:
                                 color="#00B7FF", alpha=0.99,
                                 show_pads=show_pins,
                                 show_pkg_outlines=show_outline,
-                                eda_units=eda_u, board_units=board_u)
+                                eda_units=eda_u, board_units=board_u,
+                                is_bottom=False)
             if bot_comps:
                 draw_components(self.ax, bot_comps, packages,
                                 color="#FF3150", alpha=0.99,
                                 show_pads=show_pins,
                                 show_pkg_outlines=show_outline,
-                                eda_units=eda_u, board_units=board_u)
+                                eda_units=eda_u, board_units=board_u,
+                                is_bottom=True)
 
         self._apply_axis_labels()
         self.canvas.draw()

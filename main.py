@@ -21,7 +21,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from src import odb_loader
-from src.cache_manager import cache_job, cache_layer, is_cache_valid, load_cache
+from src.cache_manager import (
+    cache_job, cache_layer, is_cache_valid, load_cache,
+    reconstruct_profile, reconstruct_component, reconstruct_eda_data,
+    reconstruct_matrix_layer, reconstruct_layer_features,
+    reconstruct_user_symbol, reconstruct_font, reconstruct_job_info,
+)
 from src.models import ArcSegment, LayerFeatures, LineSegment
 
 
@@ -161,6 +166,98 @@ def _calibrate_eda_to_components(components_top: list, components_bot: list,
 
     _scale_eda_data(eda_data, factor)
     print(f"  Units: EDA package geometry rescaled {direction} to match component coordinates (ratio={ratio:.3f})")
+
+
+def _load_view_data_from_cache(cache_dir: Path, cache_name: str,
+                               layer_names: list[str] | None) -> dict:
+    """Load and reconstruct viewer data from JSON cache."""
+    raw = load_cache(cache_dir, cache_name)
+
+    profile = reconstruct_profile(raw["profile"]) if raw.get("profile") else None
+    matrix_layers = [reconstruct_matrix_layer(d) for d in raw.get("matrix_layers", [])]
+    layer_lookup = {ml.name: ml for ml in matrix_layers}
+
+    components_top = [reconstruct_component(d) for d in raw.get("components_top", [])]
+    components_bot = [reconstruct_component(d) for d in raw.get("components_bot", [])]
+    eda_data = reconstruct_eda_data(raw["eda_data"]) if raw.get("eda_data") else None
+
+    user_symbols = {
+        name: reconstruct_user_symbol(sym_data)
+        for name, sym_data in (raw.get("symbols") or {}).items()
+    }
+    font = reconstruct_font(raw["font"]) if raw.get("font") else None
+
+    target_set = set(l.lower() for l in layer_names) if layer_names else None
+    layers_data = {}
+    for key, feat_data in raw.items():
+        if not key.startswith("layer_features:"):
+            continue
+        layer_name = key.split(":", 1)[1]
+        if target_set is not None and layer_name not in target_set:
+            continue
+        lf = reconstruct_layer_features(feat_data)
+        ml = layer_lookup.get(layer_name)
+        if ml:
+            layers_data[layer_name] = (lf, ml)
+            print(f"  Loaded (cache): {layer_name} ({len(lf.features)} features)")
+
+    if eda_data:
+        _calibrate_eda_to_components(components_top, components_bot, eda_data)
+
+    return {
+        "job": None,
+        "profile": profile,
+        "layers_data": layers_data,
+        "components_top": components_top,
+        "components_bot": components_bot,
+        "eda_data": eda_data,
+        "user_symbols": user_symbols,
+        "font": font,
+    }
+
+
+def _load_comp_view_data_from_cache(cache_dir: Path, cache_name: str) -> dict:
+    """Load and reconstruct component-viewer data from JSON cache."""
+    raw = load_cache(cache_dir, cache_name)
+
+    profile = reconstruct_profile(raw["profile"]) if raw.get("profile") else None
+    components_top = [reconstruct_component(d) for d in raw.get("components_top", [])]
+    components_bot = [reconstruct_component(d) for d in raw.get("components_bot", [])]
+    eda_data = reconstruct_eda_data(raw["eda_data"]) if raw.get("eda_data") else None
+
+    if eda_data:
+        _calibrate_eda_to_components(components_top, components_bot, eda_data)
+
+    return {
+        "job": None,
+        "profile": profile,
+        "components_top": components_top,
+        "components_bot": components_bot,
+        "eda_data": eda_data,
+    }
+
+
+def _load_check_data_from_cache(cache_dir: Path, cache_name: str) -> dict:
+    """Load and reconstruct checklist data from JSON cache."""
+    raw = load_cache(cache_dir, cache_name)
+
+    job_data = {}
+    if raw.get("job_info"):
+        job_data["job_info"] = reconstruct_job_info(raw["job_info"])
+    if raw.get("matrix_layers"):
+        job_data["matrix_layers"] = [reconstruct_matrix_layer(d) for d in raw["matrix_layers"]]
+    if raw.get("profile"):
+        job_data["profile"] = reconstruct_profile(raw["profile"])
+    if raw.get("eda_data"):
+        job_data["eda_data"] = reconstruct_eda_data(raw["eda_data"])
+    if raw.get("components_top"):
+        job_data["components_top"] = [reconstruct_component(d) for d in raw["components_top"]]
+        print(f"  Loaded (cache): {len(job_data['components_top'])} top components")
+    if raw.get("components_bot"):
+        job_data["components_bot"] = [reconstruct_component(d) for d in raw["components_bot"]]
+        print(f"  Loaded (cache): {len(job_data['components_bot'])} bottom components")
+
+    return job_data
 
 
 def cmd_info(args):
@@ -347,6 +444,12 @@ def _parse_for_view(odb_path: str, layer_names: list[str] = None) -> dict:
         dict with keys: job, profile, layers_data, components_top,
         components_bot, eda_data, user_symbols, font.
     """
+    cache_name = Path(odb_path).stem
+    cache_dir = Path("cache")
+    if is_cache_valid(cache_dir, cache_name, odb_path):
+        print(f"Loading from cache: {cache_dir / cache_name}")
+        return _load_view_data_from_cache(cache_dir, cache_name, layer_names)
+
     import matplotlib
     matplotlib.use("TkAgg")
 
@@ -429,6 +532,24 @@ def _parse_for_view(odb_path: str, layer_names: list[str] = None) -> dict:
     if eda_data:
         _calibrate_eda_to_components(components_top, components_bot, eda_data)
 
+    # Auto-save to cache so subsequent runs skip TGZ parsing.
+    try:
+        cache_data: dict = {
+            "profile": profile,
+            "matrix_layers": matrix_layers,
+            "components_top": components_top,
+            "components_bot": components_bot,
+            "eda_data": eda_data,
+            "symbols": user_symbols,
+            "font": font,
+        }
+        for layer_name, (lf, _ml) in layers_data.items():
+            cache_data[f"layer_features:{layer_name}"] = lf
+        cache_job(cache_name, cache_data, cache_dir)
+        print(f"  Cache saved: {cache_dir / cache_name}")
+    except Exception as e:
+        print(f"  Warning: Cache save failed: {e}")
+
     return {
         "job": job,
         "profile": profile,
@@ -468,11 +589,18 @@ def cmd_view(args):
         font=data["font"],
     )
     viewer.show(initial_visible=initial)
-    data["job"].cleanup()
+    if data.get("job"):
+        data["job"].cleanup()
 
 
 def _parse_for_comp_view(odb_path: str) -> dict:
     """Parse only the data needed for the component viewer (no layer features)."""
+    cache_name = Path(odb_path).stem
+    cache_dir = Path("cache")
+    if is_cache_valid(cache_dir, cache_name, odb_path):
+        print(f"Loading from cache: {cache_dir / cache_name}")
+        return _load_comp_view_data_from_cache(cache_dir, cache_name)
+
     import matplotlib
     matplotlib.use("TkAgg")
 
@@ -521,6 +649,19 @@ def _parse_for_comp_view(odb_path: str) -> dict:
     if eda_data:
         _calibrate_eda_to_components(components_top, components_bot, eda_data)
 
+    # Auto-save to cache so subsequent runs skip TGZ parsing.
+    try:
+        cache_data = {
+            "profile": profile,
+            "components_top": components_top,
+            "components_bot": components_bot,
+            "eda_data": eda_data,
+        }
+        cache_job(cache_name, cache_data, cache_dir)
+        print(f"  Cache saved: {cache_dir / cache_name}")
+    except Exception as e:
+        print(f"  Warning: Cache save failed: {e}")
+
     return {
         "job": job,
         "profile": profile,
@@ -547,14 +688,12 @@ def cmd_view_comp(args):
         eda_data=data["eda_data"],
     )
     viewer.show()
-    data["job"].cleanup()
+    if data.get("job"):
+        data["job"].cleanup()
 
 
 def cmd_check(args):
     """Run the automated checklist."""
-    print(f"Loading ODB++ from: {args.odb_path}")
-    job = odb_loader.load(args.odb_path)
-
     # Import rules to trigger registration
     import src.checklist.rules.ckl_component_alignment  # noqa: F401
     import src.checklist.rules.ckl_spacing  # noqa: F401
@@ -563,44 +702,56 @@ def cmd_check(args):
     from src.checklist.engine import load_rules, run_checklist
     from src.checklist.reporter import generate_report
 
-    # Parse required data
-    from src.parsers.matrix_parser import parse_matrix
-    from src.parsers.profile_parser import parse_profile
-    from src.parsers.component_parser import parse_components
-    from src.parsers.eda_parser import parse_eda_data
-    from src.parsers.misc_parser import parse_info
+    cache_name = Path(args.odb_path).stem
+    cache_dir = Path("cache")
+    job = None
 
-    step_name = list(job.steps.keys())[0]
-    step = job.steps[step_name]
+    if is_cache_valid(cache_dir, cache_name, args.odb_path):
+        print(f"Loading from cache: {cache_dir / cache_name}")
+        job_data = _load_check_data_from_cache(cache_dir, cache_name)
+    else:
+        print(f"Loading ODB++ from: {args.odb_path}")
+        job = odb_loader.load(args.odb_path)
 
-    job_data = {}
+        from src.parsers.matrix_parser import parse_matrix
+        from src.parsers.profile_parser import parse_profile
+        from src.parsers.component_parser import parse_components
+        from src.parsers.eda_parser import parse_eda_data
+        from src.parsers.misc_parser import parse_info
 
-    # Job info
-    if job.misc_info_path:
-        job_data["job_info"] = parse_info(job.misc_info_path)
+        step_name = list(job.steps.keys())[0]
+        step = job.steps[step_name]
 
-    # Matrix
-    steps, layers = parse_matrix(job.matrix_path)
-    job_data["matrix_layers"] = layers
+        job_data = {}
 
-    # Profile
-    if step.profile:
-        job_data["profile"] = parse_profile(step.profile)
+        if job.misc_info_path:
+            job_data["job_info"] = parse_info(job.misc_info_path)
 
-    # EDA
-    if step.eda_data:
-        job_data["eda_data"] = parse_eda_data(step.eda_data)
+        _steps, layers = parse_matrix(job.matrix_path)
+        job_data["matrix_layers"] = layers
 
-    # Components
-    for layer_name, layer_paths in step.layers.items():
-        if layer_paths.components:
-            comps, _cu = parse_components(layer_paths.components)
-            if "top" in layer_name:
-                job_data["components_top"] = comps
-                print(f"  Loaded {len(comps)} top components")
-            else:
-                job_data["components_bot"] = comps
-                print(f"  Loaded {len(comps)} bottom components")
+        if step.profile:
+            job_data["profile"] = parse_profile(step.profile)
+
+        if step.eda_data:
+            job_data["eda_data"] = parse_eda_data(step.eda_data)
+
+        for layer_name, layer_paths in step.layers.items():
+            if layer_paths.components:
+                comps, _cu = parse_components(layer_paths.components)
+                if "top" in layer_name:
+                    job_data["components_top"] = comps
+                    print(f"  Loaded {len(comps)} top components")
+                else:
+                    job_data["components_bot"] = comps
+                    print(f"  Loaded {len(comps)} bottom components")
+
+        # Auto-save to cache
+        try:
+            cache_job(cache_name, job_data, cache_dir)
+            print(f"  Cache saved: {cache_dir / cache_name}")
+        except Exception as e:
+            print(f"  Warning: Cache save failed: {e}")
 
     # Load rules
     rule_ids = args.rules if args.rules else None
@@ -633,15 +784,13 @@ def cmd_check(args):
 
     # Generate Excel report
     output_path = Path(args.output) if args.output else Path("output/checklist_report.xlsx")
-    job_name = job_data.get("job_info", {})
-    if hasattr(job_name, "job_name"):
-        job_name = job_name.job_name
-    else:
-        job_name = job.job_name
+    job_info = job_data.get("job_info")
+    job_name = job_info.job_name if job_info else cache_name
 
     generate_report(results, output_path, job_name=job_name)
 
-    job.cleanup()
+    if job:
+        job.cleanup()
 
 
 def main():
