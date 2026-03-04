@@ -36,9 +36,12 @@ _INCH_TO_MM = 25.4
 
 def _pkg_scale_factor(eda_units: str | None, board_units: str | None) -> float:
     """Return the multiplier to convert EDA package-local coordinates to board units."""
-    if not eda_units or not board_units or eda_units == board_units:
+    if not eda_units or eda_units == board_units:
         return 1.0
-    if eda_units == "INCH" and board_units == "MM":
+    # When EDA package data is in inches, apply the inch→mm factor unless the
+    # board is explicitly also in inches.  If board_units is unknown (None) we
+    # assume the board is in MM, which is the ODB++ default.
+    if eda_units == "INCH" and board_units != "INCH":
         return _INCH_TO_MM
     if eda_units == "MM" and board_units == "INCH":
         return 1.0 / _INCH_TO_MM
