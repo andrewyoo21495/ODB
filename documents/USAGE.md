@@ -42,7 +42,7 @@ python main.py <command> <odb_path> [options]
 | `info` | Print a summary of the ODB++ job (layers, steps, version) |
 | `cache` | Parse all data and export to JSON cache files |
 | `view` | Launch the interactive PCB layer visualizer (outline only by default) |
-| `view-comp` | Launch visualizer with top & bottom component overlays available |
+| `view-comp` | Launch the component-focused viewer with per-component selection |
 | `check` | Run the automated design checklist and export an Excel report |
 
 ---
@@ -111,11 +111,9 @@ Each layer's feature file is stored separately so that the visualizer and other 
 
 ---
 
-## 3. Visualization (`view`, `view-comp`)
+## 3. Visualization (`view`)
 
-The visualizer renders PCB layers in a matplotlib window with interactive controls. Two commands are available depending on what you need to inspect.
-
-### 3a. General Viewer (`view`)
+The visualizer renders PCB layers in a matplotlib window with interactive controls.
 
 By default (no `--layers`), the viewer loads **all** layers but starts with only the **PCB outline** visible. No layers or component overlays are pre-selected, allowing you to enable exactly what you need via the checkbox panel.
 
@@ -139,9 +137,7 @@ python main.py view data/designodb_rigidflex.tgz --layers d_1_2 d_1_10 d_3_8
 python main.py view data/designodb_rigidflex.tgz --layers flex_5 flex_6 covertop coverbottom bend_area
 ```
 
-### 3b. Component Viewer (`view-comp`)
-
-Opens the viewer with both **top and bottom component overlays** available as checkbox entries. By default, only the PCB outline is shown — select "Components Top" or "Components Bot" (or both) via the checkbox panel to display component placements. This is useful when reviewing checklist results that reference specific components.
+Component overlays (top and bottom) are always available as checkbox entries in the panel. Select "Components Top" or "Components Bot" to display component placements.
 
 Top-side components are rendered in **sky blue**; bottom-side components are rendered in **light pink** for easy visual distinction.
 
@@ -156,31 +152,23 @@ Component geometries are derived from the EDA package data. For each placed comp
 
 Package-level courtyard and silkscreen outlines are drawn as dashed lines at reduced opacity. When a package has no outline data, a dashed bounding box is used as a fallback.
 
-```bash
-# Outline only, toggle top/bottom components via checkboxes
-python main.py view-comp data/designodb_rigidflex.tgz
-
-# Components + specific copper/mask layers
-python main.py view-comp data/designodb_rigidflex.tgz --layers signal_1 soldermask_top
-```
-
 ### Viewer Layout
 
 The viewer window is divided into three sections:
 
 | Section | Location | Content |
 |---------|----------|---------|
-| **Board canvas** | Left (main area) | The PCB visualization — layers, pads, outlines, and board profile. |
-| **Layer checkboxes** | Top-right | Toggle individual layers, component overlays, and outlines on/off. |
-| **Component info** | Bottom-right | Displays metadata for the component selected by clicking on the board. |
+| **Layer checkboxes** | Top-left | Toggle individual layers, component overlays, and outlines on/off. |
+| **Component info** | Bottom-left | Displays metadata for the component selected by clicking on the board. |
+| **Board canvas** | Right (main area) | The PCB visualization — layers, pads, outlines, and board profile. |
 
 ### Interactive Controls
 
 | Control | Action |
 |---------|--------|
-| **Layer checkboxes** (top-right) | Toggle individual layer visibility on/off. The viewer redraws automatically. Includes "Components Top", "Components Bot", and "Comp. Outlines" entries. DRILL and DIELECTRIC layers are excluded (they can still be loaded via `--layers`). |
+| **Layer checkboxes** (top-left) | Toggle individual layer visibility on/off. The viewer redraws automatically. Includes "Components Top", "Components Bot", and "Comp. Outlines" entries. DRILL and DIELECTRIC layers are excluded (they can still be loaded via `--layers`). |
 | **Comp. Outlines checkbox** | Draws yellow dashed outlines around component boundaries. When neither Top nor Bot components are checked, outlines are drawn for all components. |
-| **Click on board** | Click on or near a component pin to select it. The component's metadata appears in the bottom-right info panel. |
+| **Click on board** | Click on or near a component pin to select it. The component's metadata appears in the bottom-left info panel. |
 | **Scroll wheel on checkbox panel** | When the layer list is longer than the panel height, scroll up/down over the checkbox panel to reveal additional layers. |
 | **Zoom** | Use the scroll wheel over the board area, or use the magnifying glass icon in the toolbar to zoom into a region. |
 | **Pan** | Click the cross-arrow icon in the toolbar, then click and drag to pan. |
@@ -190,7 +178,7 @@ The viewer window is divided into three sections:
 
 ### Component Info Panel
 
-When you click on a component pin in the board canvas, the bottom-right panel shows:
+When you click on a component pin in the board canvas, the bottom-left panel shows:
 
 - **Component name** (ref-des) and **part name**
 - **Classification** (Capacitor, Connector, IC, etc. from the component classifier)
@@ -229,7 +217,44 @@ When no `--layers` flag is given, the viewer loads **all** layers at startup, wh
 
 ---
 
-## 4. Automated Checklist (`check`)
+## 4. Component Viewer (`view-comp`)
+
+The component viewer provides a focused, component-centric inspection mode. Only component geometry is shown — layer copper features are not loaded, making startup faster.
+
+```bash
+python main.py view-comp data/designodb_rigidflex.tgz
+```
+
+### Viewer Layout
+
+The left control panel contains all interaction controls (top → bottom); the right panel is the board canvas.
+
+| Section | Location | Content |
+|---------|----------|---------|
+| **Layer Selection** | Top-left | RadioButtons: choose Top, Bottom, or Both |
+| **Component Selection** | Mid-left | Scrollable checkbox list of component reference designators |
+| **Display Options** | Lower-left | "Show Pins" and "Show Component Outline" checkboxes |
+| **Update Visualization** | Lower-left | Button that applies current selections to the board canvas |
+| **Component Info** | Bottom-left | Metadata for the pin clicked on the board |
+| **Board canvas** | Right (main area) | PCB outline and selected component geometry |
+
+### Workflow
+
+1. **Select layer** — choose Top, Bottom, or Both. The Component Selection list rebuilds to show components on the chosen layer(s).
+2. **Select components** — tick one or more reference designators in the list. Scroll with the mouse wheel when the list overflows.
+3. **Set display options**:
+   - **Show Pins** (default on) — renders the individual pad shapes for each selected component.
+   - **Show Component Outline** — also draws the package-level courtyard/silkscreen outlines as dashed lines. Can be combined with Show Pins or used alone.
+4. **Click "Update Visualization"** — the board canvas redraws with only the selected components.
+5. **Click a pin** — the Component Info panel at the bottom-left shows that component's metadata.
+
+### Color Coding
+
+Top-side components are rendered in **blue** (`#00B7FF`); bottom-side components in **red** (`#FF3150`), matching the standard viewer's component colors.
+
+---
+
+## 5. Automated Checklist (`check`)
 
 The checklist system evaluates predefined design rules against component placement and geometry data, then exports the results to an Excel file.
 
@@ -294,7 +319,7 @@ Rule tabs are automatically sorted so that they appear in numerical order (e.g. 
 
 ---
 
-## 5. Writing Custom Checklist Rules
+## 6. Writing Custom Checklist Rules
 
 New rules are added by creating a Python file under `src/checklist/rules/` and using the `@register_rule` decorator.
 
@@ -419,12 +444,17 @@ The first matching rule wins. `properties` values are read from the component's 
    python main.py view data/my_design.tgz --layers signal_1 signal_2 soldermask_top
    ```
 
-4. **Inspect components** on top and/or bottom:
+4. **Inspect components** on top and/or bottom using the checkbox panel in the viewer:
+   ```bash
+   python main.py view data/my_design.tgz
+   ```
+
+5. **Inspect individual components** with the component viewer for focused pin/outline analysis:
    ```bash
    python main.py view-comp data/my_design.tgz
    ```
 
-5. **Run checklist** to validate design rules:
+6. **Run checklist** to validate design rules:
    ```bash
    python main.py check data/my_design.tgz --output reports/design_review.xlsx
    ```

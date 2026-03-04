@@ -87,7 +87,7 @@ def render_board(profile: Profile,
     unit_label = "inches" if units == "INCH" else "mm"
     ax.set_xlabel(f"X ({unit_label})")
     ax.set_ylabel(f"Y ({unit_label})")
-    ax.grid(True, alpha=0.2)
+    ax.grid(False)
 
     fig.tight_layout()
     return fig, ax
@@ -115,14 +115,14 @@ def render_single_layer(features: LayerFeatures,
     unit_label = "inches" if units == "INCH" else "mm"
     ax.set_xlabel(f"X ({unit_label})")
     ax.set_ylabel(f"Y ({unit_label})")
-    ax.grid(True, alpha=0.2)
+    ax.grid(False)
 
     fig.tight_layout()
     return fig, ax
 
 
 def _draw_profile(ax: Axes, profile: Profile,
-                  fill: bool = True, outline_color: str = "#333333"):
+                  fill: bool = True, outline_color: str = "#FF0000"):
     """Draw the board outline from profile data."""
     if not profile.surface:
         return
@@ -135,12 +135,14 @@ def _draw_profile(ax: Axes, profile: Profile,
         if fill and contour.is_island:
             from matplotlib.patches import Polygon
             patch = Polygon(verts, closed=True,
-                            facecolor="#F5F5DC", edgecolor=outline_color,
-                            linewidth=1.5, alpha=0.3, zorder=0)
+                            facecolor="#4f4f4f", edgecolor=outline_color,
+                            linewidth=1.0, linestyle='--',
+                            alpha=0.95, zorder=0)
             ax.add_patch(patch)
         else:
             ax.plot(verts[:, 0], verts[:, 1],
-                    color=outline_color, linewidth=1.5, alpha=0.8)
+                    color=outline_color, linewidth=2.0,
+                    linestyle='--', alpha=0.9)
 
         # Auto-fit axes to board outline
         if contour.is_island:

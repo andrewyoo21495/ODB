@@ -3,7 +3,7 @@
 Usage:
     python main.py cache      <odb_path>                         Parse and cache to JSON
     python main.py view       <odb_path> [--layers L1 L2 ...]    Launch visualizer
-    python main.py view-comp  <odb_path> [--layers L1 L2 ...]    View components (top & bottom)
+    python main.py view-comp  <odb_path>                         Launch component viewer
     python main.py check      <odb_path> [--rules R1 R2 ...]     Run checklist
     python main.py info       <odb_path>                         Print job summary
 """
@@ -11,6 +11,8 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import math
+import statistics
 import sys
 import time
 from pathlib import Path
@@ -95,6 +97,70 @@ def _scale_eda_data(eda, factor: float) -> None:
                 _scale_outline_params(ol, factor)
         for ol in pkg.outlines:
             _scale_outline_params(ol, factor)
+
+
+def _calibrate_eda_to_components(components_top: list, components_bot: list,
+                                   eda_data) -> None:
+    """Detect and correct any residual EDA package scale mismatch.
+
+    After initial unit normalisation both EDA pin centers (package-local space)
+    and toeprint positions (board space) should share the same unit.  This
+    function verifies that assumption by comparing, per component, the maximum
+    distance of a toeprint from the component centroid against the maximum
+    distance of an EDA pin center from the package origin.  Rotation and mirror
+    do not affect distance, so no transform is needed.
+
+    If a consistent ×25.4 or ÷25.4 ratio is found, the EDA data is rescaled in
+    place so that component geometry renders at the correct physical size.
+    """
+    if not eda_data or not eda_data.packages:
+        return
+
+    pkg_lookup = {i: pkg for i, pkg in enumerate(eda_data.packages)}
+    ratios: list[float] = []
+
+    for comp in (components_top + components_bot):
+        pkg = pkg_lookup.get(comp.pkg_ref)
+        if not pkg or len(pkg.pins) < 2 or len(comp.toeprints) < 2:
+            continue
+
+        # Largest toeprint distance from component centroid (board coordinates)
+        max_tp = max(
+            math.sqrt((tp.x - comp.x) ** 2 + (tp.y - comp.y) ** 2)
+            for tp in comp.toeprints
+        )
+        # Largest EDA pin distance from package origin (package-local coordinates)
+        max_pin = max(
+            math.sqrt(p.center.x ** 2 + p.center.y ** 2)
+            for p in pkg.pins
+        )
+
+        if max_pin > 1e-9 and max_tp > 1e-9:
+            ratios.append(max_tp / max_pin)
+
+        if len(ratios) >= 30:
+            break
+
+    if not ratios:
+        return
+
+    ratio = statistics.median(ratios)
+
+    if abs(ratio - 1.0) < 0.15:
+        return  # Already in sync
+
+    if 20.0 <= ratio <= 30.0:          # ≈ 25.4 → EDA is too small
+        factor = 25.4
+        direction = "×25.4"
+    elif 0.030 <= ratio <= 0.060:      # ≈ 1/25.4 → EDA is too large
+        factor = 1.0 / 25.4
+        direction = "÷25.4"
+    else:
+        print(f"  Warning: EDA/component scale ratio {ratio:.4f} is unexpected – skipping calibration")
+        return
+
+    _scale_eda_data(eda_data, factor)
+    print(f"  Units: EDA package geometry rescaled {direction} to match component coordinates (ratio={ratio:.3f})")
 
 
 def cmd_info(args):
@@ -358,6 +424,11 @@ def _parse_for_view(odb_path: str, layer_names: list[str] = None) -> dict:
         eda_data.units = profile_units
         print(f"  Units: scaled EDA package data to {profile_units}")
 
+    # Cross-check: verify EDA package geometry matches component toeprint
+    # positions and apply a correction if a residual inch/mm discrepancy remains.
+    if eda_data:
+        _calibrate_eda_to_components(components_top, components_bot, eda_data)
+
     return {
         "job": job,
         "profile": profile,
@@ -400,32 +471,82 @@ def cmd_view(args):
     data["job"].cleanup()
 
 
+def _parse_for_comp_view(odb_path: str) -> dict:
+    """Parse only the data needed for the component viewer (no layer features)."""
+    import matplotlib
+    matplotlib.use("TkAgg")
+
+    print(f"Loading ODB++ from: {odb_path}")
+    job = odb_loader.load(odb_path)
+
+    from src.parsers.profile_parser import parse_profile
+    from src.parsers.component_parser import parse_components
+    from src.parsers.eda_parser import parse_eda_data
+
+    step_name = list(job.steps.keys())[0]
+    step = job.steps[step_name]
+
+    profile  = parse_profile(step.profile)  if step.profile  else None
+    eda_data = parse_eda_data(step.eda_data) if step.eda_data else None
+
+    components_top = []
+    components_bot = []
+    comp_top_units = "INCH"
+    comp_bot_units = "INCH"
+
+    for layer_name, layer_paths in step.layers.items():
+        if layer_paths.components:
+            comps, comp_units = parse_components(layer_paths.components)
+            if "top" in layer_name:
+                components_top = comps
+                comp_top_units = comp_units
+            else:
+                components_bot = comps
+                comp_bot_units = comp_units
+
+    profile_units = profile.units if profile else "INCH"
+    for comps, cu in [(components_top, comp_top_units),
+                      (components_bot, comp_bot_units)]:
+        if comps and cu != profile_units:
+            f = _unit_scale(cu, profile_units)
+            _scale_components(comps, f)
+            print(f"  Units: scaled component positions {cu} → {profile_units}")
+
+    if eda_data and eda_data.units != profile_units:
+        f = _unit_scale(eda_data.units, profile_units)
+        _scale_eda_data(eda_data, f)
+        eda_data.units = profile_units
+        print(f"  Units: scaled EDA package data to {profile_units}")
+
+    if eda_data:
+        _calibrate_eda_to_components(components_top, components_bot, eda_data)
+
+    return {
+        "job": job,
+        "profile": profile,
+        "components_top": components_top,
+        "components_bot": components_bot,
+        "eda_data": eda_data,
+    }
+
+
 def cmd_view_comp(args):
-    """Launch viewer with top and bottom component overlays available."""
-    data = _parse_for_view(args.odb_path, layer_names=args.layers)
+    """Launch the component-focused interactive viewer."""
+    data = _parse_for_comp_view(args.odb_path)
 
-    from src.visualizer.viewer import PcbViewer
+    from src.visualizer.viewer import ComponentViewer
 
-    # Default: outline only, user toggles components via checkboxes
-    initial = []
-    if args.layers:
-        initial.extend(l.lower() for l in args.layers)
+    top_n = len(data["components_top"])
+    bot_n = len(data["components_bot"])
+    print(f"\nLaunching component viewer ({top_n} top, {bot_n} bot components)...")
 
-    n_top = len(data["components_top"])
-    n_bot = len(data["components_bot"])
-    n_layers = len(data["layers_data"])
-    print(f"\nLaunching component viewer ({n_top} top, {n_bot} bottom, {n_layers} layers)...")
-
-    viewer = PcbViewer(
+    viewer = ComponentViewer(
         profile=data["profile"],
-        layers_data=data["layers_data"],
         components_top=data["components_top"],
         components_bot=data["components_bot"],
         eda_data=data["eda_data"],
-        user_symbols=data["user_symbols"],
-        font=data["font"],
     )
-    viewer.show(initial_visible=initial)
+    viewer.show()
     data["job"].cleanup()
 
 
@@ -546,9 +667,8 @@ def main():
     p_view.add_argument("--layers", nargs="*", help="Layer names to load and display")
 
     # view-comp command
-    p_vcomp = subparsers.add_parser("view-comp", help="View components (top & bottom)")
-    p_vcomp.add_argument("odb_path", help="Path to ODB++ archive or directory")
-    p_vcomp.add_argument("--layers", nargs="*", help="Additional layer names to load and display")
+    p_view_comp = subparsers.add_parser("view-comp", help="Launch component viewer")
+    p_view_comp.add_argument("odb_path", help="Path to ODB++ archive or directory")
 
     # check command
     p_check = subparsers.add_parser("check", help="Run design checklist")
