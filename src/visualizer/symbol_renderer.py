@@ -345,10 +345,11 @@ def _get_scale_factor(units: str, unit_override: str = None) -> float:
         else:
             return 1.0 / 25400.0
     else:
+        # Default: symbol dimensions are in mils (thousandths of an inch)
         if units == "INCH":
-            return 1.0 / 1000.0
+            return 1.0 / 1000.0   # mils → inches
         else:
-            return 1.0 / 1000.0
+            return 0.0254          # mils → mm  (1 mil = 0.0254 mm)
 
 
 def _rotate_points(points: np.ndarray, cx: float, cy: float,

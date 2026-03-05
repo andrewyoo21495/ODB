@@ -37,12 +37,16 @@ _INCH_TO_MM = 25.4
 def _unit_scale(from_units: str | None, to_units: str | None) -> float:
     """Return the multiplier to convert *from_units* coordinates to *to_units*.
 
-    When either argument is ``None`` the units are assumed to match (scale 1.0).
+    If *from_units* is unknown (``None``) we cannot determine a conversion, so
+    the result is 1.0.  If *to_units* is unknown but *from_units* is ``"INCH"``
+    we **assume the board is in MM** (the ODB++ default) and return 25.4.
     """
-    if not from_units or not to_units or from_units == to_units:
+    if not from_units or from_units == to_units:
         return 1.0
-    if from_units == "INCH" and to_units == "MM":
+    # from_units is INCH → convert to MM unless board is explicitly INCH
+    if from_units == "INCH" and to_units != "INCH":
         return _INCH_TO_MM
+    # from_units is MM → convert to INCH only when board is explicitly INCH
     if from_units == "MM" and to_units == "INCH":
         return 1.0 / _INCH_TO_MM
     return 1.0

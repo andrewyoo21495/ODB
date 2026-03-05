@@ -420,6 +420,11 @@ def _parse_for_view(odb_path: str, layer_names: list[str] = None) -> dict:
             _scale_components(comps, f)
             print(f"  Units: scaled component positions {cu} → {profile_units}")
 
+    # After in-place scaling, component coordinates are now in profile_units.
+    # Update the unit markers so downstream code does NOT re-apply conversion.
+    comp_top_units = profile_units
+    comp_bot_units = profile_units
+
     if eda_data and eda_data.units != profile_units:
         f = _unit_scale(eda_data.units, profile_units)
         _scale_eda_data(eda_data, f)
@@ -517,6 +522,10 @@ def _parse_for_comp_view(odb_path: str) -> dict:
             f = _unit_scale(cu, profile_units)
             _scale_components(comps, f)
             print(f"  Units: scaled component positions {cu} → {profile_units}")
+
+    # After in-place scaling, component coordinates are now in profile_units.
+    comp_top_units = profile_units
+    comp_bot_units = profile_units
 
     if eda_data and eda_data.units != profile_units:
         f = _unit_scale(eda_data.units, profile_units)
