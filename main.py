@@ -102,6 +102,21 @@ def _scale_eda_data(eda, factor: float) -> None:
             _scale_outline_params(ol, factor)
 
 
+def _scale_profile(profile, factor: float) -> None:
+    """Scale profile outline coordinates in place."""
+    if not profile or not profile.surface:
+        return
+    for contour in profile.surface.contours:
+        contour.start.x *= factor
+        contour.start.y *= factor
+        for seg in contour.segments:
+            seg.end.x *= factor
+            seg.end.y *= factor
+            if isinstance(seg, ArcSegment):
+                seg.center.x *= factor
+                seg.center.y *= factor
+
+
 def _calibrate_eda_to_components(components_top: list, components_bot: list,
                                    eda_data) -> None:
     """Detect and correct any residual EDA package scale mismatch.
@@ -336,6 +351,13 @@ def cmd_cache(args):
     # JSON values are in millimetres, matching the board outline scale.
     # ------------------------------------------------------------------
 
+    # Normalise profile outline (inches -> mm)
+    prof = data.get("profile")
+    if prof and prof.units == "INCH":
+        _scale_profile(prof, _INCH_TO_MM)
+        prof.units = "MM"
+        print(f"  Units: scaled profile INCH -> MM (x25.4)")
+
     # Normalise component placement coordinates (inches -> mm)
     for key in ("components_top", "components_bot"):
         comps = data.get(key)
@@ -446,7 +468,12 @@ def _parse_for_view(odb_path: str, layer_names: list[str] = None) -> dict:
             except Exception as e:
                 print(f"  Warning: Failed to load {layer_name}: {e}")
 
-    # Normalise units – convert inch-based component/EDA data to MM.
+    # Normalise units – convert inch-based data to MM.
+    if profile and profile.units == "INCH":
+        _scale_profile(profile, _INCH_TO_MM)
+        profile.units = "MM"
+        print(f"  Units: scaled profile INCH -> MM (x25.4)")
+
     for comps, cu in [(components_top, comp_top_units),
                       (components_bot, comp_bot_units)]:
         if comps and cu == "INCH":
@@ -545,6 +572,12 @@ def _parse_for_comp_view(odb_path: str) -> dict:
             else:
                 components_bot = comps
                 comp_bot_units = comp_units
+
+    # Normalise units – convert inch-based data to MM.
+    if profile and profile.units == "INCH":
+        _scale_profile(profile, _INCH_TO_MM)
+        profile.units = "MM"
+        print(f"  Units: scaled profile INCH -> MM (x25.4)")
 
     for comps, cu in [(components_top, comp_top_units),
                       (components_bot, comp_bot_units)]:
@@ -657,6 +690,12 @@ def cmd_check(args):
     # Unit normalisation – convert inch-based data to MM so that
     # checklist rules operate in a consistent coordinate space.
     # ------------------------------------------------------------------
+    prof = job_data.get("profile")
+    if prof and prof.units == "INCH":
+        _scale_profile(prof, _INCH_TO_MM)
+        prof.units = "MM"
+        print(f"  Units: scaled profile INCH -> MM (x25.4)")
+
     for comps, cu, label in [
         (job_data.get("components_top"), comp_top_units, "top"),
         (job_data.get("components_bot"), comp_bot_units, "bot"),
