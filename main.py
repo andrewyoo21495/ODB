@@ -29,6 +29,9 @@ from src.models import ArcSegment, LayerFeatures, LineSegment
 # Unit normalisation helpers
 # ---------------------------------------------------------------------------
 
+_INCH_TO_MM = 25.4
+
+
 def _unit_scale(from_units: str, to_units: str) -> float:
     """Return the multiplier to convert *from_units* coordinates to *to_units*."""
     if from_units == to_units:
@@ -327,33 +330,30 @@ def cmd_cache(args):
             print(f"  Warning: Failed to parse stackup.xml: {e}")
 
     # ------------------------------------------------------------------
-    # Unit normalisation – convert all coordinate data to profile_units
-    # BEFORE writing to cache so every downstream consumer (viewer,
-    # checklist, etc.) receives consistently-scaled data.
+    # Unit normalisation – convert inch-based data to MM before caching.
+    # Component placement coordinates and EDA package geometry in ODB++
+    # files are expressed in inches.  Multiply by 25.4 so the cached
+    # JSON values are in millimetres, matching the board outline scale.
     # ------------------------------------------------------------------
-    profile = data.get("profile")
-    profile_units = profile.units if profile and hasattr(profile, "units") else "INCH"
 
-    # Normalise component placement coordinates
+    # Normalise component placement coordinates (inches -> mm)
     for key in ("components_top", "components_bot"):
         comps = data.get(key)
         units_key = f"{key}_units"
         comp_units = data.get(units_key, "INCH")
-        if comps and comp_units != profile_units:
-            f = _unit_scale(comp_units, profile_units)
-            _scale_components(comps, f)
-            data[units_key] = profile_units
-            print(f"  Units: scaled {key} coordinates {comp_units} -> {profile_units}")
+        if comps and comp_units == "INCH":
+            _scale_components(comps, _INCH_TO_MM)
+            data[units_key] = "MM"
+            print(f"  Units: scaled {key} INCH -> MM (x25.4)")
 
-    # Normalise EDA package geometry
+    # Normalise EDA package geometry (inches -> mm)
     eda = data.get("eda_data")
-    if eda and hasattr(eda, "units") and eda.units != profile_units:
-        f = _unit_scale(eda.units, profile_units)
-        _scale_eda_data(eda, f)
-        print(f"  Units: scaled EDA package data {eda.units} -> {profile_units}")
-        eda.units = profile_units
+    if eda and hasattr(eda, "units") and eda.units == "INCH":
+        _scale_eda_data(eda, _INCH_TO_MM)
+        print(f"  Units: scaled EDA package data INCH -> MM (x25.4)")
+        eda.units = "MM"
 
-    # Cross-check: detect and correct any residual inch/mm mismatch
+    # Cross-check: detect and correct any residual scale mismatch
     # between EDA pin centres and component toeprint positions.
     if eda:
         _calibrate_eda_to_components(
@@ -446,26 +446,21 @@ def _parse_for_view(odb_path: str, layer_names: list[str] = None) -> dict:
             except Exception as e:
                 print(f"  Warning: Failed to load {layer_name}: {e}")
 
-    # Normalise units – scale component and EDA coordinates to match the
-    # profile's coordinate space when files declare different units.
-    profile_units = profile.units if profile else "INCH"
+    # Normalise units – convert inch-based component/EDA data to MM.
     for comps, cu in [(components_top, comp_top_units),
                       (components_bot, comp_bot_units)]:
-        if comps and cu != profile_units:
-            f = _unit_scale(cu, profile_units)
-            _scale_components(comps, f)
-            print(f"  Units: scaled component positions {cu} → {profile_units}")
+        if comps and cu == "INCH":
+            _scale_components(comps, _INCH_TO_MM)
+            print(f"  Units: scaled component positions INCH -> MM (x25.4)")
 
-    # After in-place scaling, component coordinates are now in profile_units.
-    # Update the unit markers so downstream code does NOT re-apply conversion.
-    comp_top_units = profile_units
-    comp_bot_units = profile_units
+    # After in-place scaling, component coordinates are now in MM.
+    comp_top_units = "MM"
+    comp_bot_units = "MM"
 
-    if eda_data and eda_data.units != profile_units:
-        f = _unit_scale(eda_data.units, profile_units)
-        _scale_eda_data(eda_data, f)
-        eda_data.units = profile_units
-        print(f"  Units: scaled EDA package data to {profile_units}")
+    if eda_data and eda_data.units == "INCH":
+        _scale_eda_data(eda_data, _INCH_TO_MM)
+        eda_data.units = "MM"
+        print(f"  Units: scaled EDA package data INCH -> MM (x25.4)")
 
     # Cross-check: verify EDA package geometry matches component toeprint
     # positions and apply a correction if a residual inch/mm discrepancy remains.
@@ -551,23 +546,20 @@ def _parse_for_comp_view(odb_path: str) -> dict:
                 components_bot = comps
                 comp_bot_units = comp_units
 
-    profile_units = profile.units if profile else "INCH"
     for comps, cu in [(components_top, comp_top_units),
                       (components_bot, comp_bot_units)]:
-        if comps and cu != profile_units:
-            f = _unit_scale(cu, profile_units)
-            _scale_components(comps, f)
-            print(f"  Units: scaled component positions {cu} → {profile_units}")
+        if comps and cu == "INCH":
+            _scale_components(comps, _INCH_TO_MM)
+            print(f"  Units: scaled component positions INCH -> MM (x25.4)")
 
-    # After in-place scaling, component coordinates are now in profile_units.
-    comp_top_units = profile_units
-    comp_bot_units = profile_units
+    # After in-place scaling, component coordinates are now in MM.
+    comp_top_units = "MM"
+    comp_bot_units = "MM"
 
-    if eda_data and eda_data.units != profile_units:
-        f = _unit_scale(eda_data.units, profile_units)
-        _scale_eda_data(eda_data, f)
-        eda_data.units = profile_units
-        print(f"  Units: scaled EDA package data to {profile_units}")
+    if eda_data and eda_data.units == "INCH":
+        _scale_eda_data(eda_data, _INCH_TO_MM)
+        eda_data.units = "MM"
+        print(f"  Units: scaled EDA package data INCH -> MM (x25.4)")
 
     if eda_data:
         _calibrate_eda_to_components(components_top, components_bot, eda_data)
@@ -662,27 +654,22 @@ def cmd_check(args):
                 print(f"  Loaded {len(comps)} bottom components (units={comp_units})")
 
     # ------------------------------------------------------------------
-    # Unit normalisation – scale everything to profile_units so that
+    # Unit normalisation – convert inch-based data to MM so that
     # checklist rules operate in a consistent coordinate space.
     # ------------------------------------------------------------------
-    profile = job_data.get("profile")
-    profile_units = profile.units if profile and hasattr(profile, "units") else "INCH"
-
     for comps, cu, label in [
         (job_data.get("components_top"), comp_top_units, "top"),
         (job_data.get("components_bot"), comp_bot_units, "bot"),
     ]:
-        if comps and cu != profile_units:
-            f = _unit_scale(cu, profile_units)
-            _scale_components(comps, f)
-            print(f"  Units: scaled {label} components {cu} -> {profile_units}")
+        if comps and cu == "INCH":
+            _scale_components(comps, _INCH_TO_MM)
+            print(f"  Units: scaled {label} components INCH -> MM (x25.4)")
 
     eda = job_data.get("eda_data")
-    if eda and hasattr(eda, "units") and eda.units != profile_units:
-        f = _unit_scale(eda.units, profile_units)
-        _scale_eda_data(eda, f)
-        print(f"  Units: scaled EDA data {eda.units} -> {profile_units}")
-        eda.units = profile_units
+    if eda and hasattr(eda, "units") and eda.units == "INCH":
+        _scale_eda_data(eda, _INCH_TO_MM)
+        print(f"  Units: scaled EDA data INCH -> MM (x25.4)")
+        eda.units = "MM"
 
     if eda:
         _calibrate_eda_to_components(
