@@ -326,6 +326,42 @@ def cmd_cache(args):
         except Exception as e:
             print(f"  Warning: Failed to parse stackup.xml: {e}")
 
+    # ------------------------------------------------------------------
+    # Unit normalisation – convert all coordinate data to profile_units
+    # BEFORE writing to cache so every downstream consumer (viewer,
+    # checklist, etc.) receives consistently-scaled data.
+    # ------------------------------------------------------------------
+    profile = data.get("profile")
+    profile_units = profile.units if profile and hasattr(profile, "units") else "INCH"
+
+    # Normalise component placement coordinates
+    for key in ("components_top", "components_bot"):
+        comps = data.get(key)
+        units_key = f"{key}_units"
+        comp_units = data.get(units_key, "INCH")
+        if comps and comp_units != profile_units:
+            f = _unit_scale(comp_units, profile_units)
+            _scale_components(comps, f)
+            data[units_key] = profile_units
+            print(f"  Units: scaled {key} coordinates {comp_units} -> {profile_units}")
+
+    # Normalise EDA package geometry
+    eda = data.get("eda_data")
+    if eda and hasattr(eda, "units") and eda.units != profile_units:
+        f = _unit_scale(eda.units, profile_units)
+        _scale_eda_data(eda, f)
+        print(f"  Units: scaled EDA package data {eda.units} -> {profile_units}")
+        eda.units = profile_units
+
+    # Cross-check: detect and correct any residual inch/mm mismatch
+    # between EDA pin centres and component toeprint positions.
+    if eda:
+        _calibrate_eda_to_components(
+            data.get("components_top", []),
+            data.get("components_bot", []),
+            eda,
+        )
+
     # Write cache
     print(f"\nWriting cache...")
     cache_job(cache_name, data, cache_dir)
@@ -611,15 +647,49 @@ def cmd_check(args):
         job_data["eda_data"] = parse_eda_data(step.eda_data)
 
     # Components
+    comp_top_units = "INCH"
+    comp_bot_units = "INCH"
     for layer_name, layer_paths in step.layers.items():
         if layer_paths.components:
-            comps, _cu = parse_components(layer_paths.components)
+            comps, comp_units = parse_components(layer_paths.components)
             if "top" in layer_name:
                 job_data["components_top"] = comps
-                print(f"  Loaded {len(comps)} top components")
+                comp_top_units = comp_units
+                print(f"  Loaded {len(comps)} top components (units={comp_units})")
             else:
                 job_data["components_bot"] = comps
-                print(f"  Loaded {len(comps)} bottom components")
+                comp_bot_units = comp_units
+                print(f"  Loaded {len(comps)} bottom components (units={comp_units})")
+
+    # ------------------------------------------------------------------
+    # Unit normalisation – scale everything to profile_units so that
+    # checklist rules operate in a consistent coordinate space.
+    # ------------------------------------------------------------------
+    profile = job_data.get("profile")
+    profile_units = profile.units if profile and hasattr(profile, "units") else "INCH"
+
+    for comps, cu, label in [
+        (job_data.get("components_top"), comp_top_units, "top"),
+        (job_data.get("components_bot"), comp_bot_units, "bot"),
+    ]:
+        if comps and cu != profile_units:
+            f = _unit_scale(cu, profile_units)
+            _scale_components(comps, f)
+            print(f"  Units: scaled {label} components {cu} -> {profile_units}")
+
+    eda = job_data.get("eda_data")
+    if eda and hasattr(eda, "units") and eda.units != profile_units:
+        f = _unit_scale(eda.units, profile_units)
+        _scale_eda_data(eda, f)
+        print(f"  Units: scaled EDA data {eda.units} -> {profile_units}")
+        eda.units = profile_units
+
+    if eda:
+        _calibrate_eda_to_components(
+            job_data.get("components_top", []),
+            job_data.get("components_bot", []),
+            eda,
+        )
 
     # Load rules
     rule_ids = args.rules if args.rules else None
