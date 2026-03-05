@@ -10,10 +10,10 @@ from pathlib import Path
 from typing import Any
 
 from src.models import (
-    ArcRecord, ArcSegment, BarcodeRecord, BomData, Component, Contour,
-    EdaData, FeatureIdRef, FeaturePolarity, JobInfo, LayerFeatures,
-    LineRecord, LineSegment, MatrixLayer, MatrixStep, Net, Netlist,
-    Package, PadRecord, Pin, PinOutline, Point, Profile, StepHeader,
+    ArcRecord, ArcSegment, BarcodeRecord, BBox, BomData, Component, Contour,
+    EdaData, FeatureIdRef, FeaturePolarity, FontChar, FontStroke, JobInfo,
+    LayerFeatures, LineRecord, LineSegment, MatrixLayer, MatrixStep, Net,
+    Netlist, Package, PadRecord, Pin, PinOutline, Point, Profile, StepHeader,
     StrokeFont, Subnet, Surface, SurfaceRecord, SymbolRef, TextRecord,
     Toeprint, UserSymbol,
 )
@@ -342,3 +342,168 @@ def _reconstruct_contour(data: dict) -> Contour:
             ))
 
     return contour
+
+
+# ---------------------------------------------------------------------------
+# Full object reconstruction from cached JSON
+# ---------------------------------------------------------------------------
+
+def reconstruct_profile(data: dict) -> Profile:
+    """Reconstruct a Profile from cached JSON data."""
+    if not data:
+        return Profile()
+    surface = None
+    if data.get("surface"):
+        sd = data["surface"]
+        contours = [_reconstruct_contour(cd) for cd in sd.get("contours", [])]
+        surface = Surface(
+            polarity=FeaturePolarity(sd.get("polarity", "P")),
+            contours=contours,
+        )
+    return Profile(units=data.get("units", "INCH"), surface=surface)
+
+
+def _reconstruct_pin_outline(data: dict) -> PinOutline:
+    """Reconstruct a PinOutline from cached JSON data."""
+    contour = _reconstruct_contour(data["contour"]) if data.get("contour") else None
+    return PinOutline(type=data["type"], params=data.get("params", {}), contour=contour)
+
+
+def reconstruct_eda_data(data: dict) -> EdaData:
+    """Reconstruct an EdaData from cached JSON data."""
+    if not data:
+        return EdaData()
+
+    nets = []
+    for nd in data.get("nets", []):
+        subnets = []
+        for sd in nd.get("subnets", []):
+            fids = [
+                FeatureIdRef(type=f["type"], layer_idx=f["layer_idx"],
+                             feature_idx=f["feature_idx"])
+                for f in sd.get("feature_ids", [])
+            ]
+            subnets.append(Subnet(
+                type=sd["type"], feature_ids=fids,
+                side=sd.get("side", ""), comp_num=sd.get("comp_num", -1),
+                toep_num=sd.get("toep_num", -1), fill_type=sd.get("fill_type", ""),
+                cutout_type=sd.get("cutout_type", ""), fill_size=sd.get("fill_size", 0.0),
+            ))
+        nets.append(Net(
+            name=nd["name"], index=nd["index"], subnets=subnets,
+            attributes=nd.get("attributes", {}), id=nd.get("id"),
+        ))
+
+    packages = []
+    for pd in data.get("packages", []):
+        bbox = None
+        if pd.get("bbox"):
+            b = pd["bbox"]
+            bbox = BBox(b["xmin"], b["ymin"], b["xmax"], b["ymax"])
+        pins = []
+        for pin_d in pd.get("pins", []):
+            c = pin_d.get("center", {"x": 0.0, "y": 0.0})
+            pins.append(Pin(
+                name=pin_d["name"], type=pin_d.get("type", "TH"),
+                center=Point(c["x"], c["y"]),
+                finished_hole_size=pin_d.get("finished_hole_size", 0.0),
+                electrical_type=pin_d.get("electrical_type", "U"),
+                mount_type=pin_d.get("mount_type", "U"),
+                id=pin_d.get("id"),
+                outlines=[_reconstruct_pin_outline(od) for od in pin_d.get("outlines", [])],
+            ))
+        packages.append(Package(
+            name=pd["name"], pitch=pd.get("pitch", 0.0), bbox=bbox, pins=pins,
+            outlines=[_reconstruct_pin_outline(od) for od in pd.get("outlines", [])],
+            attributes=pd.get("attributes", {}), id=pd.get("id"),
+        ))
+
+    return EdaData(
+        source=data.get("source", ""), units=data.get("units", "INCH"),
+        layer_names=data.get("layer_names", []),
+        nets=nets, packages=packages, properties=data.get("properties", {}),
+    )
+
+
+def reconstruct_components(data: list) -> list:
+    """Reconstruct a list of Component objects from cached JSON data."""
+    return [_reconstruct_single_component(d) for d in (data or [])]
+
+
+def _reconstruct_single_component(data: dict) -> Component:
+    """Reconstruct a single Component from cached JSON data."""
+    toeprints = [
+        Toeprint(
+            pin_num=td["pin_num"], x=td["x"], y=td["y"],
+            rotation=td.get("rotation", 0.0), mirror=td.get("mirror", False),
+            net_num=td.get("net_num", -1), subnet_num=td.get("subnet_num", -1),
+            name=td.get("name", ""),
+        )
+        for td in data.get("toeprints", [])
+    ]
+    bom_data = None
+    if data.get("bom_data"):
+        bd = data["bom_data"]
+        bom_data = BomData(
+            cpn=bd.get("cpn", ""), pkg=bd.get("pkg", ""), ipn=bd.get("ipn", ""),
+            description=bd.get("description", ""), vendors=bd.get("vendors", []),
+        )
+    return Component(
+        pkg_ref=data["pkg_ref"], x=data["x"], y=data["y"],
+        rotation=data.get("rotation", 0.0), mirror=data.get("mirror", False),
+        comp_name=data.get("comp_name", ""), part_name=data.get("part_name", ""),
+        attributes=data.get("attributes", {}), properties=data.get("properties", {}),
+        toeprints=toeprints, bom_data=bom_data, id=data.get("id"),
+    )
+
+
+def reconstruct_matrix_layers(data: list) -> list:
+    """Reconstruct a list of MatrixLayer objects from cached JSON data."""
+    return [
+        MatrixLayer(
+            row=d.get("row", 0), name=d.get("name", ""),
+            context=d.get("context", "BOARD"), type=d.get("type", "SIGNAL"),
+            polarity=d.get("polarity", "POSITIVE"), add_type=d.get("add_type", ""),
+            start_name=d.get("start_name", ""), end_name=d.get("end_name", ""),
+            old_name=d.get("old_name", ""), color=d.get("color", ""),
+            id=d.get("id", 0), form=d.get("form", ""),
+            dielectric_type=d.get("dielectric_type", ""),
+            dielectric_name=d.get("dielectric_name", ""),
+            cu_top=d.get("cu_top", ""), cu_bottom=d.get("cu_bottom", ""),
+        )
+        for d in (data or [])
+    ]
+
+
+def reconstruct_font(data: dict) -> StrokeFont:
+    """Reconstruct a StrokeFont from cached JSON data."""
+    if not data:
+        return StrokeFont()
+    chars = {}
+    for char_key, cd in data.get("characters", {}).items():
+        strokes = [
+            FontStroke(
+                x1=sd["x1"], y1=sd["y1"], x2=sd["x2"], y2=sd["y2"],
+                polarity=sd.get("polarity", "P"), shape=sd.get("shape", "R"),
+                width=sd.get("width", 0.012),
+            )
+            for sd in cd.get("strokes", [])
+        ]
+        chars[char_key] = FontChar(char=cd["char"], strokes=strokes)
+    return StrokeFont(
+        xsize=data.get("xsize", 0.0), ysize=data.get("ysize", 0.0),
+        offset=data.get("offset", 0.0), characters=chars,
+    )
+
+
+def reconstruct_user_symbols(data: dict) -> dict:
+    """Reconstruct a dict of UserSymbol objects from cached JSON data."""
+    result = {}
+    for name, sym_data in (data or {}).items():
+        features = [f for f in map(_reconstruct_feature, sym_data.get("features", [])) if f]
+        result[name] = UserSymbol(
+            name=sym_data.get("name", name),
+            units=sym_data.get("units", "INCH"),
+            features=features,
+        )
+    return result

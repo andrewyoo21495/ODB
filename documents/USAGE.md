@@ -40,10 +40,20 @@ python main.py <command> <odb_path> [options]
 | Command | Description |
 |---------|-------------|
 | `info` | Print a summary of the ODB++ job (layers, steps, version) |
-| `cache` | Parse all data and export to JSON cache files |
-| `view` | Launch the interactive PCB layer visualizer (outline only by default) |
-| `view-comp` | Launch the component-focused viewer with per-component selection |
-| `check` | Run the automated design checklist and export an Excel report |
+| `cache` | Parse all data, normalize units, and export to JSON cache files |
+| `view` | Launch the interactive PCB layer visualizer — loads from cache (auto-builds if missing) |
+| `view-comp` | Launch the component-focused viewer — loads from cache (auto-builds if missing) |
+| `check` | Run the automated design checklist — loads from cache (auto-builds if missing) |
+
+### Recommended Workflow
+
+```
+python main.py cache data/my_design.tgz     # Parse once, cache to JSON
+python main.py view  data/my_design.tgz     # Visualize using cached data
+python main.py check data/my_design.tgz     # Run rules using cached data
+```
+
+The `view`, `view-comp`, and `check` commands read directly from the JSON cache. If no cache exists for the given file, caching runs automatically before the command proceeds. Running `cache` explicitly upfront is recommended for large files so the one-time parsing cost is paid on its own.
 
 ---
 
@@ -85,6 +95,8 @@ python main.py cache data/designodb_rigidflex.tgz --cache-dir my_cache
 
 The cache folder is named after the **input file** (without extension), not the internal ODB++ job name. For example, caching `data/designodb_rigidflex.tgz` creates `cache/designodb_rigidflex/`.
 
+During caching, component placement coordinates and EDA package geometry that are declared in inches are automatically multiplied by 25.4 and saved in millimetres. The board profile (outline) is stored exactly as it appears in the ODB++ source and serves as the ground-truth coordinate system for rendering. The `view`, `view-comp`, and `check` commands use this cached, unit-normalized data directly.
+
 The cache directory will contain:
 
 ```
@@ -109,19 +121,27 @@ cache/<input_filename>/
 
 Each layer's feature file is stored separately so that the visualizer and other tools can load individual layers without reading everything into memory.
 
+A `components_top_units.json` and `components_bot_units.json` file record the unit system of the stored component coordinates (`"MM"` after normalization), allowing the renderer to apply the correct scale when overlaying components on the profile.
+
 ---
 
 ## 3. Visualization (`view`)
 
-The visualizer renders PCB layers in a matplotlib window with interactive controls.
+The visualizer renders PCB layers in a matplotlib window with interactive controls. Data is read from the JSON cache — if no cache exists for the given file, it is built automatically.
 
-By default (no `--layers`), the viewer loads **all** layers but starts with only the **PCB outline** visible. No layers or component overlays are pre-selected, allowing you to enable exactly what you need via the checkbox panel.
+By default (no `--layers`), the viewer shows all cached layers but starts with only the **PCB outline** visible. Enable individual layers and component overlays via the checkbox panel.
 
 ```bash
 python main.py view data/designodb_rigidflex.tgz
 ```
 
-When `--layers` is specified, only those layers are loaded and they are pre-selected in the checkbox panel. Layer names are case-insensitive and match the names shown by the `info` command:
+To use a non-default cache location:
+
+```bash
+python main.py view data/designodb_rigidflex.tgz --cache-dir my_cache
+```
+
+When `--layers` is specified, only those layers are pre-selected in the checkbox panel (all cached layers remain available). Layer names are case-insensitive and match the names shown by the `info` command:
 
 ```bash
 # View only signal layers
@@ -209,20 +229,26 @@ Component overlays render actual pad geometries (rectangles, circles, squares, c
 
 ### Unit Normalization
 
-ODB++ files may declare different units (INCH vs MM) across component files, EDA data, and the board profile. The viewer automatically detects these discrepancies and normalizes all coordinates to the profile's unit system at load time. A console message is printed when scaling is applied (e.g., `Units: scaled component positions INCH → MM`).
+ODB++ files may declare different units (INCH vs MM) for component placement data and EDA package geometry. The `cache` command normalizes these to millimetres at cache time. The board profile (outline) is always stored and rendered using its original coordinate values, which serve as the ground truth for the plot axes. The renderer automatically applies the correct scale factor when overlaying components on the profile.
 
 ### Performance Note
 
-When no `--layers` flag is given, the viewer loads **all** layers at startup, which may take 15-20 seconds for large designs. Once loaded, toggling layers via checkboxes is instantaneous. If you only need a few specific layers, use `--layers` to skip loading the rest.
+The viewer reads from the JSON cache, so startup is fast regardless of how many layers are present. The one-time parsing cost is paid when the cache is first built (either via an explicit `cache` command or automatically on first run).
 
 ---
 
 ## 4. Component Viewer (`view-comp`)
 
-The component viewer provides a focused, component-centric inspection mode. Only component geometry is shown — layer copper features are not loaded, making startup faster.
+The component viewer provides a focused, component-centric inspection mode. Only component geometry is shown — layer copper features are not rendered. Data is read from the JSON cache (auto-built if missing).
 
 ```bash
 python main.py view-comp data/designodb_rigidflex.tgz
+```
+
+To use a non-default cache location:
+
+```bash
+python main.py view-comp data/designodb_rigidflex.tgz --cache-dir my_cache
 ```
 
 ### Viewer Layout
@@ -256,7 +282,7 @@ Top-side components are rendered in **blue** (`#00B7FF`); bottom-side components
 
 ## 5. Automated Checklist (`check`)
 
-The checklist system evaluates predefined design rules against component placement and geometry data, then exports the results to an Excel file.
+The checklist system evaluates predefined design rules against component placement and geometry data from the JSON cache, then exports the results to an Excel file. The cache is auto-built if it does not yet exist.
 
 ### Run All Rules
 
@@ -274,6 +300,12 @@ python main.py check data/designodb_rigidflex.tgz --rules CKL-001 CKL-003
 
 ```bash
 python main.py check data/designodb_rigidflex.tgz --output reports/my_report.xlsx
+```
+
+### Custom Cache Directory
+
+```bash
+python main.py check data/designodb_rigidflex.tgz --cache-dir my_cache
 ```
 
 Default output path: `output/checklist_report.xlsx`
@@ -434,10 +466,11 @@ The first matching rule wins. `properties` values are read from the component's 
    python main.py info data/my_design.tgz
    ```
 
-2. **Cache** the parsed data for fast repeated access:
+2. **Cache** the parsed data (parse once, normalize units, write JSON):
    ```bash
    python main.py cache data/my_design.tgz
    ```
+   This is the recommended first step. All subsequent commands load from this cache, so the slow ODB++ parsing only happens once. If you skip this step, the first `view`/`view-comp`/`check` call will auto-build the cache before proceeding.
 
 3. **Visualize** specific layers to review the design:
    ```bash

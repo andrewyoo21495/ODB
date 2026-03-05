@@ -21,7 +21,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from src import odb_loader
-from src.cache_manager import cache_job, cache_layer, is_cache_valid, load_cache
+from src.cache_manager import (
+    cache_job, cache_layer, is_cache_valid, load_cache,
+    reconstruct_profile, reconstruct_eda_data, reconstruct_components,
+    reconstruct_layer_features, reconstruct_matrix_layers,
+    reconstruct_font, reconstruct_user_symbols,
+)
 from src.models import ArcSegment, LayerFeatures, LineSegment
 
 
@@ -101,20 +106,6 @@ def _scale_eda_data(eda, factor: float) -> None:
         for ol in pkg.outlines:
             _scale_outline_params(ol, factor)
 
-
-def _scale_profile(profile, factor: float) -> None:
-    """Scale profile outline coordinates in place."""
-    if not profile or not profile.surface:
-        return
-    for contour in profile.surface.contours:
-        contour.start.x *= factor
-        contour.start.y *= factor
-        for seg in contour.segments:
-            seg.end.x *= factor
-            seg.end.y *= factor
-            if isinstance(seg, ArcSegment):
-                seg.center.x *= factor
-                seg.center.y *= factor
 
 
 def _calibrate_eda_to_components(components_top: list, components_bot: list,
@@ -351,13 +342,6 @@ def cmd_cache(args):
     # JSON values are in millimetres, matching the board outline scale.
     # ------------------------------------------------------------------
 
-    # Normalise profile outline (inches -> mm)
-    prof = data.get("profile")
-    if prof and prof.units == "INCH":
-        _scale_profile(prof, _INCH_TO_MM)
-        prof.units = "MM"
-        print(f"  Units: scaled profile INCH -> MM (x25.4)")
-
     # Normalise component placement coordinates (inches -> mm)
     for key in ("components_top", "components_bot"):
         comps = data.get(key)
@@ -468,19 +452,14 @@ def _parse_for_view(odb_path: str, layer_names: list[str] = None) -> dict:
             except Exception as e:
                 print(f"  Warning: Failed to load {layer_name}: {e}")
 
-    # Normalise units – convert inch-based data to MM.
-    if profile and profile.units == "INCH":
-        _scale_profile(profile, _INCH_TO_MM)
-        profile.units = "MM"
-        print(f"  Units: scaled profile INCH -> MM (x25.4)")
-
+    # Normalise component and EDA coordinates (inches -> mm).
+    # Profile coordinates are left in their original units (ground truth for rendering).
     for comps, cu in [(components_top, comp_top_units),
                       (components_bot, comp_bot_units)]:
         if comps and cu == "INCH":
             _scale_components(comps, _INCH_TO_MM)
             print(f"  Units: scaled component positions INCH -> MM (x25.4)")
 
-    # After in-place scaling, component coordinates are now in MM.
     comp_top_units = "MM"
     comp_bot_units = "MM"
 
@@ -489,8 +468,6 @@ def _parse_for_view(odb_path: str, layer_names: list[str] = None) -> dict:
         eda_data.units = "MM"
         print(f"  Units: scaled EDA package data INCH -> MM (x25.4)")
 
-    # Cross-check: verify EDA package geometry matches component toeprint
-    # positions and apply a correction if a residual inch/mm discrepancy remains.
     if eda_data:
         _calibrate_eda_to_components(components_top, components_bot, eda_data)
 
@@ -508,36 +485,123 @@ def _parse_for_view(odb_path: str, layer_names: list[str] = None) -> dict:
     }
 
 
+def _ensure_cache(odb_path: str, cache_dir: Path) -> str:
+    """Ensure a JSON cache exists for odb_path; build it automatically if missing.
+
+    Returns the cache_name (stem of the ODB path).
+    """
+    import argparse
+    cache_name = Path(odb_path).stem
+    cache_path = cache_dir / cache_name
+    cache_files = list(cache_path.glob("*.json")) if cache_path.exists() else []
+    if not cache_files:
+        print(f"No cache found at {cache_path}. Building cache first...")
+        cmd_cache(argparse.Namespace(odb_path=odb_path, cache_dir=str(cache_dir)))
+    return cache_name
+
+
+def _load_from_cache(cache_dir: Path, cache_name: str) -> dict:
+    """Load and reconstruct all job data from the JSON cache into dataclass objects."""
+    from src.cache_manager import load_cache
+    from src.models import JobInfo
+
+    print(f"Loading from cache: {cache_dir / cache_name}")
+    raw = load_cache(cache_dir, cache_name)
+    if not raw:
+        raise RuntimeError(f"Cache is empty or missing: {cache_dir / cache_name}")
+
+    result: dict = {
+        "job": None,
+        "components_top": [],
+        "components_bot": [],
+        "layers_data": {},
+        "user_symbols": {},
+    }
+
+    if "profile" in raw:
+        result["profile"] = reconstruct_profile(raw["profile"])
+    if "eda_data" in raw:
+        result["eda_data"] = reconstruct_eda_data(raw["eda_data"])
+    if "components_top" in raw:
+        result["components_top"] = reconstruct_components(raw["components_top"])
+    if "components_bot" in raw:
+        result["components_bot"] = reconstruct_components(raw["components_bot"])
+
+    result["comp_top_units"] = raw.get("components_top_units", "MM")
+    result["comp_bot_units"] = raw.get("components_bot_units", "MM")
+
+    # Reconstruct layer features keyed by layer name
+    matrix_layers = reconstruct_matrix_layers(raw.get("matrix_layers", []))
+    layer_lookup = {ml.name: ml for ml in matrix_layers}
+    for key, value in raw.items():
+        if key.startswith("layer_features:"):
+            layer_name = key[len("layer_features:"):]
+            ml = layer_lookup.get(layer_name)
+            if ml:
+                result["layers_data"][layer_name] = (
+                    reconstruct_layer_features(value), ml
+                )
+
+    if "font" in raw:
+        result["font"] = reconstruct_font(raw["font"])
+    if "symbols" in raw:
+        result["user_symbols"] = reconstruct_user_symbols(raw["symbols"])
+
+    if "job_info" in raw:
+        ji = raw["job_info"]
+        result["job_info"] = JobInfo(
+            job_name=ji.get("job_name", ""),
+            odb_version_major=ji.get("odb_version_major", 0),
+            odb_version_minor=ji.get("odb_version_minor", 0),
+            odb_source=ji.get("odb_source", ""),
+            creation_date=ji.get("creation_date", ""),
+            save_date=ji.get("save_date", ""),
+            save_app=ji.get("save_app", ""),
+            save_user=ji.get("save_user", ""),
+            units=ji.get("units", "INCH"),
+            max_uid=ji.get("max_uid", 0),
+        )
+
+    return result
+
+
 def cmd_view(args):
     """Launch the interactive PCB visualizer.
 
     Without --layers: loads ALL layers, starts with PCB outline only.
-    With --layers:    loads and checks only the specified layers.
+    With --layers:    loads and displays only the specified layers.
     """
-    data = _parse_for_view(args.odb_path, layer_names=args.layers)
+    import matplotlib
+    matplotlib.use("TkAgg")
+
+    cache_dir = Path(getattr(args, "cache_dir", None) or "cache")
+    cache_name = _ensure_cache(args.odb_path, cache_dir)
+    data = _load_from_cache(cache_dir, cache_name)
 
     from src.visualizer.viewer import PcbViewer
 
     if args.layers:
         initial = [l.lower() for l in args.layers]
     else:
-        initial = []  # outline only
+        initial = []
 
-    print(f"\nLaunching viewer with {len(data['layers_data'])} layers...")
+    top_n = len(data["components_top"])
+    bot_n = len(data["components_bot"])
+    print(f"\nLaunching viewer ({len(data['layers_data'])} layers, "
+          f"{top_n} top, {bot_n} bot components)...")
 
     viewer = PcbViewer(
-        profile=data["profile"],
+        profile=data.get("profile"),
         layers_data=data["layers_data"],
         components_top=data["components_top"],
         components_bot=data["components_bot"],
-        eda_data=data["eda_data"],
-        user_symbols=data["user_symbols"],
-        font=data["font"],
+        eda_data=data.get("eda_data"),
+        user_symbols=data.get("user_symbols", {}),
+        font=data.get("font"),
         comp_top_units=data.get("comp_top_units"),
         comp_bot_units=data.get("comp_bot_units"),
     )
     viewer.show(initial_visible=initial)
-    data["job"].cleanup()
 
 
 def _parse_for_comp_view(odb_path: str) -> dict:
@@ -573,19 +637,14 @@ def _parse_for_comp_view(odb_path: str) -> dict:
                 components_bot = comps
                 comp_bot_units = comp_units
 
-    # Normalise units – convert inch-based data to MM.
-    if profile and profile.units == "INCH":
-        _scale_profile(profile, _INCH_TO_MM)
-        profile.units = "MM"
-        print(f"  Units: scaled profile INCH -> MM (x25.4)")
-
+    # Normalise component and EDA coordinates (inches -> mm).
+    # Profile coordinates are left in their original units (ground truth for rendering).
     for comps, cu in [(components_top, comp_top_units),
                       (components_bot, comp_bot_units)]:
         if comps and cu == "INCH":
             _scale_components(comps, _INCH_TO_MM)
             print(f"  Units: scaled component positions INCH -> MM (x25.4)")
 
-    # After in-place scaling, component coordinates are now in MM.
     comp_top_units = "MM"
     comp_bot_units = "MM"
 
@@ -610,7 +669,12 @@ def _parse_for_comp_view(odb_path: str) -> dict:
 
 def cmd_view_comp(args):
     """Launch the component-focused interactive viewer."""
-    data = _parse_for_comp_view(args.odb_path)
+    import matplotlib
+    matplotlib.use("TkAgg")
+
+    cache_dir = Path(getattr(args, "cache_dir", None) or "cache")
+    cache_name = _ensure_cache(args.odb_path, cache_dir)
+    data = _load_from_cache(cache_dir, cache_name)
 
     from src.visualizer.viewer import ComponentViewer
 
@@ -619,22 +683,18 @@ def cmd_view_comp(args):
     print(f"\nLaunching component viewer ({top_n} top, {bot_n} bot components)...")
 
     viewer = ComponentViewer(
-        profile=data["profile"],
+        profile=data.get("profile"),
         components_top=data["components_top"],
         components_bot=data["components_bot"],
-        eda_data=data["eda_data"],
+        eda_data=data.get("eda_data"),
         comp_top_units=data.get("comp_top_units"),
         comp_bot_units=data.get("comp_bot_units"),
     )
     viewer.show()
-    data["job"].cleanup()
 
 
 def cmd_check(args):
     """Run the automated checklist."""
-    print(f"Loading ODB++ from: {args.odb_path}")
-    job = odb_loader.load(args.odb_path)
-
     # Import rules to trigger registration
     import src.checklist.rules.ckl_component_alignment  # noqa: F401
     import src.checklist.rules.ckl_spacing  # noqa: F401
@@ -643,79 +703,9 @@ def cmd_check(args):
     from src.checklist.engine import load_rules, run_checklist
     from src.checklist.reporter import generate_report
 
-    # Parse required data
-    from src.parsers.matrix_parser import parse_matrix
-    from src.parsers.profile_parser import parse_profile
-    from src.parsers.component_parser import parse_components
-    from src.parsers.eda_parser import parse_eda_data
-    from src.parsers.misc_parser import parse_info
-
-    step_name = list(job.steps.keys())[0]
-    step = job.steps[step_name]
-
-    job_data = {}
-
-    # Job info
-    if job.misc_info_path:
-        job_data["job_info"] = parse_info(job.misc_info_path)
-
-    # Matrix
-    steps, layers = parse_matrix(job.matrix_path)
-    job_data["matrix_layers"] = layers
-
-    # Profile
-    if step.profile:
-        job_data["profile"] = parse_profile(step.profile)
-
-    # EDA
-    if step.eda_data:
-        job_data["eda_data"] = parse_eda_data(step.eda_data)
-
-    # Components
-    comp_top_units = "INCH"
-    comp_bot_units = "INCH"
-    for layer_name, layer_paths in step.layers.items():
-        if layer_paths.components:
-            comps, comp_units = parse_components(layer_paths.components)
-            if "top" in layer_name:
-                job_data["components_top"] = comps
-                comp_top_units = comp_units
-                print(f"  Loaded {len(comps)} top components (units={comp_units})")
-            else:
-                job_data["components_bot"] = comps
-                comp_bot_units = comp_units
-                print(f"  Loaded {len(comps)} bottom components (units={comp_units})")
-
-    # ------------------------------------------------------------------
-    # Unit normalisation – convert inch-based data to MM so that
-    # checklist rules operate in a consistent coordinate space.
-    # ------------------------------------------------------------------
-    prof = job_data.get("profile")
-    if prof and prof.units == "INCH":
-        _scale_profile(prof, _INCH_TO_MM)
-        prof.units = "MM"
-        print(f"  Units: scaled profile INCH -> MM (x25.4)")
-
-    for comps, cu, label in [
-        (job_data.get("components_top"), comp_top_units, "top"),
-        (job_data.get("components_bot"), comp_bot_units, "bot"),
-    ]:
-        if comps and cu == "INCH":
-            _scale_components(comps, _INCH_TO_MM)
-            print(f"  Units: scaled {label} components INCH -> MM (x25.4)")
-
-    eda = job_data.get("eda_data")
-    if eda and hasattr(eda, "units") and eda.units == "INCH":
-        _scale_eda_data(eda, _INCH_TO_MM)
-        print(f"  Units: scaled EDA data INCH -> MM (x25.4)")
-        eda.units = "MM"
-
-    if eda:
-        _calibrate_eda_to_components(
-            job_data.get("components_top", []),
-            job_data.get("components_bot", []),
-            eda,
-        )
+    cache_dir = Path(getattr(args, "cache_dir", None) or "cache")
+    cache_name = _ensure_cache(args.odb_path, cache_dir)
+    job_data = _load_from_cache(cache_dir, cache_name)
 
     # Load rules
     rule_ids = args.rules if args.rules else None
@@ -748,15 +738,9 @@ def cmd_check(args):
 
     # Generate Excel report
     output_path = Path(args.output) if args.output else Path("output/checklist_report.xlsx")
-    job_name = job_data.get("job_info", {})
-    if hasattr(job_name, "job_name"):
-        job_name = job_name.job_name
-    else:
-        job_name = job.job_name
-
+    job_info = job_data.get("job_info")
+    job_name = job_info.job_name if job_info else cache_name
     generate_report(results, output_path, job_name=job_name)
-
-    job.cleanup()
 
 
 def main():
@@ -780,16 +764,19 @@ def main():
     p_view = subparsers.add_parser("view", help="Launch PCB visualizer")
     p_view.add_argument("odb_path", help="Path to ODB++ archive or directory")
     p_view.add_argument("--layers", nargs="*", help="Layer names to load and display")
+    p_view.add_argument("--cache-dir", default="cache", help="Cache directory")
 
     # view-comp command
     p_view_comp = subparsers.add_parser("view-comp", help="Launch component viewer")
     p_view_comp.add_argument("odb_path", help="Path to ODB++ archive or directory")
+    p_view_comp.add_argument("--cache-dir", default="cache", help="Cache directory")
 
     # check command
     p_check = subparsers.add_parser("check", help="Run design checklist")
     p_check.add_argument("odb_path", help="Path to ODB++ archive or directory")
     p_check.add_argument("--rules", nargs="*", help="Rule IDs to run (default: all)")
     p_check.add_argument("--output", help="Output Excel path")
+    p_check.add_argument("--cache-dir", default="cache", help="Cache directory")
 
     args = parser.parse_args()
 
