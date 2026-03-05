@@ -180,6 +180,31 @@ def _read_json(path: Path) -> Any:
         return json.load(f)
 
 
+def get_component_units(cache_dir: str | Path, job_name: str,
+                        side: str = "top") -> str:
+    """Read component layer units from the cached comp_+_top or comp_+_bot layer file.
+
+    Falls back to a dedicated ``components_{side}_units.json`` file when the
+    layer cache is not available, and ultimately defaults to ``"INCH"``.
+    """
+    cache_path = Path(cache_dir) / job_name
+
+    # 1) Try dedicated units file (written by cmd_cache)
+    units_file = cache_path / f"components_{side}_units.json"
+    if units_file.exists():
+        return _read_json(units_file)
+
+    # 2) Fall back to the layer features file which stores units
+    layer_name = f"comp_+_{side}"
+    layer_file = cache_path / "layers" / f"{layer_name}.json"
+    if layer_file.exists():
+        data = _read_json(layer_file)
+        if isinstance(data, dict):
+            return data.get("units", "INCH")
+
+    return "INCH"
+
+
 def reconstruct_layer_features(data: dict) -> LayerFeatures:
     """Reconstruct a LayerFeatures object from cached JSON data."""
     lf = LayerFeatures(

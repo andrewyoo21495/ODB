@@ -200,7 +200,9 @@ class PcbViewer:
                  components_bot: list[Component] = None,
                  eda_data: EdaData = None,
                  user_symbols: dict[str, UserSymbol] = None,
-                 font: StrokeFont = None):
+                 font: StrokeFont = None,
+                 comp_top_units: str = None,
+                 comp_bot_units: str = None):
         self.profile        = profile
         self.layers_data    = layers_data
         self.components_top = components_top or []
@@ -208,6 +210,8 @@ class PcbViewer:
         self.eda_data       = eda_data
         self.user_symbols   = user_symbols or {}
         self.font           = font
+        self.comp_top_units = comp_top_units
+        self.comp_bot_units = comp_bot_units
         self._selected_comp: Optional[Component] = None
         self._visible_set:   set[str]            = set()
         self._display_items: list[str]           = []
@@ -346,12 +350,14 @@ class PcbViewer:
             draw_components(self.ax, self.components_top, packages,
                             color="#00B7FF", alpha=0.99,
                             show_pads=True, show_pkg_outlines=False,
-                            eda_units=eda_u, board_units=board_u)
+                            eda_units=eda_u, board_units=board_u,
+                            comp_units=self.comp_top_units)
         if COMP_BOT_KEY in self._visible_set and self.components_bot:
             draw_components(self.ax, self.components_bot, packages,
                             color="#FF3150", alpha=0.99,
                             show_pads=True, show_pkg_outlines=False,
-                            eda_units=eda_u, board_units=board_u)
+                            eda_units=eda_u, board_units=board_u,
+                            comp_units=self.comp_bot_units)
         if COMP_OUTLINE_KEY in self._visible_set:
             self._draw_outlines(packages)
 
@@ -381,19 +387,22 @@ class PcbViewer:
             draw_components(self.ax, self.components_top, packages,
                             color="#FFFF00", alpha=0.95,
                             show_pads=False, show_pkg_outlines=True,
-                            eda_units=eda_u, board_units=board_u)
+                            eda_units=eda_u, board_units=board_u,
+                            comp_units=self.comp_top_units)
         if drew_bot and self.components_bot:
             draw_components(self.ax, self.components_bot, packages,
                             color="#FFFF00", alpha=0.95,
                             show_pads=False, show_pkg_outlines=True,
-                            eda_units=eda_u, board_units=board_u)
+                            eda_units=eda_u, board_units=board_u,
+                            comp_units=self.comp_bot_units)
         if not drew_top and not drew_bot:
             all_comps = self.components_top + self.components_bot
             if all_comps:
                 draw_components(self.ax, all_comps, packages,
                                 color="#FFFF00", alpha=0.95,
                                 show_pads=False, show_pkg_outlines=True,
-                                eda_units=eda_u, board_units=board_u)
+                                eda_units=eda_u, board_units=board_u,
+                                comp_units=self.comp_top_units)
 
     # ------------------------------------------------------------------
     # Click handler
@@ -467,11 +476,15 @@ class ComponentViewer:
                  profile: Profile,
                  components_top: list[Component] = None,
                  components_bot: list[Component] = None,
-                 eda_data: EdaData = None):
+                 eda_data: EdaData = None,
+                 comp_top_units: str = None,
+                 comp_bot_units: str = None):
         self.profile         = profile
         self.components_top  = components_top or []
         self.components_bot  = components_bot or []
         self.eda_data        = eda_data
+        self.comp_top_units  = comp_top_units
+        self.comp_bot_units  = comp_bot_units
         self._selected_comp: Optional[Component] = None
         self._current_layer  = "Both"
         self._drawn_comps:   list[Component] = []
@@ -679,26 +692,30 @@ class ComponentViewer:
                                     color="#00B7FF", alpha=0.99,
                                     show_pads=True,
                                     show_pkg_outlines=False,
-                                    eda_units=eda_u, board_units=board_u)
+                                    eda_units=eda_u, board_units=board_u,
+                                    comp_units=self.comp_top_units)
                 if bot_comps:
                     draw_components(self.ax, bot_comps, packages,
                                     color="#FF3150", alpha=0.99,
                                     show_pads=True,
                                     show_pkg_outlines=False,
-                                    eda_units=eda_u, board_units=board_u)
+                                    eda_units=eda_u, board_units=board_u,
+                                    comp_units=self.comp_bot_units)
             if show_outline:
                 if top_comps:
                     draw_components(self.ax, top_comps, packages,
                                     color="#00F5FF", alpha=0.99,
                                     show_pads=False,
                                     show_pkg_outlines=True,
-                                    eda_units=eda_u, board_units=board_u)
+                                    eda_units=eda_u, board_units=board_u,
+                                    comp_units=self.comp_top_units)
                 if bot_comps:
                     draw_components(self.ax, bot_comps, packages,
                                     color="#FF10F0", alpha=0.99,
                                     show_pads=False,
                                     show_pkg_outlines=True,
-                                    eda_units=eda_u, board_units=board_u)
+                                    eda_units=eda_u, board_units=board_u,
+                                    comp_units=self.comp_bot_units)
 
         self._apply_axis_labels()
         self.canvas.draw()

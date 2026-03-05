@@ -293,10 +293,12 @@ def cmd_cache(args):
         for layer_name, layer_paths in step_paths.layers.items():
             # Components
             if layer_paths.components:
-                components, _cu = parse_components(layer_paths.components)
+                components, comp_units = parse_components(layer_paths.components)
                 key = "components_top" if "top" in layer_name else "components_bot"
                 data[key] = components
-                print(f"    Parsed: {layer_name}/components ({len(components)} components)")
+                # Store component units so they survive caching
+                data[f"{key}_units"] = comp_units
+                print(f"    Parsed: {layer_name}/components ({len(components)} components, units={comp_units})")
 
             # Features
             if layer_paths.features:
@@ -435,6 +437,8 @@ def _parse_for_view(odb_path: str, layer_names: list[str] = None) -> dict:
         "layers_data": layers_data,
         "components_top": components_top,
         "components_bot": components_bot,
+        "comp_top_units": comp_top_units,
+        "comp_bot_units": comp_bot_units,
         "eda_data": eda_data,
         "user_symbols": user_symbols,
         "font": font,
@@ -466,6 +470,8 @@ def cmd_view(args):
         eda_data=data["eda_data"],
         user_symbols=data["user_symbols"],
         font=data["font"],
+        comp_top_units=data.get("comp_top_units"),
+        comp_bot_units=data.get("comp_bot_units"),
     )
     viewer.show(initial_visible=initial)
     data["job"].cleanup()
@@ -526,6 +532,8 @@ def _parse_for_comp_view(odb_path: str) -> dict:
         "profile": profile,
         "components_top": components_top,
         "components_bot": components_bot,
+        "comp_top_units": comp_top_units,
+        "comp_bot_units": comp_bot_units,
         "eda_data": eda_data,
     }
 
@@ -545,6 +553,8 @@ def cmd_view_comp(args):
         components_top=data["components_top"],
         components_bot=data["components_bot"],
         eda_data=data["eda_data"],
+        comp_top_units=data.get("comp_top_units"),
+        comp_bot_units=data.get("comp_bot_units"),
     )
     viewer.show()
     data["job"].cleanup()

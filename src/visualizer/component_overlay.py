@@ -34,18 +34,23 @@ from src.visualizer.symbol_renderer import contour_to_vertices
 _INCH_TO_MM = 25.4
 
 
-def _pkg_scale_factor(eda_units: str | None, board_units: str | None) -> float:
-    """Return the multiplier to convert EDA package-local coordinates to board units."""
-    if not eda_units or eda_units == board_units:
+def _unit_scale(from_units: str | None, to_units: str | None) -> float:
+    """Return the multiplier to convert *from_units* coordinates to *to_units*.
+
+    When either argument is ``None`` the units are assumed to match (scale 1.0).
+    """
+    if not from_units or not to_units or from_units == to_units:
         return 1.0
-    # When EDA package data is in inches, apply the inch→mm factor unless the
-    # board is explicitly also in inches.  If board_units is unknown (None) we
-    # assume the board is in MM, which is the ODB++ default.
-    if eda_units == "INCH" and board_units != "INCH":
+    if from_units == "INCH" and to_units == "MM":
         return _INCH_TO_MM
-    if eda_units == "MM" and board_units == "INCH":
+    if from_units == "MM" and to_units == "INCH":
         return 1.0 / _INCH_TO_MM
     return 1.0
+
+
+def _pkg_scale_factor(eda_units: str | None, board_units: str | None) -> float:
+    """Return the multiplier to convert EDA package-local coordinates to board units."""
+    return _unit_scale(eda_units, board_units)
 
 
 def draw_components(ax: Axes, components: list[Component],
@@ -55,7 +60,8 @@ def draw_components(ax: Axes, components: list[Component],
                     show_pads: bool = True,
                     show_pkg_outlines: bool = True,
                     eda_units: str | None = None,
-                    board_units: str | None = None):
+                    board_units: str | None = None,
+                    comp_units: str | None = None):
     """Draw component geometries derived from EDA package definitions.
 
     Args:
@@ -73,8 +79,18 @@ def draw_components(ax: Axes, components: list[Component],
         board_units:       Unit system of board coordinates ("INCH" or "MM").
                            When these differ a scale factor is applied to all
                            coordinates so they match the board.
+        comp_units:        Unit system of the component placement coordinates
+                           (comp.x, comp.y, toeprints).  Read from the
+                           comp_+_top / comp_+_bot layer files.  When this
+                           differs from *board_units* a separate scale is
+                           applied to component positions.
     """
-    scale = _pkg_scale_factor(eda_units, board_units)
+    pkg_scale = _pkg_scale_factor(eda_units, board_units)
+
+    # Component placement coordinates may be in a different unit than the
+    # board (e.g. component file declares INCH while board is in MM).
+    # When comp_units is provided, compute a dedicated scale for positions.
+    comp_scale = _unit_scale(comp_units, board_units) if comp_units else pkg_scale
 
     pkg_lookup: dict[int, Package] = (
         {i: pkg for i, pkg in enumerate(packages)} if packages else {}
@@ -85,20 +101,20 @@ def draw_components(ax: Axes, components: list[Component],
         drew = _draw_component_geometry(ax, comp, pkg, color, alpha,
                                         draw_pads=show_pads,
                                         draw_pkg_outlines=show_pkg_outlines,
-                                        pkg_scale=scale,
-                                        comp_scale=scale)
+                                        pkg_scale=pkg_scale,
+                                        comp_scale=comp_scale)
 
         if not drew:
             # Fallback: dashed bounding box
-            bbox = _get_component_bbox(comp, pkg, pkg_scale=scale,
-                                       comp_scale=scale)
+            bbox = _get_component_bbox(comp, pkg, pkg_scale=pkg_scale,
+                                       comp_scale=comp_scale)
             if bbox:
                 _draw_comp_outline(ax, bbox, color,
                                    alpha if show_pads else alpha * 0.7)
 
         if show_labels:
-            lx = comp.x * scale
-            ly = comp.y * scale
+            lx = comp.x * comp_scale
+            ly = comp.y * comp_scale
             ax.annotate(
                 comp.comp_name,
                 (lx, ly),
