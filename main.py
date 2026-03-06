@@ -431,13 +431,15 @@ def cmd_cache(args):
         profile.units = "MM"
         print(f"  Units: scaled profile INCH -> MM (x25.4)")
 
-    # Normalise layer feature coordinates (inches -> mm)
+    # Normalise layer feature coordinates (inches -> mm).
+    # features.units is kept as the original file unit (INCH/MM) so that
+    # the symbol renderer can correctly interpret symbol dimension encoding
+    # (mils for INCH files, microns for MM files).
     for key in list(data.keys()):
         if key.startswith("layer_features:"):
             feats = data[key]
             if feats.units == "INCH":
                 _scale_layer_features(feats, _INCH_TO_MM)
-                feats.units = "MM"
                 print(f"  Units: scaled {key} INCH -> MM (x25.4)")
 
     # Write cache
@@ -549,7 +551,6 @@ def _parse_for_view(odb_path: str, layer_names: list[str] = None) -> dict:
     for layer_name, (features, ml) in layers_data.items():
         if features.units == "INCH":
             _scale_layer_features(features, _INCH_TO_MM)
-            features.units = "MM"
             print(f"  Units: scaled {layer_name} features INCH -> MM (x25.4)")
 
     return {

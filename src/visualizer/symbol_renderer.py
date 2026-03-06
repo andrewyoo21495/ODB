@@ -259,9 +259,8 @@ def symbol_to_patch(symbol_name: str, x: float, y: float,
     elif sym.type == "null":
         return None
 
-    # Fallback: small circle for unrecognized symbols
-    return Circle((x, y), 0.001 if units == "INCH" else 0.025,
-                  color=color, alpha=alpha * 0.5)
+    # Fallback: small circle for unrecognized symbols (~1 mil in mm)
+    return Circle((x, y), 0.025, color=color, alpha=alpha * 0.5)
 
 
 def get_line_width_for_symbol(symbol_name: str, units: str = "INCH",
@@ -333,23 +332,29 @@ def user_symbol_to_patches(symbol: UserSymbol, x: float, y: float,
 # ---------------------------------------------------------------------------
 
 def _get_scale_factor(units: str, unit_override: str = None) -> float:
-    """Get scale factor to convert symbol dimensions to board coordinate units."""
+    """Get scale factor to convert symbol dimensions to mm (board coordinate units).
+
+    All layer coordinates are normalised to MM, so this function always returns
+    a factor that converts raw symbol numbers into mm.
+
+    Standard symbol name numbers are encoded in the *sub-unit* of the file's
+    declared unit:
+      - INCH files → mils  (thousandths of an inch): ×0.0254 to get mm
+      - MM   files → microns (thousandths of a mm):  ÷1000   to get mm
+
+    A per-symbol ``unit_override`` from the symbol table can override this:
+      - ``"I"`` → always mils (×0.0254 to get mm)
+      - ``"M"`` → always microns (÷1000 to get mm)
+    """
     if unit_override == "I":
-        if units == "INCH":
-            return 1.0 / 1000.0
-        else:
-            return 0.0254
-    elif unit_override == "M":
-        if units == "MM":
-            return 1.0 / 1000.0
-        else:
-            return 1.0 / 25400.0
+        return 0.0254          # mils → mm
+    if unit_override == "M":
+        return 1.0 / 1000.0   # microns → mm
+    # Default: encoding follows the file's declared unit
+    if units == "INCH":
+        return 0.0254          # mils → mm  (1 mil = 0.0254 mm)
     else:
-        # Default: symbol dimensions are in mils (thousandths of an inch)
-        if units == "INCH":
-            return 1.0 / 1000.0   # mils → inches
-        else:
-            return 0.0254          # mils → mm  (1 mil = 0.0254 mm)
+        return 1.0 / 1000.0   # microns → mm
 
 
 def _rotate_points(points: np.ndarray, cx: float, cy: float,

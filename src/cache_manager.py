@@ -208,7 +208,7 @@ def get_component_units(cache_dir: str | Path, job_name: str,
 def reconstruct_layer_features(data: dict) -> LayerFeatures:
     """Reconstruct a LayerFeatures object from cached JSON data."""
     lf = LayerFeatures(
-        units=data.get("units", "MM"),
+        units=data.get("units", "INCH"),
         id=data.get("id"),
         feature_count=data.get("feature_count"),
     )
