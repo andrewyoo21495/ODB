@@ -27,7 +27,10 @@ from src.cache_manager import (
     reconstruct_layer_features, reconstruct_matrix_layers,
     reconstruct_font, reconstruct_user_symbols,
 )
-from src.models import ArcSegment, LayerFeatures, LineSegment
+from src.models import (
+    ArcRecord, ArcSegment, BarcodeRecord, LineRecord,
+    LineSegment, PadRecord, SurfaceRecord, TextRecord,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -106,6 +109,60 @@ def _scale_eda_data(eda, factor: float) -> None:
         for ol in pkg.outlines:
             _scale_outline_params(ol, factor)
 
+
+def _scale_profile(profile, factor: float) -> None:
+    """Scale profile surface coordinates in place."""
+    if not profile or not profile.surface:
+        return
+    for contour in profile.surface.contours:
+        contour.start.x *= factor
+        contour.start.y *= factor
+        for seg in contour.segments:
+            seg.end.x *= factor
+            seg.end.y *= factor
+            if isinstance(seg, ArcSegment):
+                seg.center.x *= factor
+                seg.center.y *= factor
+
+
+def _scale_layer_features(features, factor: float) -> None:
+    """Scale all feature coordinates in place."""
+    for feat in features.features:
+        if isinstance(feat, LineRecord):
+            feat.xs *= factor
+            feat.ys *= factor
+            feat.xe *= factor
+            feat.ye *= factor
+        elif isinstance(feat, PadRecord):
+            feat.x *= factor
+            feat.y *= factor
+        elif isinstance(feat, ArcRecord):
+            feat.xs *= factor
+            feat.ys *= factor
+            feat.xe *= factor
+            feat.ye *= factor
+            feat.xc *= factor
+            feat.yc *= factor
+        elif isinstance(feat, TextRecord):
+            feat.x *= factor
+            feat.y *= factor
+            feat.xsize *= factor
+            feat.ysize *= factor
+        elif isinstance(feat, BarcodeRecord):
+            feat.x *= factor
+            feat.y *= factor
+            feat.width *= factor
+            feat.height *= factor
+        elif isinstance(feat, SurfaceRecord):
+            for contour in feat.contours:
+                contour.start.x *= factor
+                contour.start.y *= factor
+                for seg in contour.segments:
+                    seg.end.x *= factor
+                    seg.end.y *= factor
+                    if isinstance(seg, ArcSegment):
+                        seg.center.x *= factor
+                        seg.center.y *= factor
 
 
 def _calibrate_eda_to_components(components_top: list, components_bot: list,
@@ -336,10 +393,9 @@ def cmd_cache(args):
             print(f"  Warning: Failed to parse stackup.xml: {e}")
 
     # ------------------------------------------------------------------
-    # Unit normalisation – convert inch-based data to MM before caching.
-    # Component placement coordinates and EDA package geometry in ODB++
-    # files are expressed in inches.  Multiply by 25.4 so the cached
-    # JSON values are in millimetres, matching the board outline scale.
+    # Unit normalisation – convert all inch-based data to MM before
+    # caching.  After this block every coordinate (components, EDA,
+    # profile, layer features) is in millimetres.
     # ------------------------------------------------------------------
 
     # Normalise component placement coordinates (inches -> mm)
@@ -367,6 +423,22 @@ def cmd_cache(args):
             data.get("components_bot", []),
             eda,
         )
+
+    # Normalise profile coordinates (inches -> mm)
+    profile = data.get("profile")
+    if profile and profile.units == "INCH":
+        _scale_profile(profile, _INCH_TO_MM)
+        profile.units = "MM"
+        print(f"  Units: scaled profile INCH -> MM (x25.4)")
+
+    # Normalise layer feature coordinates (inches -> mm)
+    for key in list(data.keys()):
+        if key.startswith("layer_features:"):
+            feats = data[key]
+            if feats.units == "INCH":
+                _scale_layer_features(feats, _INCH_TO_MM)
+                feats.units = "MM"
+                print(f"  Units: scaled {key} INCH -> MM (x25.4)")
 
     # Write cache
     print(f"\nWriting cache...")
@@ -452,16 +524,14 @@ def _parse_for_view(odb_path: str, layer_names: list[str] = None) -> dict:
             except Exception as e:
                 print(f"  Warning: Failed to load {layer_name}: {e}")
 
-    # Normalise component and EDA coordinates (inches -> mm).
-    # Profile coordinates are left in their original units (ground truth for rendering).
+    # ------------------------------------------------------------------
+    # Unit normalisation – convert all inch-based data to MM.
+    # ------------------------------------------------------------------
     for comps, cu in [(components_top, comp_top_units),
                       (components_bot, comp_bot_units)]:
         if comps and cu == "INCH":
             _scale_components(comps, _INCH_TO_MM)
             print(f"  Units: scaled component positions INCH -> MM (x25.4)")
-
-    comp_top_units = "MM"
-    comp_bot_units = "MM"
 
     if eda_data and eda_data.units == "INCH":
         _scale_eda_data(eda_data, _INCH_TO_MM)
@@ -471,14 +541,23 @@ def _parse_for_view(odb_path: str, layer_names: list[str] = None) -> dict:
     if eda_data:
         _calibrate_eda_to_components(components_top, components_bot, eda_data)
 
+    if profile and profile.units == "INCH":
+        _scale_profile(profile, _INCH_TO_MM)
+        profile.units = "MM"
+        print(f"  Units: scaled profile INCH -> MM (x25.4)")
+
+    for layer_name, (features, ml) in layers_data.items():
+        if features.units == "INCH":
+            _scale_layer_features(features, _INCH_TO_MM)
+            features.units = "MM"
+            print(f"  Units: scaled {layer_name} features INCH -> MM (x25.4)")
+
     return {
         "job": job,
         "profile": profile,
         "layers_data": layers_data,
         "components_top": components_top,
         "components_bot": components_bot,
-        "comp_top_units": comp_top_units,
-        "comp_bot_units": comp_bot_units,
         "eda_data": eda_data,
         "user_symbols": user_symbols,
         "font": font,
@@ -526,9 +605,6 @@ def _load_from_cache(cache_dir: Path, cache_name: str) -> dict:
         result["components_top"] = reconstruct_components(raw["components_top"])
     if "components_bot" in raw:
         result["components_bot"] = reconstruct_components(raw["components_bot"])
-
-    result["comp_top_units"] = raw.get("components_top_units", "MM")
-    result["comp_bot_units"] = raw.get("components_bot_units", "MM")
 
     # Reconstruct layer features keyed by layer name
     matrix_layers = reconstruct_matrix_layers(raw.get("matrix_layers", []))
@@ -598,8 +674,6 @@ def cmd_view(args):
         eda_data=data.get("eda_data"),
         user_symbols=data.get("user_symbols", {}),
         font=data.get("font"),
-        comp_top_units=data.get("comp_top_units"),
-        comp_bot_units=data.get("comp_bot_units"),
     )
     viewer.show(initial_visible=initial)
 
@@ -637,16 +711,14 @@ def _parse_for_comp_view(odb_path: str) -> dict:
                 components_bot = comps
                 comp_bot_units = comp_units
 
-    # Normalise component and EDA coordinates (inches -> mm).
-    # Profile coordinates are left in their original units (ground truth for rendering).
+    # ------------------------------------------------------------------
+    # Unit normalisation – convert all inch-based data to MM.
+    # ------------------------------------------------------------------
     for comps, cu in [(components_top, comp_top_units),
                       (components_bot, comp_bot_units)]:
         if comps and cu == "INCH":
             _scale_components(comps, _INCH_TO_MM)
             print(f"  Units: scaled component positions INCH -> MM (x25.4)")
-
-    comp_top_units = "MM"
-    comp_bot_units = "MM"
 
     if eda_data and eda_data.units == "INCH":
         _scale_eda_data(eda_data, _INCH_TO_MM)
@@ -656,13 +728,16 @@ def _parse_for_comp_view(odb_path: str) -> dict:
     if eda_data:
         _calibrate_eda_to_components(components_top, components_bot, eda_data)
 
+    if profile and profile.units == "INCH":
+        _scale_profile(profile, _INCH_TO_MM)
+        profile.units = "MM"
+        print(f"  Units: scaled profile INCH -> MM (x25.4)")
+
     return {
         "job": job,
         "profile": profile,
         "components_top": components_top,
         "components_bot": components_bot,
-        "comp_top_units": comp_top_units,
-        "comp_bot_units": comp_bot_units,
         "eda_data": eda_data,
     }
 
@@ -687,8 +762,6 @@ def cmd_view_comp(args):
         components_top=data["components_top"],
         components_bot=data["components_bot"],
         eda_data=data.get("eda_data"),
-        comp_top_units=data.get("comp_top_units"),
-        comp_bot_units=data.get("comp_bot_units"),
     )
     viewer.show()
 

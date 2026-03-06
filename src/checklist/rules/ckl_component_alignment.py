@@ -21,7 +21,7 @@ class ComponentAlignmentRule(ChecklistRule):
     category = "Alignment"
 
     # Configuration
-    alignment_tolerance = 0.010  # inches (or mm depending on units)
+    alignment_tolerance = 0.254  # mm (equivalent to 0.010 inches)
 
     def evaluate(self, job_data: dict) -> RuleResult:
         components_top = job_data.get("components_top", [])

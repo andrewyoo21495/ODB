@@ -6,6 +6,8 @@ Provides functions for:
 - Edge detection between components
 - Distance measurement (center-to-center and edge-to-edge)
 - CSV component list loading and filtering
+
+All coordinate data is expected to be pre-normalised to MM.
 """
 
 from __future__ import annotations
@@ -91,16 +93,14 @@ def are_components_aligned(comp_a: Component, comp_b: Component,
 # 2. Component Footprint Polygon
 # ---------------------------------------------------------------------------
 
-def _outline_vertices(outline: PinOutline,
-                      pkg_scale: float = 1.0) -> list[tuple[float, float]]:
+def _outline_vertices(outline: PinOutline) -> list[tuple[float, float]]:
     """Extract vertices from a single PinOutline in package-local coords."""
     p = outline.params
-    s = pkg_scale
 
     if outline.type in ("CR", "CT"):
-        xc = p.get("xc", 0.0) * s
-        yc = p.get("yc", 0.0) * s
-        r = p.get("radius", 0.0) * s
+        xc = p.get("xc", 0.0)
+        yc = p.get("yc", 0.0)
+        r = p.get("radius", 0.0)
         if r <= 0:
             return []
         # Approximate circle as polygon
@@ -108,10 +108,10 @@ def _outline_vertices(outline: PinOutline,
         return [(xc + r * math.cos(a), yc + r * math.sin(a)) for a in angles]
 
     if outline.type == "RC":
-        llx = p.get("llx", 0.0) * s
-        lly = p.get("lly", 0.0) * s
-        w = p.get("width", 0.0) * s
-        h = p.get("height", 0.0) * s
+        llx = p.get("llx", 0.0)
+        lly = p.get("lly", 0.0)
+        w = p.get("width", 0.0)
+        h = p.get("height", 0.0)
         if w <= 0 or h <= 0:
             return []
         return [
@@ -120,9 +120,9 @@ def _outline_vertices(outline: PinOutline,
         ]
 
     if outline.type == "SQ":
-        xc = p.get("xc", 0.0) * s
-        yc = p.get("yc", 0.0) * s
-        hs = p.get("half_side", 0.0) * s
+        xc = p.get("xc", 0.0)
+        yc = p.get("yc", 0.0)
+        hs = p.get("half_side", 0.0)
         if hs <= 0:
             return []
         return [
@@ -133,16 +133,12 @@ def _outline_vertices(outline: PinOutline,
     if outline.type == "CONTOUR" and outline.contour is not None:
         verts = contour_to_vertices(outline.contour)
         if len(verts) >= 2:
-            if s != 1.0:
-                verts = verts * s
             return [tuple(v) for v in verts]
 
     return []
 
 
-def get_component_footprint(comp: Component, pkg: Package,
-                            pkg_scale: float = 1.0,
-                            comp_scale: float = 1.0):
+def get_component_footprint(comp: Component, pkg: Package):
     """Build a board-coordinate shapely Polygon from pin outline vertices.
 
     Returns a shapely Polygon (convex hull of all pin outline points),
@@ -156,18 +152,16 @@ def get_component_footprint(comp: Component, pkg: Package,
     # Collect from pin outlines
     for pin in pkg.pins:
         for outline in pin.outlines:
-            local_verts = _outline_vertices(outline, pkg_scale)
+            local_verts = _outline_vertices(outline)
             for lv in local_verts:
-                bx, by = transform_point(lv[0], lv[1], comp,
-                                         comp_scale=comp_scale)
+                bx, by = transform_point(lv[0], lv[1], comp)
                 all_points.append((bx, by))
 
     # Collect from package-level outlines
     for outline in pkg.outlines:
-        local_verts = _outline_vertices(outline, pkg_scale)
+        local_verts = _outline_vertices(outline)
         for lv in local_verts:
-            bx, by = transform_point(lv[0], lv[1], comp,
-                                     comp_scale=comp_scale)
+            bx, by = transform_point(lv[0], lv[1], comp)
             all_points.append((bx, by))
 
     if len(all_points) >= 3:
@@ -175,8 +169,7 @@ def get_component_footprint(comp: Component, pkg: Package,
 
     # Fallback: use toeprint positions with a small buffer
     if comp.toeprints:
-        tp_pts = [(t.x * comp_scale, t.y * comp_scale)
-                  for t in comp.toeprints]
+        tp_pts = [(t.x, t.y) for t in comp.toeprints]
         if len(tp_pts) >= 3:
             return MultiPoint(tp_pts).convex_hull.buffer(0.005)
         if len(tp_pts) >= 1:
@@ -185,14 +178,12 @@ def get_component_footprint(comp: Component, pkg: Package,
     return None
 
 
-def _resolve_footprint(comp: Component, packages: list[Package],
-                       pkg_scale: float = 1.0,
-                       comp_scale: float = 1.0):
+def _resolve_footprint(comp: Component, packages: list[Package]):
     """Look up the package and build the footprint polygon."""
     if comp.pkg_ref < 0 or comp.pkg_ref >= len(packages):
         return None
     pkg = packages[comp.pkg_ref]
-    return get_component_footprint(comp, pkg, pkg_scale, comp_scale)
+    return get_component_footprint(comp, pkg)
 
 
 # ---------------------------------------------------------------------------
@@ -201,9 +192,7 @@ def _resolve_footprint(comp: Component, packages: list[Package],
 
 def is_on_edge(comp_a: Component, comp_b: Component,
                packages: list[Package],
-               tolerance: float = 0.010,
-               pkg_scale: float = 1.0,
-               comp_scale: float = 1.0) -> bool:
+               tolerance: float = 0.254) -> bool:
     """Return True if comp_a's footprint is near the boundary of comp_b's footprint.
 
     "On the edge" means the minimum distance between the two footprint
@@ -211,13 +200,13 @@ def is_on_edge(comp_a: Component, comp_b: Component,
     inside comp_b.
 
     Args:
-        tolerance: Maximum distance (in board units) to consider "on edge".
+        tolerance: Maximum distance in mm to consider "on edge".
     """
     if not _HAS_SHAPELY:
         return False
 
-    fp_a = _resolve_footprint(comp_a, packages, pkg_scale, comp_scale)
-    fp_b = _resolve_footprint(comp_b, packages, pkg_scale, comp_scale)
+    fp_a = _resolve_footprint(comp_a, packages)
+    fp_b = _resolve_footprint(comp_b, packages)
 
     if fp_a is None or fp_b is None:
         return False
@@ -232,28 +221,25 @@ def is_on_edge(comp_a: Component, comp_b: Component,
 # 4. Distance Measurement
 # ---------------------------------------------------------------------------
 
-def center_distance(comp_a: Component, comp_b: Component,
-                    comp_scale: float = 1.0) -> float:
-    """Euclidean distance between component centres."""
-    dx = (comp_a.x - comp_b.x) * comp_scale
-    dy = (comp_a.y - comp_b.y) * comp_scale
+def center_distance(comp_a: Component, comp_b: Component) -> float:
+    """Euclidean distance between component centres (mm)."""
+    dx = comp_a.x - comp_b.x
+    dy = comp_a.y - comp_b.y
     return math.sqrt(dx * dx + dy * dy)
 
 
 def edge_distance(comp_a: Component, comp_b: Component,
-                  packages: list[Package],
-                  pkg_scale: float = 1.0,
-                  comp_scale: float = 1.0) -> float:
-    """Minimum distance between footprint polygon boundaries.
+                  packages: list[Package]) -> float:
+    """Minimum distance between footprint polygon boundaries (mm).
 
     Returns float('inf') if footprint polygons cannot be built.
     Falls back to center_distance if shapely is unavailable.
     """
     if not _HAS_SHAPELY:
-        return center_distance(comp_a, comp_b, comp_scale)
+        return center_distance(comp_a, comp_b)
 
-    fp_a = _resolve_footprint(comp_a, packages, pkg_scale, comp_scale)
-    fp_b = _resolve_footprint(comp_b, packages, pkg_scale, comp_scale)
+    fp_a = _resolve_footprint(comp_a, packages)
+    fp_b = _resolve_footprint(comp_b, packages)
 
     if fp_a is None or fp_b is None:
         return float("inf")

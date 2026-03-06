@@ -17,6 +17,9 @@ Interaction
 * Select components then click "Update Visualization" (view-comp).
 * Click anywhere on the canvas to select the nearest visible component pin;
   its metadata is displayed in the Component Info text panel.
+
+All coordinate data (components, EDA packages, profile, layer features) is
+normalised to MM before being passed to the viewer.
 """
 
 from __future__ import annotations
@@ -144,10 +147,8 @@ def _populate_info_text(widget: tk.Text,
         if val:
             widget.insert(tk.END, f"{key}:  {val}\n", "kv")
 
-    units  = profile.units if profile else "INCH"
-    unit_s = '"' if units == "INCH" else "mm"
     widget.insert(tk.END,
-                  f"Pos:   ({comp.x:.4f}{unit_s}, {comp.y:.4f}{unit_s})\n", "kv")
+                  f"Pos:   ({comp.x:.4f}mm, {comp.y:.4f}mm)\n", "kv")
     widget.insert(tk.END, f"Rot:   {comp.rotation}\u00b0\n", "kv")
 
     net_names: list[str] = []
@@ -200,9 +201,7 @@ class PcbViewer:
                  components_bot: list[Component] = None,
                  eda_data: EdaData = None,
                  user_symbols: dict[str, UserSymbol] = None,
-                 font: StrokeFont = None,
-                 comp_top_units: str = None,
-                 comp_bot_units: str = None):
+                 font: StrokeFont = None):
         self.profile        = profile
         self.layers_data    = layers_data
         self.components_top = components_top or []
@@ -210,8 +209,6 @@ class PcbViewer:
         self.eda_data       = eda_data
         self.user_symbols   = user_symbols or {}
         self.font           = font
-        self.comp_top_units = comp_top_units
-        self.comp_bot_units = comp_bot_units
         self._selected_comp: Optional[Component] = None
         self._visible_set:   set[str]            = set()
         self._display_items: list[str]           = []
@@ -344,20 +341,14 @@ class PcbViewer:
                          font=self.font)
 
         packages = self.eda_data.packages if self.eda_data else None
-        eda_u = self.eda_data.units if self.eda_data else None
-        board_u = self.profile.units if self.profile else None
         if COMP_TOP_KEY in self._visible_set and self.components_top:
             draw_components(self.ax, self.components_top, packages,
                             color="#00B7FF", alpha=0.99,
-                            show_pads=True, show_pkg_outlines=False,
-                            eda_units=eda_u, board_units=board_u,
-                            comp_units=self.comp_top_units)
+                            show_pads=True, show_pkg_outlines=False)
         if COMP_BOT_KEY in self._visible_set and self.components_bot:
             draw_components(self.ax, self.components_bot, packages,
                             color="#FF3150", alpha=0.99,
-                            show_pads=True, show_pkg_outlines=False,
-                            eda_units=eda_u, board_units=board_u,
-                            comp_units=self.comp_bot_units)
+                            show_pads=True, show_pkg_outlines=False)
         if COMP_OUTLINE_KEY in self._visible_set:
             self._draw_outlines(packages)
 
@@ -381,28 +372,20 @@ class PcbViewer:
     def _draw_outlines(self, packages):
         drew_top = COMP_TOP_KEY in self._visible_set
         drew_bot = COMP_BOT_KEY in self._visible_set
-        eda_u = self.eda_data.units if self.eda_data else None
-        board_u = self.profile.units if self.profile else None
         if drew_top and self.components_top:
             draw_components(self.ax, self.components_top, packages,
                             color="#FFFF00", alpha=0.95,
-                            show_pads=False, show_pkg_outlines=True,
-                            eda_units=eda_u, board_units=board_u,
-                            comp_units=self.comp_top_units)
+                            show_pads=False, show_pkg_outlines=True)
         if drew_bot and self.components_bot:
             draw_components(self.ax, self.components_bot, packages,
                             color="#FFFF00", alpha=0.95,
-                            show_pads=False, show_pkg_outlines=True,
-                            eda_units=eda_u, board_units=board_u,
-                            comp_units=self.comp_bot_units)
+                            show_pads=False, show_pkg_outlines=True)
         if not drew_top and not drew_bot:
             all_comps = self.components_top + self.components_bot
             if all_comps:
                 draw_components(self.ax, all_comps, packages,
                                 color="#FFFF00", alpha=0.95,
-                                show_pads=False, show_pkg_outlines=True,
-                                eda_units=eda_u, board_units=board_u,
-                                comp_units=self.comp_top_units)
+                                show_pads=False, show_pkg_outlines=True)
 
     # ------------------------------------------------------------------
     # Click handler
@@ -449,9 +432,6 @@ class PcbViewer:
     # ------------------------------------------------------------------
 
     def _format_coord(self, x: float, y: float) -> str:
-        units = self.profile.units if self.profile else "INCH"
-        if units == "INCH":
-            return f'x={x:.6f}" y={y:.6f}"'
         return f"x={x:.4f}mm y={y:.4f}mm"
 
 
@@ -476,15 +456,11 @@ class ComponentViewer:
                  profile: Profile,
                  components_top: list[Component] = None,
                  components_bot: list[Component] = None,
-                 eda_data: EdaData = None,
-                 comp_top_units: str = None,
-                 comp_bot_units: str = None):
+                 eda_data: EdaData = None):
         self.profile         = profile
         self.components_top  = components_top or []
         self.components_bot  = components_bot or []
         self.eda_data        = eda_data
-        self.comp_top_units  = comp_top_units
-        self.comp_bot_units  = comp_bot_units
         self._selected_comp: Optional[Component] = None
         self._current_layer  = "Both"
         self._drawn_comps:   list[Component] = []
@@ -680,8 +656,6 @@ class ComponentViewer:
             _draw_profile(self.ax, self.profile)
 
         packages = self.eda_data.packages if self.eda_data else None
-        eda_u = self.eda_data.units if self.eda_data else None
-        board_u = self.profile.units if self.profile else None
         if comps and (show_pins or show_outline):
             top_set   = {c.comp_name for c in self.components_top}
             top_comps = [c for c in comps if c.comp_name in top_set]
@@ -691,31 +665,23 @@ class ComponentViewer:
                     draw_components(self.ax, top_comps, packages,
                                     color="#00B7FF", alpha=0.99,
                                     show_pads=True,
-                                    show_pkg_outlines=False,
-                                    eda_units=eda_u, board_units=board_u,
-                                    comp_units=self.comp_top_units)
+                                    show_pkg_outlines=False)
                 if bot_comps:
                     draw_components(self.ax, bot_comps, packages,
                                     color="#FF3150", alpha=0.99,
                                     show_pads=True,
-                                    show_pkg_outlines=False,
-                                    eda_units=eda_u, board_units=board_u,
-                                    comp_units=self.comp_bot_units)
+                                    show_pkg_outlines=False)
             if show_outline:
                 if top_comps:
                     draw_components(self.ax, top_comps, packages,
                                     color="#00F5FF", alpha=0.99,
                                     show_pads=False,
-                                    show_pkg_outlines=True,
-                                    eda_units=eda_u, board_units=board_u,
-                                    comp_units=self.comp_top_units)
+                                    show_pkg_outlines=True)
                 if bot_comps:
                     draw_components(self.ax, bot_comps, packages,
                                     color="#FF10F0", alpha=0.99,
                                     show_pads=False,
-                                    show_pkg_outlines=True,
-                                    eda_units=eda_u, board_units=board_u,
-                                    comp_units=self.comp_bot_units)
+                                    show_pkg_outlines=True)
 
         self._apply_axis_labels()
         self.canvas.draw()
@@ -768,7 +734,4 @@ class ComponentViewer:
     # ------------------------------------------------------------------
 
     def _format_coord(self, x: float, y: float) -> str:
-        units = self.profile.units if self.profile else "INCH"
-        if units == "INCH":
-            return f'x={x:.6f}" y={y:.6f}"'
         return f"x={x:.4f}mm y={y:.4f}mm"

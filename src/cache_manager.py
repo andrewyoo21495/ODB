@@ -200,15 +200,15 @@ def get_component_units(cache_dir: str | Path, job_name: str,
     if layer_file.exists():
         data = _read_json(layer_file)
         if isinstance(data, dict):
-            return data.get("units", "INCH")
+            return data.get("units", "MM")
 
-    return "INCH"
+    return "MM"
 
 
 def reconstruct_layer_features(data: dict) -> LayerFeatures:
     """Reconstruct a LayerFeatures object from cached JSON data."""
     lf = LayerFeatures(
-        units=data.get("units", "INCH"),
+        units=data.get("units", "MM"),
         id=data.get("id"),
         feature_count=data.get("feature_count"),
     )
@@ -360,7 +360,7 @@ def reconstruct_profile(data: dict) -> Profile:
             polarity=FeaturePolarity(sd.get("polarity", "P")),
             contours=contours,
         )
-    return Profile(units=data.get("units", "INCH"), surface=surface)
+    return Profile(units=data.get("units", "MM"), surface=surface)
 
 
 def _reconstruct_pin_outline(data: dict) -> PinOutline:
@@ -419,7 +419,7 @@ def reconstruct_eda_data(data: dict) -> EdaData:
         ))
 
     return EdaData(
-        source=data.get("source", ""), units=data.get("units", "INCH"),
+        source=data.get("source", ""), units=data.get("units", "MM"),
         layer_names=data.get("layer_names", []),
         nets=nets, packages=packages, properties=data.get("properties", {}),
     )

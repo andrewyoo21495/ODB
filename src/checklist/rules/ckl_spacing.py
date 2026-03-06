@@ -19,7 +19,7 @@ class ComponentSpacingRule(ChecklistRule):
     category = "Spacing"
 
     # Configuration
-    min_spacing = 0.008  # inches (approx 0.2mm)
+    min_spacing = 0.2032  # mm (equivalent to 0.008 inches)
 
     def evaluate(self, job_data: dict) -> RuleResult:
         components_top = job_data.get("components_top", [])
