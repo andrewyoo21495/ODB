@@ -19,7 +19,16 @@ def parse_stephdr(path: Path) -> StepHeader:
         line = lines[i].strip()
 
         if line.startswith("UNITS="):
-            header.units = line.split("=", 1)[1]
+            val = line.split("=", 1)[1].strip().upper()
+            header.units = "MM" if val in ("MM", "M") else "INCH"
+        elif line.startswith("U "):
+            parts = line.split()
+            if len(parts) >= 2:
+                token = parts[1].upper()
+                if token == "I":
+                    header.units = "INCH"
+                elif token in ("M", "MM"):
+                    header.units = "MM"
         elif line.startswith("X_DATUM="):
             header.x_datum = float(line.split("=", 1)[1])
         elif line.startswith("Y_DATUM="):

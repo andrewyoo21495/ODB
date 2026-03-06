@@ -199,10 +199,27 @@ def _filter_lines(lines: list[str]) -> list[str]:
 
 
 def parse_units(lines: list[str]) -> str:
-    """Extract UNITS=MM|INCH from lines."""
+    """Extract units from ODB++ lines.
+
+    Handles both long form (``UNITS=INCH`` / ``UNITS=MM``) and short form
+    (``U I`` for inch, ``U M`` / ``U MM`` for mm).
+
+    Returns ``"MM"`` or ``"INCH"``.  Defaults to ``"INCH"`` when no unit
+    declaration is found (ODB++ spec default).
+    """
     for line in lines:
         if line.startswith("UNITS="):
-            return line.split("=", 1)[1].strip()
+            val = line.split("=", 1)[1].strip().upper()
+            return "MM" if val in ("MM", "M") else "INCH"
+        # Short form: "U I" (inch) or "U M" / "U MM" (mm)
+        if line.startswith("U "):
+            parts = line.split()
+            if len(parts) >= 2:
+                token = parts[1].upper()
+                if token == "I":
+                    return "INCH"
+                if token in ("M", "MM"):
+                    return "MM"
     return "INCH"
 
 

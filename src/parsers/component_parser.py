@@ -46,7 +46,17 @@ def parse_components(path: Path) -> tuple[list[Component], str]:
         stripped = line.strip()
 
         if stripped.startswith("UNITS="):
-            units = stripped[6:].strip()
+            val = stripped[6:].strip().upper()
+            units = "MM" if val in ("MM", "M") else "INCH"
+            continue
+        if stripped.startswith("U "):
+            parts = stripped.split()
+            if len(parts) >= 2:
+                token = parts[1].upper()
+                if token == "I":
+                    units = "INCH"
+                elif token in ("M", "MM"):
+                    units = "MM"
             continue
         if stripped.startswith("@") or stripped.startswith("&"):
             continue
