@@ -306,24 +306,62 @@ def contour_to_vertices(contour: Contour, num_arc_points: int = 16) -> np.ndarra
 def user_symbol_to_patches(symbol: UserSymbol, x: float, y: float,
                            rotation: float = 0.0, mirror: bool = False,
                            color: str = "blue", alpha: float = 0.8) -> list:
-    """Convert a user-defined symbol to matplotlib patches at a given position."""
+    """Convert a user-defined symbol to matplotlib patches at a given position.
+
+    Groups each island contour with its subsequent hole contours and renders
+    them as compound Path patches so that holes are true cutouts.
+    """
     patches = []
 
     for feature in symbol.features:
         if isinstance(feature, SurfaceRecord):
+            # Transform all contour vertices first
+            transformed: list[tuple[bool, np.ndarray]] = []
             for contour in feature.contours:
                 verts = contour_to_vertices(contour)
-                # Transform: mirror, rotate, translate
                 if mirror:
                     verts[:, 1] = -verts[:, 1]
                 if rotation:
                     verts = _rotate_points(verts, 0, 0, rotation)
                 verts[:, 0] += x
                 verts[:, 1] += y
+                transformed.append((contour.is_island, verts))
 
-                if contour.is_island:
-                    patches.append(Polygon(verts, closed=True,
+            # Group: each island with its subsequent holes
+            groups: list[tuple[np.ndarray, list[np.ndarray]]] = []
+            for is_island, verts in transformed:
+                if len(verts) < 3:
+                    continue
+                if is_island:
+                    groups.append((verts, []))
+                else:
+                    if groups:
+                        groups[-1][1].append(verts)
+
+            for island_verts, hole_list in groups:
+                if not hole_list:
+                    patches.append(Polygon(island_verts, closed=True,
                                            color=color, alpha=alpha))
+                else:
+                    # Compound path with holes
+                    all_verts = []
+                    all_codes = []
+                    n = len(island_verts)
+                    all_verts.extend(island_verts.tolist())
+                    all_verts.append(island_verts[0].tolist())
+                    all_codes.append(MplPath.MOVETO)
+                    all_codes.extend([MplPath.LINETO] * (n - 1))
+                    all_codes.append(MplPath.CLOSEPOLY)
+                    for hv in hole_list:
+                        nh = len(hv)
+                        all_verts.extend(hv.tolist())
+                        all_verts.append(hv[0].tolist())
+                        all_codes.append(MplPath.MOVETO)
+                        all_codes.extend([MplPath.LINETO] * (nh - 1))
+                        all_codes.append(MplPath.CLOSEPOLY)
+                    path = MplPath(all_verts, all_codes)
+                    patches.append(PathPatch(path, facecolor=color,
+                                             alpha=alpha, edgecolor="none"))
     return patches
 
 

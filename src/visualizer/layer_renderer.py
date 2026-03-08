@@ -7,11 +7,12 @@ from typing import Optional
 
 import numpy as np
 from matplotlib.axes import Axes
-from matplotlib.patches import Circle, Polygon, Rectangle
+from matplotlib.patches import Circle, PathPatch, Polygon, Rectangle
+from matplotlib.path import Path as MplPath
 
 from src.models import (
-    ArcRecord, BarcodeRecord, LayerFeatures, LineRecord, PadRecord,
-    StrokeFont, SurfaceRecord, SymbolRef, TextRecord, UserSymbol,
+    ArcRecord, BarcodeRecord, FeaturePolarity, LayerFeatures, LineRecord,
+    PadRecord, StrokeFont, SurfaceRecord, SymbolRef, TextRecord, UserSymbol,
 )
 from src.visualizer.symbol_renderer import (
     contour_to_vertices, get_line_width_for_symbol, symbol_to_patch,
@@ -66,17 +67,29 @@ def render_layer(ax: Axes, features: LayerFeatures,
         if max_features and count >= max_features:
             break
 
+        # Determine effective colour/alpha: negative polarity features
+        # erase underlying artwork by painting with the background colour.
+        feat_polarity = getattr(feature, "polarity", FeaturePolarity.P)
+        if feat_polarity == FeaturePolarity.N:
+            eff_color = ax.get_facecolor()
+            eff_alpha = 1.0
+        else:
+            eff_color = color
+            eff_alpha = alpha
+
         if isinstance(feature, PadRecord):
             _draw_pad(ax, feature, sym_lookup, features.units,
-                      user_symbols, color, alpha)
+                      user_symbols, eff_color, eff_alpha)
         elif isinstance(feature, LineRecord):
-            _draw_line(ax, feature, sym_lookup, features.units, color, alpha)
+            _draw_line(ax, feature, sym_lookup, features.units,
+                       eff_color, eff_alpha)
         elif isinstance(feature, ArcRecord):
-            _draw_arc(ax, feature, sym_lookup, features.units, color, alpha)
+            _draw_arc(ax, feature, sym_lookup, features.units,
+                      eff_color, eff_alpha)
         elif isinstance(feature, TextRecord):
-            _draw_text(ax, feature, font, color, alpha)
+            _draw_text(ax, feature, font, eff_color, eff_alpha)
         elif isinstance(feature, BarcodeRecord):
-            _draw_barcode(ax, feature, color, alpha)
+            _draw_barcode(ax, feature, eff_color, eff_alpha)
         elif isinstance(feature, SurfaceRecord):
             _draw_surface(ax, feature, color, alpha)
 
@@ -291,17 +304,74 @@ def _draw_barcode(ax: Axes, barcode: BarcodeRecord,
 
 def _draw_surface(ax: Axes, surface: SurfaceRecord,
                   color: str = "blue", alpha: float = 0.7):
-    """Draw a surface (filled polygon with potential holes)."""
+    """Draw a surface (filled polygon with potential holes).
+
+    ODB++ surfaces consist of islands (outer boundaries, clockwise) and
+    holes (inner boundaries, counter-clockwise).  The spec orders contours
+    so that an island precedes its holes, and holes precede any islands
+    nested inside them.
+
+    This function groups each island with the holes that immediately follow
+    it and renders them as a single matplotlib compound Path, so holes are
+    true cutouts rather than opaque overlays.
+
+    Negative-polarity surfaces are drawn with the canvas background colour
+    to erase previously rendered features.
+    """
+    is_negative = (surface.polarity == FeaturePolarity.N)
+
+    # --- Group contours: each island with its subsequent holes -----------
+    groups: list[tuple[np.ndarray, list[np.ndarray]]] = []
     for contour in surface.contours:
         verts = contour_to_vertices(contour)
-        if len(verts) >= 3:
-            if contour.is_island:
-                patch = Polygon(verts, closed=True, color=color, alpha=alpha,
-                                edgecolor="none")
-            else:
-                # Holes: draw with background color
-                patch = Polygon(verts, closed=True, color="white", alpha=1.0,
-                                edgecolor="none")
+        if len(verts) < 3:
+            continue
+        if contour.is_island:
+            groups.append((verts, []))
+        else:
+            # Hole belongs to the most recent island
+            if groups:
+                groups[-1][1].append(verts)
+
+    for island_verts, hole_list in groups:
+        if is_negative:
+            # Negative polarity: erase underlying (draw with bg colour)
+            fill_color = ax.get_facecolor()
+            fill_alpha = 1.0
+        else:
+            fill_color = color
+            fill_alpha = alpha
+
+        if not hole_list:
+            # Simple island without holes – plain Polygon is sufficient
+            ax.add_patch(Polygon(island_verts, closed=True,
+                                 color=fill_color, alpha=fill_alpha,
+                                 edgecolor="none"))
+        else:
+            # Build a compound Path: island boundary + hole boundaries
+            all_verts = []
+            all_codes = []
+
+            # Island (ensure closed)
+            n = len(island_verts)
+            all_verts.extend(island_verts.tolist())
+            all_verts.append(island_verts[0].tolist())
+            all_codes.append(MplPath.MOVETO)
+            all_codes.extend([MplPath.LINETO] * (n - 1))
+            all_codes.append(MplPath.CLOSEPOLY)
+
+            # Each hole (ensure closed)
+            for hole_verts in hole_list:
+                nh = len(hole_verts)
+                all_verts.extend(hole_verts.tolist())
+                all_verts.append(hole_verts[0].tolist())
+                all_codes.append(MplPath.MOVETO)
+                all_codes.extend([MplPath.LINETO] * (nh - 1))
+                all_codes.append(MplPath.CLOSEPOLY)
+
+            path = MplPath(all_verts, all_codes)
+            patch = PathPatch(path, facecolor=fill_color, alpha=fill_alpha,
+                              edgecolor="none")
             ax.add_patch(patch)
 
 
