@@ -2,11 +2,15 @@
 
 Classifies Component objects into named categories using a defined set of
 priority-ordered rules based on comp_name prefix, part_name, and properties.
+
+Also provides individual finder functions (find_ics, find_capacitors, etc.)
+for use in checklist rules.
 """
 
 from __future__ import annotations
 
 from enum import Enum
+from typing import Sequence
 
 from src.models import Component
 
@@ -61,3 +65,81 @@ def classify_component(comp: Component) -> ComponentCategory:
         return ComponentCategory.INP
 
     return ComponentCategory.UNKNOWN
+
+
+# ---------------------------------------------------------------------------
+# Component finder functions
+# ---------------------------------------------------------------------------
+
+def find_ics(components: Sequence[Component]) -> list[Component]:
+    """Return IC components: comp_name starts with 'U', excluding 'USB'."""
+    return [
+        c for c in components
+        if (c.comp_name or "").startswith("U")
+        and not (c.comp_name or "").startswith("USB")
+    ]
+
+
+def find_interposers(components: Sequence[Component]) -> list[Component]:
+    """Return Interposer components: comp_name starts with 'INP'."""
+    return [c for c in components if (c.comp_name or "").startswith("INP")]
+
+
+def find_connectors(components: Sequence[Component]) -> list[Component]:
+    """Return Connector components.
+
+    Matches when device_type (DEVICE_TYPE property) is 'Connector' or
+    comp_name starts with 'SOC', excluding comp_names starting with
+    'ANT', 'SIM', 'RFS', or 'BTC'.
+    """
+    _CONNECTOR_EXCLUSIONS = ("ANT", "SIM", "RFS", "BTC")
+    result = []
+    for c in components:
+        name = c.comp_name or ""
+        if name.startswith(_CONNECTOR_EXCLUSIONS):
+            continue
+        device_type = (c.properties or {}).get("DEVICE_TYPE", "").lower()
+        if device_type == "connector" or name.startswith("SOC"):
+            result.append(c)
+    return result
+
+
+def find_simsockets(components: Sequence[Component]) -> list[Component]:
+    """Return SIM socket components: comp_name starts with 'SIM'."""
+    return [c for c in components if (c.comp_name or "").startswith("SIM")]
+
+
+def find_inductors(components: Sequence[Component]) -> list[Component]:
+    """Return Inductor components.
+
+    Matches when pkg_type (PKG_TYPE property) or pkg_device_type
+    (PKG_DEVICE_TYPE property) is 'Inductor' (case-insensitive),
+    or part_name starts with '2703-'.
+    """
+    result = []
+    for c in components:
+        props = c.properties or {}
+        pkg_type = props.get("PKG_TYPE", "").lower()
+        pkg_device_type = props.get("PKG_DEVICE_TYPE", "").lower()
+        part = c.part_name or ""
+        if pkg_type == "inductor" or pkg_device_type == "inductor" or part.startswith("2703-"):
+            result.append(c)
+    return result
+
+
+def find_capacitors(components: Sequence[Component]) -> list[Component]:
+    """Return Capacitor components.
+
+    Matches when pkg_type (PKG_TYPE property) or pkg_device_type
+    (PKG_DEVICE_TYPE property) is 'Capacitor' (case-insensitive),
+    or part_name starts with '2203-'.
+    """
+    result = []
+    for c in components:
+        props = c.properties or {}
+        pkg_type = props.get("PKG_TYPE", "").lower()
+        pkg_device_type = props.get("PKG_DEVICE_TYPE", "").lower()
+        part = c.part_name or ""
+        if pkg_type == "capacitor" or pkg_device_type == "capacitor" or part.startswith("2203-"):
+            result.append(c)
+    return result

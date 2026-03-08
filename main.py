@@ -811,10 +811,18 @@ def cmd_check(args):
     print(f"\nSummary: {passed} passed, {failed} failed out of {len(results)} rules")
 
     # Generate Excel report
-    output_path = Path(args.output) if args.output else Path("output/checklist_report.xlsx")
+    odb_filename = Path(args.odb_path).name
+    default_output = Path(f"output/[CKL_report]{odb_filename}.xlsx")
+    output_path = Path(args.output) if args.output else default_output
     job_info = job_data.get("job_info")
     job_name = job_info.job_name if job_info else cache_name
-    generate_report(results, output_path, job_name=job_name)
+    references_dir = Path(__file__).parent / "references"
+    generate_report(
+        results, output_path, job_name=job_name,
+        components_top=job_data.get("components_top", []),
+        components_bot=job_data.get("components_bot", []),
+        references_dir=references_dir,
+    )
 
 
 def main():

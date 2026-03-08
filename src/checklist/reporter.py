@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import csv
 import re
 from pathlib import Path
 
@@ -28,16 +29,20 @@ _THIN_BORDER = Border(
 
 
 def generate_report(results: list[RuleResult], output_path: str | Path,
-                    job_name: str = ""):
+                    job_name: str = "", components_top=None, components_bot=None,
+                    references_dir: str | Path = None):
     """Generate an Excel checklist report.
 
-    Tabs are ordered: Summary, Details, then one tab per rule sorted
-    numerically by rule ID (e.g. CKL-01-001, CKL-01-002, CKL-03-010).
+    Tabs are ordered: Summary, Details, manage_list, then one tab per rule
+    sorted numerically by rule ID (e.g. CKL-01-001, CKL-01-002, CKL-03-010).
 
     Args:
         results: List of RuleResult objects from the checklist engine
         output_path: Path to write the .xlsx file
         job_name: Job name for the report header
+        components_top: List of Component objects on the TOP layer
+        components_bot: List of Component objects on the BOTTOM layer
+        references_dir: Directory containing managed-parts CSV files
     """
     wb = Workbook()
 
@@ -46,6 +51,10 @@ def generate_report(results: list[RuleResult], output_path: str | Path,
 
     # Detail sheet (all rules in one table)
     _create_detail_sheet(wb, results)
+
+    # Managed parts sheet
+    _create_manage_list_sheet(wb, components_top or [], components_bot or [],
+                               references_dir)
 
     # Per-rule detail sheets, sorted by rule ID
     sorted_results = sorted(results, key=_rule_sort_key)
@@ -244,6 +253,130 @@ def _create_rule_sheet(wb: Workbook, result: RuleResult):
             start_row += 1
 
         start_row += 1  # blank row between sections
+
+    _auto_fit_columns(ws)
+
+
+def _load_managed_parts_csvs(references_dir: Path) -> dict[str, set[str]]:
+    """Load CSV files from references_dir whose names contain 'capacitor' or 'inductor'.
+
+    Returns a dict mapping display name (stem) -> set of part_name values.
+    """
+    managed: dict[str, set[str]] = {}
+    if not references_dir or not Path(references_dir).is_dir():
+        return managed
+    for csv_path in sorted(Path(references_dir).glob("*.csv")):
+        stem_lower = csv_path.stem.lower()
+        if "capacitor" not in stem_lower and "inductor" not in stem_lower:
+            continue
+        part_names: set[str] = set()
+        try:
+            with open(csv_path, newline="", encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    pn = (row.get("part_name") or "").strip()
+                    if pn:
+                        part_names.add(pn)
+        except Exception:
+            continue
+        if part_names:
+            managed[csv_path.stem] = part_names
+    return managed
+
+
+def _create_manage_list_sheet(wb: Workbook, components_top: list,
+                               components_bot: list,
+                               references_dir):
+    """Create the 'manage_list' sheet listing managed capacitors/inductors by layer."""
+    ws = wb.create_sheet("manage_list")
+
+    managed = _load_managed_parts_csvs(references_dir)
+    if not managed:
+        ws["A1"] = "No managed-parts CSV files found in references directory."
+        return
+
+    # Build lookup: part_name -> list of (layer, comp_name, part_name)
+    all_matches: dict[str, list[tuple[str, str, str]]] = {}
+
+    for list_name, part_names in managed.items():
+        matches: list[tuple[str, str, str]] = []
+        for comp in components_top:
+            if comp.part_name in part_names:
+                matches.append(("TOP", comp.comp_name, comp.part_name))
+        for comp in components_bot:
+            if comp.part_name in part_names:
+                matches.append(("BOTTOM", comp.comp_name, comp.part_name))
+        all_matches[list_name] = matches
+
+    # -- Sheet title --
+    ws.merge_cells("A1:E1")
+    title = ws["A1"]
+    title.value = "Managed Parts List (Capacitors / Inductors)"
+    title.font = Font(bold=True, size=13)
+    title.alignment = Alignment(horizontal="center")
+
+    current_row = 3
+
+    for list_name, matches in all_matches.items():
+        top_matches = [m for m in matches if m[0] == "TOP"]
+        bot_matches = [m for m in matches if m[0] == "BOTTOM"]
+
+        # Section header
+        hdr = ws.cell(row=current_row, column=1, value=list_name)
+        hdr.font = Font(bold=True, size=11, color="FFFFFF")
+        hdr.fill = _HEADER_FILL
+        for col in range(1, 6):
+            ws.cell(row=current_row, column=col).fill = _HEADER_FILL
+        ws.merge_cells(
+            start_row=current_row, start_column=1,
+            end_row=current_row, end_column=5
+        )
+        hdr.alignment = Alignment(horizontal="left")
+        current_row += 1
+
+        # Summary row
+        summary = ws.cell(
+            row=current_row, column=1,
+            value=f"TOP: {len(top_matches)}  |  BOTTOM: {len(bot_matches)}  |  Total: {len(matches)}"
+        )
+        summary.font = Font(bold=True)
+        ws.merge_cells(
+            start_row=current_row, start_column=1,
+            end_row=current_row, end_column=5
+        )
+        current_row += 1
+
+        if not matches:
+            none_cell = ws.cell(row=current_row, column=2, value="(no matching components found)")
+            none_cell.font = Font(italic=True, color="808080")
+            current_row += 2
+            continue
+
+        # Column headers
+        col_headers = ["Layer", "comp_name", "part_name"]
+        fill_colors = {"TOP": "DDEEFF", "BOTTOM": "FFE8CC"}
+        for col, h in enumerate(col_headers, 1):
+            cell = ws.cell(row=current_row, column=col, value=h)
+            cell.font = Font(bold=True)
+            cell.fill = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
+            cell.border = _THIN_BORDER
+            cell.alignment = Alignment(horizontal="center")
+        current_row += 1
+
+        # Detail rows – TOP first, then BOTTOM
+        for layer, comp_name, part_name in sorted(matches, key=lambda m: (m[0] != "TOP", m[1])):
+            row_fill = PatternFill(
+                start_color=fill_colors.get(layer, "FFFFFF"),
+                end_color=fill_colors.get(layer, "FFFFFF"),
+                fill_type="solid"
+            )
+            for col, val in enumerate([layer, comp_name, part_name], 1):
+                cell = ws.cell(row=current_row, column=col, value=val)
+                cell.fill = row_fill
+                cell.border = _THIN_BORDER
+            current_row += 1
+
+        current_row += 1  # blank row between sections
 
     _auto_fit_columns(ws)
 
