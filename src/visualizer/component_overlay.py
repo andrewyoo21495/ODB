@@ -280,12 +280,10 @@ def _transform_point(px: float, py: float,
                      comp: Component) -> tuple[float, float]:
     """Transform a single package-local point to board coordinates.
 
-    ODB++ defines the rotation angle as the final top-view orientation after
-    any bottom-layer flip.  The correct transform order is therefore:
-      1. Mirror X for bottom-layer components (comp.mirror=True) – puts the
-         package into the bottom-layer coordinate frame.
-      2. Rotate (CW-positive in the stored convention, equivalent to the
-         original CCW ODB++ angle after cache negation).
+    ODB++ stores rotation angles as CCW-positive (standard math convention).
+    The correct transform order is:
+      1. Mirror X for bottom-layer components (comp.mirror=True).
+      2. Rotate CCW by comp.rotation (standard ODB++ convention).
       3. Translate to board position.
     """
     angle = math.radians(comp.rotation)
@@ -294,19 +292,19 @@ def _transform_point(px: float, py: float,
     # Step 1: mirror X for bottom-layer components (in package space)
     if comp.mirror:
         px = -px
-    # Step 2: clockwise rotation (= CCW by the original ODB++ angle)
-    x_rot = px * cos_a + py * sin_a
-    y_rot = -px * sin_a + py * cos_a
+    # Step 2: CCW rotation matching the ODB++ angle convention
+    x_rot = px * cos_a - py * sin_a
+    y_rot = px * sin_a + py * cos_a
     return (x_rot + comp.x, y_rot + comp.y)
 
 
 def _transform_pts(pts: np.ndarray, comp: Component) -> np.ndarray:
     """Transform an (N, 2) array of package-local points to board coordinates.
 
-    ODB++ defines the rotation angle as the final top-view orientation after
-    any bottom-layer flip.  The correct transform order is therefore:
+    ODB++ stores rotation angles as CCW-positive (standard math convention).
+    The correct transform order is:
       1. Mirror X for bottom-layer components.
-      2. Rotate (CW-positive in the stored convention).
+      2. Rotate CCW by comp.rotation (standard ODB++ convention).
       3. Translate to board position.
     """
     out = pts.copy().astype(float)
@@ -316,9 +314,9 @@ def _transform_pts(pts: np.ndarray, comp: Component) -> np.ndarray:
     # Step 1: mirror X for bottom-layer components (in package space)
     if comp.mirror:
         out[:, 0] = -out[:, 0]
-    # Step 2: clockwise rotation (= CCW by the original ODB++ angle)
-    x_rot = out[:, 0] * cos_a + out[:, 1] * sin_a
-    y_rot = -out[:, 0] * sin_a + out[:, 1] * cos_a
+    # Step 2: CCW rotation matching the ODB++ angle convention
+    x_rot = out[:, 0] * cos_a - out[:, 1] * sin_a
+    y_rot = out[:, 0] * sin_a + out[:, 1] * cos_a
     return np.column_stack([x_rot + comp.x, y_rot + comp.y])
 
 
