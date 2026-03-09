@@ -347,11 +347,11 @@ class PcbViewer:
         packages = self.eda_data.packages if self.eda_data else None
         if COMP_TOP_KEY in self._visible_set and self.components_top:
             draw_components(self.ax, self.components_top, packages,
-                            color="#00B7FF", alpha=0.99,
+                            color="#45CAFF", alpha=0.99,
                             show_pads=True, show_pkg_outlines=False)
         if COMP_BOT_KEY in self._visible_set and self.components_bot:
             draw_components(self.ax, self.components_bot, packages,
-                            color="#FF3150", alpha=0.99,
+                            color="#FF7D90", alpha=0.99,
                             show_pads=True, show_pkg_outlines=False)
         if COMP_OUTLINE_KEY in self._visible_set:
             self._draw_outlines(packages)
@@ -695,12 +695,12 @@ class ComponentViewer:
             if show_pins:
                 if top_comps:
                     draw_components(self.ax, top_comps, packages,
-                                    color="#00B7FF", alpha=0.99,
+                                    color="#45CAFF", alpha=0.99,
                                     show_pads=True,
                                     show_pkg_outlines=False)
                 if bot_comps:
                     draw_components(self.ax, bot_comps, packages,
-                                    color="#FF3150", alpha=0.99,
+                                    color="#FF7D90", alpha=0.99,
                                     show_pads=True,
                                     show_pkg_outlines=False)
             if show_outline:
