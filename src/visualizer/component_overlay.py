@@ -10,7 +10,9 @@ For each placed component the renderer looks up its Package via pkg_ref
 All coordinate data (components, EDA packages, profile, layer features) is
 normalised to MM before rendering.  Outline coordinates are in package-local
 space and are transformed to board coordinates by applying mirror → rotate →
-translate.
+translate.  For bottom-layer components the X-axis is mirrored first (in
+package space) and the rotation is then applied in the mirrored frame, which
+correctly reproduces the final top-view orientation stored in the CMP record.
 
 draw_components() accepts:
   show_pads=True          Draw pin-level pad shapes.
@@ -278,47 +280,45 @@ def _transform_point(px: float, py: float,
                      comp: Component) -> tuple[float, float]:
     """Transform a single package-local point to board coordinates.
 
-    ODB++ stores the rotation angle as it appears in the final assembly view
-    (looking at the board from the top).  The correct transform order is:
-      1. Rotate (CW-positive) in package space.
-      2. Mirror X for bottom-layer components (comp.mirror=True).
+    ODB++ defines the rotation angle as the final top-view orientation after
+    any bottom-layer flip.  The correct transform order is therefore:
+      1. Mirror X for bottom-layer components (comp.mirror=True) – puts the
+         package into the bottom-layer coordinate frame.
+      2. Rotate (CW-positive in the stored convention, equivalent to the
+         original CCW ODB++ angle after cache negation).
       3. Translate to board position.
-
-    Applying mirror before rotation (wrong order) reverses the effective
-    rotation direction for non-zero angles, producing a horizontally-mirrored
-    appearance on the bottom layer.
     """
     angle = math.radians(comp.rotation)
     cos_a = math.cos(angle)
     sin_a = math.sin(angle)
-    # Step 1: clockwise rotation in package space
+    # Step 1: mirror X for bottom-layer components (in package space)
+    if comp.mirror:
+        px = -px
+    # Step 2: clockwise rotation (= CCW by the original ODB++ angle)
     x_rot = px * cos_a + py * sin_a
     y_rot = -px * sin_a + py * cos_a
-    # Step 2: mirror X for bottom-layer components
-    if comp.mirror:
-        x_rot = -x_rot
     return (x_rot + comp.x, y_rot + comp.y)
 
 
 def _transform_pts(pts: np.ndarray, comp: Component) -> np.ndarray:
     """Transform an (N, 2) array of package-local points to board coordinates.
 
-    ODB++ stores the rotation angle as it appears in the final assembly view
-    (looking at the board from the top).  The correct transform order is:
-      1. Rotate (CW-positive) in package space.
-      2. Mirror X for bottom-layer components (comp.mirror=True).
+    ODB++ defines the rotation angle as the final top-view orientation after
+    any bottom-layer flip.  The correct transform order is therefore:
+      1. Mirror X for bottom-layer components.
+      2. Rotate (CW-positive in the stored convention).
       3. Translate to board position.
     """
     out = pts.copy().astype(float)
     angle = math.radians(comp.rotation)
     cos_a = math.cos(angle)
     sin_a = math.sin(angle)
-    # Step 1: clockwise rotation in package space
+    # Step 1: mirror X for bottom-layer components (in package space)
+    if comp.mirror:
+        out[:, 0] = -out[:, 0]
+    # Step 2: clockwise rotation (= CCW by the original ODB++ angle)
     x_rot = out[:, 0] * cos_a + out[:, 1] * sin_a
     y_rot = -out[:, 0] * sin_a + out[:, 1] * cos_a
-    # Step 2: mirror X for bottom-layer components
-    if comp.mirror:
-        x_rot = -x_rot
     return np.column_stack([x_rot + comp.x, y_rot + comp.y])
 
 

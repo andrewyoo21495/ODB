@@ -49,10 +49,15 @@ def symbol_to_patch(symbol_name: str, x: float, y: float,
 
     elif sym.type == "square":
         s = sym.params["side"] * scale
-        patch = Rectangle((x - s / 2, y - s / 2), s, s, color=color, alpha=alpha)
+        corners = np.array([
+            [x - s / 2, y - s / 2],
+            [x + s / 2, y - s / 2],
+            [x + s / 2, y + s / 2],
+            [x - s / 2, y + s / 2],
+        ])
         if rotation:
-            patch.set_angle(-rotation)
-        return patch
+            corners = _rotate_points(corners, x, y, rotation)
+        return Polygon(corners, closed=True, color=color, alpha=alpha)
 
     elif sym.type in ("rect", "rect_round", "rect_chamfer"):
         w = sym.params["width"] * scale
@@ -66,10 +71,18 @@ def symbol_to_patch(symbol_name: str, x: float, y: float,
             return _make_chamfered_rect(x, y, w, h, cs, sym.params.get("corners", "1234"),
                                         rotation, color, alpha)
         else:
-            patch = Rectangle((x - w / 2, y - h / 2), w, h, color=color, alpha=alpha)
+            # Use Polygon so rotation is always around the pad centre.
+            # Rectangle.set_angle() rotates around the lower-left anchor,
+            # which displaces the pad for any non-zero rotation.
+            corners = np.array([
+                [x - w / 2, y - h / 2],
+                [x + w / 2, y - h / 2],
+                [x + w / 2, y + h / 2],
+                [x - w / 2, y + h / 2],
+            ])
             if rotation:
-                patch.set_angle(-rotation)
-            return patch
+                corners = _rotate_points(corners, x, y, rotation)
+            return Polygon(corners, closed=True, color=color, alpha=alpha)
 
     elif sym.type == "oval":
         w = sym.params["width"] * scale
