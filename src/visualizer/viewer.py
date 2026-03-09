@@ -131,7 +131,8 @@ def _make_info_text(parent, height: int = 12) -> tk.Text:
 
 
 def _populate_info_text(widget: tk.Text,
-                        comp: Component, profile, eda_data) -> None:
+                        comp: Component, profile, eda_data,
+                        pin_name: str = "") -> None:
     """Fill *widget* with component metadata."""
     from src.checklist.component_classifier import classify_component
 
@@ -150,6 +151,8 @@ def _populate_info_text(widget: tk.Text,
     widget.insert(tk.END,
                   f"Pos:   ({comp.x:.4f}mm, {comp.y:.4f}mm)\n", "kv")
     widget.insert(tk.END, f"Rot:   {comp.rotation}\u00b0\n", "kv")
+    if pin_name:
+        widget.insert(tk.END, f"Pin:   {pin_name}\n", "kv")
 
     net_names: list[str] = []
     if eda_data and comp.toeprints:
@@ -209,9 +212,10 @@ class PcbViewer:
         self.eda_data       = eda_data
         self.user_symbols   = user_symbols or {}
         self.font           = font
-        self._selected_comp: Optional[Component] = None
-        self._visible_set:   set[str]            = set()
-        self._display_items: list[str]           = []
+        self._selected_comp:     Optional[Component] = None
+        self._selected_pin_name: str               = ""
+        self._visible_set:       set[str]          = set()
+        self._display_items:     list[str]         = []
 
     # ------------------------------------------------------------------
     # Public entry point
@@ -352,6 +356,18 @@ class PcbViewer:
         if COMP_OUTLINE_KEY in self._visible_set:
             self._draw_outlines(packages)
 
+        # Selection highlight – draw selected component in red on top
+        if self._selected_comp is not None:
+            visible_comps: list[Component] = []
+            if COMP_TOP_KEY in self._visible_set:
+                visible_comps.extend(self.components_top)
+            if COMP_BOT_KEY in self._visible_set:
+                visible_comps.extend(self.components_bot)
+            if self._selected_comp in visible_comps:
+                draw_components(self.ax, [self._selected_comp], packages,
+                                color="#FF0000", alpha=1.0,
+                                show_pads=True, show_pkg_outlines=True)
+
         self.ax.set_xlabel("X", color="#000000")
         self.ax.set_ylabel("Y", color="#000000")
 
@@ -396,17 +412,22 @@ class PcbViewer:
             return
         if event.xdata is None or event.ydata is None:
             return
-        comp = self._find_nearest_component(event.xdata, event.ydata)
-        if comp is not None and comp is not self._selected_comp:
-            self._selected_comp = comp
-            _populate_info_text(self._info_text, comp,
-                                self.profile, self.eda_data)
+        comp, pin_name = self._find_nearest_component(event.xdata, event.ydata)
+        if comp is not None:
+            if comp is not self._selected_comp or pin_name != self._selected_pin_name:
+                self._selected_comp     = comp
+                self._selected_pin_name = pin_name
+                _populate_info_text(self._info_text, comp,
+                                    self.profile, self.eda_data, pin_name)
+                self._redraw()
 
-    def _find_nearest_component(self, x: float, y: float) -> Optional[Component]:
+    def _find_nearest_component(self, x: float,
+                                 y: float) -> tuple[Optional[Component], str]:
         xlim         = self.ax.get_xlim()
         threshold_sq = ((xlim[1] - xlim[0]) * 0.02) ** 2
         best_comp    = None
         best_dist_sq = threshold_sq
+        best_pin     = ""
 
         candidates: list[Component] = []
         if COMP_TOP_KEY in self._visible_set:
@@ -415,17 +436,21 @@ class PcbViewer:
             candidates.extend(self.components_bot)
 
         for comp in candidates:
+            # Centroid
+            d = (comp.x - x) ** 2 + (comp.y - y) ** 2
+            if d < best_dist_sq:
+                best_dist_sq = d
+                best_comp    = comp
+                best_pin     = ""
+            # Toeprints (override centroid if closer)
             for tp in comp.toeprints:
                 d = (tp.x - x) ** 2 + (tp.y - y) ** 2
                 if d < best_dist_sq:
                     best_dist_sq = d
                     best_comp    = comp
-            d = (comp.x - x) ** 2 + (comp.y - y) ** 2
-            if d < best_dist_sq:
-                best_dist_sq = d
-                best_comp    = comp
+                    best_pin     = tp.name
 
-        return best_comp
+        return best_comp, best_pin
 
     # ------------------------------------------------------------------
     # Coordinate formatter
@@ -461,10 +486,14 @@ class ComponentViewer:
         self.components_top  = components_top or []
         self.components_bot  = components_bot or []
         self.eda_data        = eda_data
-        self._selected_comp: Optional[Component] = None
-        self._current_layer  = "Both"
-        self._drawn_comps:   list[Component] = []
-        self._comp_names:    list[str]       = []
+        self._selected_comp:     Optional[Component] = None
+        self._selected_pin_name: str               = ""
+        self._current_layer      = "Both"
+        self._drawn_comps:       list[Component]   = []
+        self._comp_names:        list[str]         = []
+        self._current_comps:     list[Component]   = []
+        self._current_show_pins: bool              = True
+        self._current_show_outline: bool           = False
 
     # ------------------------------------------------------------------
     # Public entry point
@@ -632,7 +661,10 @@ class ComponentViewer:
         show_outline = self._show_outline_var.get()
         comps = [c for c in self._get_layer_components()
                  if c.comp_name in selected_names]
-        self._drawn_comps = comps
+        self._drawn_comps       = comps
+        self._current_comps     = comps
+        self._current_show_pins = show_pins
+        self._current_show_outline = show_outline
         self._redraw(comps, show_pins, show_outline)
 
     # ------------------------------------------------------------------
@@ -674,14 +706,20 @@ class ComponentViewer:
             if show_outline:
                 if top_comps:
                     draw_components(self.ax, top_comps, packages,
-                                    color="#00F5FF", alpha=0.99,
+                                    color="#FFFF00", alpha=0.99,
                                     show_pads=False,
                                     show_pkg_outlines=True)
                 if bot_comps:
                     draw_components(self.ax, bot_comps, packages,
-                                    color="#FF10F0", alpha=0.99,
+                                    color="#FFFF00", alpha=0.99,
                                     show_pads=False,
                                     show_pkg_outlines=True)
+
+        # Selection highlight – draw selected component in red on top
+        if self._selected_comp is not None and self._selected_comp in (comps or []):
+            draw_components(self.ax, [self._selected_comp], packages,
+                            color="#FF0000", alpha=1.0,
+                            show_pads=True, show_pkg_outlines=True)
 
         self._apply_axis_labels()
         self.canvas.draw()
@@ -706,28 +744,39 @@ class ComponentViewer:
             return
         if event.xdata is None or event.ydata is None:
             return
-        comp = self._find_nearest_component(event.xdata, event.ydata)
-        if comp is not None and comp is not self._selected_comp:
-            self._selected_comp = comp
-            _populate_info_text(self._info_text, comp,
-                                self.profile, self.eda_data)
+        comp, pin_name = self._find_nearest_component(event.xdata, event.ydata)
+        if comp is not None:
+            if comp is not self._selected_comp or pin_name != self._selected_pin_name:
+                self._selected_comp     = comp
+                self._selected_pin_name = pin_name
+                _populate_info_text(self._info_text, comp,
+                                    self.profile, self.eda_data, pin_name)
+                self._redraw(self._current_comps,
+                             self._current_show_pins,
+                             self._current_show_outline)
 
-    def _find_nearest_component(self, x: float, y: float) -> Optional[Component]:
+    def _find_nearest_component(self, x: float,
+                                 y: float) -> tuple[Optional[Component], str]:
         xlim         = self.ax.get_xlim()
         threshold_sq = ((xlim[1] - xlim[0]) * 0.02) ** 2
         best_comp    = None
         best_dist_sq = threshold_sq
+        best_pin     = ""
         for comp in self._drawn_comps:
+            # Centroid
+            d = (comp.x - x) ** 2 + (comp.y - y) ** 2
+            if d < best_dist_sq:
+                best_dist_sq = d
+                best_comp    = comp
+                best_pin     = ""
+            # Toeprints (override centroid if closer)
             for tp in comp.toeprints:
                 d = (tp.x - x) ** 2 + (tp.y - y) ** 2
                 if d < best_dist_sq:
                     best_dist_sq = d
                     best_comp    = comp
-            d = (comp.x - x) ** 2 + (comp.y - y) ** 2
-            if d < best_dist_sq:
-                best_dist_sq = d
-                best_comp    = comp
-        return best_comp
+                    best_pin     = tp.name
+        return best_comp, best_pin
 
     # ------------------------------------------------------------------
     # Coordinate formatter

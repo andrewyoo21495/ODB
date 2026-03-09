@@ -200,10 +200,9 @@ def _transform_point(px: float, py: float,
     """Transform a single package-local point to board coordinates."""
     if comp.mirror:
         py = -py
-    # Bottom-side (mirrored) components require a negated rotation because
-    # the mirror flip reverses the rotation direction.  Top-side components
-    # use the rotation value directly.
-    angle = math.radians(-comp.rotation if comp.mirror else comp.rotation)
+    # ODB++ angles are clockwise-positive; negate for CCW matplotlib convention.
+    # This applies to both Top and Bottom (mirrored) components.
+    angle = math.radians(-comp.rotation)
     cos_a = math.cos(angle)
     sin_a = math.sin(angle)
     return (px * cos_a - py * sin_a + comp.x,
@@ -215,7 +214,7 @@ def _transform_pts(pts: np.ndarray, comp: Component) -> np.ndarray:
     out = pts.copy().astype(float)
     if comp.mirror:
         out[:, 1] = -out[:, 1]
-    angle = math.radians(-comp.rotation if comp.mirror else comp.rotation)
+    angle = math.radians(-comp.rotation)
     cos_a = math.cos(angle)
     sin_a = math.sin(angle)
     x_rot = out[:, 0] * cos_a - out[:, 1] * sin_a
