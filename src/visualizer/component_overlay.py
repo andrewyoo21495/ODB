@@ -280,49 +280,47 @@ def _transform_point(px: float, py: float,
                      comp: Component) -> tuple[float, float]:
     """Transform a single package-local point to board coordinates.
 
-    ODB++ stores rotation angles as CCW-positive (standard math convention).
-    The correct transform order is:
-      1. Mirror X for bottom-layer components (comp.mirror=True).
-      2. Rotate CCW by comp.rotation (standard ODB++ convention).
+    ODB++ convention:
+      1. Rotate CCW by comp.rotation (same formula for top and bottom).
+      2. Mirror X for bottom-layer components (in board-relative space,
+         i.e. after rotation). This gives the correct top-view position:
+         the bottom pin location is the X-mirror of where the same pin
+         would land on the top layer.
       3. Translate to board position.
     """
     angle = math.radians(comp.rotation)
     cos_a = math.cos(angle)
     sin_a = math.sin(angle)
-    # Step 1: mirror X for bottom-layer components (in package space)
-    if comp.mirror:
-        px = -px
-        # Bottom-layer rotation is defined looking from below, which appears
-        # CW from the top view → reverse the rotation direction.
-        sin_a = -sin_a
-    # Step 2: rotate (CCW for top; CW for bottom via negated sin_a)
+    # Step 1: CCW rotation (identical for top and bottom)
     x_rot = px * cos_a - py * sin_a
     y_rot = px * sin_a + py * cos_a
+    # Step 2: mirror X in board-relative space for bottom-layer components
+    if comp.mirror:
+        x_rot = -x_rot
     return (x_rot + comp.x, y_rot + comp.y)
 
 
 def _transform_pts(pts: np.ndarray, comp: Component) -> np.ndarray:
     """Transform an (N, 2) array of package-local points to board coordinates.
 
-    ODB++ stores rotation angles as CCW-positive (standard math convention).
-    The correct transform order is:
-      1. Mirror X for bottom-layer components.
-      2. Rotate CCW by comp.rotation (standard ODB++ convention).
+    ODB++ convention:
+      1. Rotate CCW by comp.rotation (same formula for top and bottom).
+      2. Mirror X for bottom-layer components (in board-relative space,
+         i.e. after rotation). This gives the correct top-view position:
+         the bottom pin location is the X-mirror of where the same pin
+         would land on the top layer.
       3. Translate to board position.
     """
     out = pts.copy().astype(float)
     angle = math.radians(comp.rotation)
     cos_a = math.cos(angle)
     sin_a = math.sin(angle)
-    # Step 1: mirror X for bottom-layer components (in package space)
-    if comp.mirror:
-        out[:, 0] = -out[:, 0]
-        # Bottom-layer rotation is defined looking from below, which appears
-        # CW from the top view → reverse the rotation direction.
-        sin_a = -sin_a
-    # Step 2: rotate (CCW for top; CW for bottom via negated sin_a)
+    # Step 1: CCW rotation (identical for top and bottom)
     x_rot = out[:, 0] * cos_a - out[:, 1] * sin_a
     y_rot = out[:, 0] * sin_a + out[:, 1] * cos_a
+    # Step 2: mirror X in board-relative space for bottom-layer components
+    if comp.mirror:
+        x_rot = -x_rot
     return np.column_stack([x_rot + comp.x, y_rot + comp.y])
 
 
