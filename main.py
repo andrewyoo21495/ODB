@@ -61,34 +61,6 @@ def _scale_components(comps: list, factor: float) -> None:
             tp.y *= factor
 
 
-def _get_profile_x_range(profile) -> tuple[float, float]:
-    """Return (x_min, x_max) from profile contour vertices."""
-    xs: list[float] = []
-    if profile and profile.surface:
-        for contour in profile.surface.contours:
-            xs.append(contour.start.x)
-            for seg in contour.segments:
-                xs.append(seg.end.x)
-    if not xs:
-        return 0.0, 0.0
-    return min(xs), max(xs)
-
-
-def _mirror_bottom_x(comps: list, profile) -> None:
-    """Mirror bottom component board-X positions around the profile centre.
-
-    When viewing both layers on the same top-down canvas, bottom-layer
-    component positions (which are stored in bottom-view coordinates in
-    ODB++) must be horizontally flipped so they align with the board
-    profile / top-layer features.
-    """
-    x_min, x_max = _get_profile_x_range(profile)
-    center_x = (x_min + x_max) / 2.0
-    for comp in comps:
-        comp.x = 2.0 * center_x - comp.x
-        for tp in comp.toeprints:
-            tp.x = 2.0 * center_x - tp.x
-
 
 def _negate_component_rotations(comps: list) -> None:
     """Negate component rotation angles in place.
@@ -480,16 +452,6 @@ def cmd_cache(args):
         profile.units = "MM"
         print(f"  Units: scaled profile INCH -> MM (x25.4)")
 
-    # Mirror bottom component board-X positions around the profile centre
-    # so that bottom-view coordinates align with the top-view canvas.
-    profile = data.get("profile")
-    bot_comps = data.get("components_bot")
-    if bot_comps and profile and profile.surface:
-        _mirror_bottom_x(bot_comps, profile)
-        x_min, x_max = _get_profile_x_range(profile)
-        print(f"  Mirror: X-mirrored bottom components around board centre "
-              f"(cx={((x_min + x_max) / 2):.3f}mm)")
-
     # Normalise layer feature coordinates (inches -> mm).
     # features.units is kept as the original file unit (INCH/MM) so that
     # the symbol renderer can correctly interpret symbol dimension encoding
@@ -611,13 +573,6 @@ def _parse_for_view(odb_path: str, layer_names: list[str] = None) -> dict:
         if features.units == "INCH":
             _scale_layer_features(features, _INCH_TO_MM)
             print(f"  Units: scaled {layer_name} features INCH -> MM (x25.4)")
-
-    # Mirror bottom component board-X positions so they align with top-view canvas.
-    if components_bot and profile and profile.surface:
-        _mirror_bottom_x(components_bot, profile)
-        x_min, x_max = _get_profile_x_range(profile)
-        print(f"  Mirror: X-mirrored bottom components around board centre "
-              f"(cx={((x_min + x_max) / 2):.3f}mm)")
 
     return {
         "job": job,
@@ -799,13 +754,6 @@ def _parse_for_comp_view(odb_path: str) -> dict:
         _scale_profile(profile, _INCH_TO_MM)
         profile.units = "MM"
         print(f"  Units: scaled profile INCH -> MM (x25.4)")
-
-    # Mirror bottom component board-X positions so they align with top-view canvas.
-    if components_bot and profile and profile.surface:
-        _mirror_bottom_x(components_bot, profile)
-        x_min, x_max = _get_profile_x_range(profile)
-        print(f"  Mirror: X-mirrored bottom components around board centre "
-              f"(cx={((x_min + x_max) / 2):.3f}mm)")
 
     return {
         "job": job,
