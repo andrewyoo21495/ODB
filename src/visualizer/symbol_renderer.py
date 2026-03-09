@@ -176,11 +176,13 @@ def symbol_to_patch(symbol_name: str, x: float, y: float,
 
     elif sym.type == "butterfly":
         d = sym.params["diameter"] * scale
-        return _make_butterfly(x, y, d, rotation, color, alpha, round_shape=True)
+        return _make_butterfly(x, y, d, rotation, color, alpha, round_shape=True,
+                               mirror=mirror)
 
     elif sym.type == "sq_butterfly":
         s = sym.params["side"] * scale
-        return _make_butterfly(x, y, s, rotation, color, alpha, round_shape=False)
+        return _make_butterfly(x, y, s, rotation, color, alpha, round_shape=False,
+                               mirror=mirror)
 
     # Thermal symbols
     elif sym.type == "thr":
@@ -226,19 +228,23 @@ def symbol_to_patch(symbol_name: str, x: float, y: float,
 
     # Stencil symbols
     elif sym.type == "hplate":
-        return _make_hplate(x, y, sym.params, scale, rotation, color, alpha)
+        return _make_hplate(x, y, sym.params, scale, rotation, color, alpha,
+                            mirror=mirror)
 
     elif sym.type == "rhplate":
-        return _make_rhplate(x, y, sym.params, scale, rotation, color, alpha)
+        return _make_rhplate(x, y, sym.params, scale, rotation, color, alpha,
+                             mirror=mirror)
 
     elif sym.type == "fhplate":
         return _make_fhplate(x, y, sym.params, scale, rotation, color, alpha)
 
     elif sym.type == "radhplate":
-        return _make_radhplate(x, y, sym.params, scale, rotation, color, alpha)
+        return _make_radhplate(x, y, sym.params, scale, rotation, color, alpha,
+                               mirror=mirror)
 
     elif sym.type == "dshape":
-        return _make_dshape(x, y, sym.params, scale, rotation, color, alpha)
+        return _make_dshape(x, y, sym.params, scale, rotation, color, alpha,
+                            mirror=mirror)
 
     elif sym.type == "cross":
         return _make_cross(x, y, sym.params, scale, rotation, color, alpha)
@@ -320,7 +326,7 @@ def user_symbol_to_patches(symbol: UserSymbol, x: float, y: float,
             for contour in feature.contours:
                 verts = contour_to_vertices(contour)
                 if mirror:
-                    verts[:, 1] = -verts[:, 1]
+                    verts[:, 0] = -verts[:, 0]
                 if rotation:
                     verts = _rotate_points(verts, 0, 0, rotation)
                 verts[:, 0] += x
@@ -664,7 +670,8 @@ def _make_half_oval(x: float, y: float, w: float, h: float,
 
 
 def _make_butterfly(x: float, y: float, size: float, rotation: float,
-                    color: str, alpha: float, round_shape: bool = True):
+                    color: str, alpha: float, round_shape: bool = True,
+                    mirror: bool = False):
     """Create a butterfly shape (two quarter segments opposite each other)."""
     r = size / 2
     pts = []
@@ -689,6 +696,8 @@ def _make_butterfly(x: float, y: float, size: float, rotation: float,
             [x, y],
         ]
     verts = np.array(pts)
+    if mirror:
+        verts[:, 0] = 2 * x - verts[:, 0]
     if rotation:
         verts = _rotate_points(verts, x, y, rotation)
     return Polygon(verts, closed=True, color=color, alpha=alpha)
@@ -975,7 +984,8 @@ def _make_oval_thermal(x: float, y: float, params: dict, scale: float,
 # ---------------------------------------------------------------------------
 
 def _make_hplate(x: float, y: float, params: dict, scale: float,
-                 rotation: float, color: str, alpha: float):
+                 rotation: float, color: str, alpha: float,
+                 mirror: bool = False):
     """Create a home plate symbol.
     Rectangular shape with one side having a triangular cut (like home plate in baseball).
     The cut is on the right side.
@@ -994,13 +1004,16 @@ def _make_hplate(x: float, y: float, params: dict, scale: float,
         [x - hw, y + hh],
     ]
     verts = np.array(pts)
+    if mirror:
+        verts[:, 0] = 2 * x - verts[:, 0]
     if rotation:
         verts = _rotate_points(verts, x, y, rotation)
     return Polygon(verts, closed=True, color=color, alpha=alpha)
 
 
 def _make_rhplate(x: float, y: float, params: dict, scale: float,
-                  rotation: float, color: str, alpha: float):
+                  rotation: float, color: str, alpha: float,
+                  mirror: bool = False):
     """Create an inverted home plate (rhplate).
     Like hplate but the cut is on the left side (inverted).
     """
@@ -1017,6 +1030,8 @@ def _make_rhplate(x: float, y: float, params: dict, scale: float,
         [x - hw, y],
     ]
     verts = np.array(pts)
+    if mirror:
+        verts[:, 0] = 2 * x - verts[:, 0]
     if rotation:
         verts = _rotate_points(verts, x, y, rotation)
     return Polygon(verts, closed=True, color=color, alpha=alpha)
@@ -1050,7 +1065,8 @@ def _make_fhplate(x: float, y: float, params: dict, scale: float,
 
 
 def _make_radhplate(x: float, y: float, params: dict, scale: float,
-                    rotation: float, color: str, alpha: float):
+                    rotation: float, color: str, alpha: float,
+                    mirror: bool = False):
     """Create a radiused inverted home plate (radhplate).
     Like inverted home plate but with curved left side.
     """
@@ -1077,13 +1093,16 @@ def _make_radhplate(x: float, y: float, params: dict, scale: float,
     pts.append([x - hw + ms, y - hh])
 
     verts = np.array(pts)
+    if mirror:
+        verts[:, 0] = 2 * x - verts[:, 0]
     if rotation:
         verts = _rotate_points(verts, x, y, rotation)
     return Polygon(verts, closed=True, color=color, alpha=alpha)
 
 
 def _make_dshape(x: float, y: float, params: dict, scale: float,
-                 rotation: float, color: str, alpha: float):
+                 rotation: float, color: str, alpha: float,
+                 mirror: bool = False):
     """Create a D-shape (radiused home plate).
     Rectangle with one side replaced by a semicircular arc.
     """
@@ -1109,6 +1128,8 @@ def _make_dshape(x: float, y: float, params: dict, scale: float,
     pts.append([x - hw, y + hh])
 
     verts = np.array(pts)
+    if mirror:
+        verts[:, 0] = 2 * x - verts[:, 0]
     if rotation:
         verts = _rotate_points(verts, x, y, rotation)
     return Polygon(verts, closed=True, color=color, alpha=alpha)
