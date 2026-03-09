@@ -3,8 +3,11 @@
 Provides functions for:
 - Component orientation detection (Horizontal / Vertical)
 - Component footprint polygon construction from pin outlines
+- Opposite-side overlap detection between components
 - Edge detection between components
 - Distance measurement (center-to-center and edge-to-edge)
+- Component size parsing and filtering
+- PCB outline clearance checking
 - CSV component list loading and filtering
 
 All coordinate data is expected to be pre-normalised to MM.
@@ -14,7 +17,8 @@ from __future__ import annotations
 
 import csv
 import math
-from typing import Optional
+import re
+from typing import Optional, Sequence
 
 import numpy as np
 
@@ -26,7 +30,10 @@ from src.visualizer.component_overlay import (
 from src.visualizer.symbol_renderer import contour_to_vertices
 
 try:
-    from shapely.geometry import MultiPoint, Point as ShapelyPoint, Polygon as ShapelyPolygon
+    from shapely.geometry import (
+        MultiPoint, Point as ShapelyPoint, Polygon as ShapelyPolygon,
+        LineString,
+    )
     from shapely.ops import unary_union
     _HAS_SHAPELY = True
 except ImportError:
@@ -274,3 +281,203 @@ def filter_components_by_list(components: list[Component],
     """Return components whose comp_name matches an entry in the CSV list."""
     names = {e["comp"] for e in csv_entries if e.get("comp")}
     return [c for c in components if c.comp_name in names]
+
+
+# ---------------------------------------------------------------------------
+# 6. Opposite-Side Overlap Detection
+# ---------------------------------------------------------------------------
+
+def find_overlapping_components(
+    comp: Component,
+    candidates: Sequence[Component],
+    packages: list[Package],
+) -> list[Component]:
+    """Return *candidates* whose footprints overlap *comp*'s footprint.
+
+    Both *comp* and every candidate are assumed to be on opposite sides of
+    the PCB so their 2-D projections are compared directly.
+    """
+    if not _HAS_SHAPELY:
+        return []
+
+    fp_comp = _resolve_footprint(comp, packages)
+    if fp_comp is None:
+        # Fallback: use a small box around the centre
+        fp_comp = ShapelyPoint(comp.x, comp.y).buffer(0.1)
+
+    overlapping: list[Component] = []
+    for cand in candidates:
+        fp_cand = _resolve_footprint(cand, packages)
+        if fp_cand is None:
+            fp_cand = ShapelyPoint(cand.x, cand.y).buffer(0.1)
+        if fp_comp.intersects(fp_cand):
+            overlapping.append(cand)
+    return overlapping
+
+
+# ---------------------------------------------------------------------------
+# 7. Component Size Utilities
+# ---------------------------------------------------------------------------
+
+def get_component_size(comp: Component,
+                       size_maps: list[dict[str, int]] | None = None,
+                       packages: list[Package] | None = None) -> int:
+    """Return the numeric size code for *comp*.
+
+    Resolution order:
+        1. Lookup ``comp.part_name`` in the provided *size_maps*
+           (list of ``{part_name: size}`` dicts from reference CSVs).
+        2. Parse from package bbox dimensions (metric LLWW code).
+        3. Return 0 if unknown.
+    """
+    part = comp.part_name or ""
+
+    # 1. Reference CSV lookup
+    if size_maps:
+        for sm in size_maps:
+            if part in sm:
+                return sm[part]
+
+    # 2. Infer from package bbox
+    if packages and 0 <= comp.pkg_ref < len(packages):
+        pkg = packages[comp.pkg_ref]
+        if pkg.bbox:
+            w_mm = abs(pkg.bbox.xmax - pkg.bbox.xmin)
+            h_mm = abs(pkg.bbox.ymax - pkg.bbox.ymin)
+            # Convert to metric size code: length(0.1mm) * 100 + width(0.1mm)
+            l_code = int(round(max(w_mm, h_mm) * 10))
+            w_code = int(round(min(w_mm, h_mm) * 10))
+            return l_code * 100 + w_code
+
+    return 0
+
+
+def size_at_least(size_code: int, threshold: int = 2012) -> bool:
+    """Return True if *size_code* >= *threshold*."""
+    return size_code >= threshold
+
+
+def filter_by_size(components: Sequence[Component],
+                   threshold: int,
+                   size_maps: list[dict[str, int]] | None = None,
+                   packages: list[Package] | None = None,
+                   ) -> list[tuple[Component, int]]:
+    """Return (component, size) pairs for components with size >= *threshold*."""
+    result: list[tuple[Component, int]] = []
+    for comp in components:
+        sz = get_component_size(comp, size_maps, packages)
+        if sz >= threshold:
+            result.append((comp, sz))
+    return result
+
+
+# ---------------------------------------------------------------------------
+# 8. PCB Outline Clearance
+# ---------------------------------------------------------------------------
+
+def build_board_polygon(profile) -> Optional[object]:
+    """Construct a shapely Polygon from the board profile.
+
+    Returns None if shapely is unavailable or no valid contour is found.
+    """
+    if not _HAS_SHAPELY or not profile or not profile.surface:
+        return None
+
+    for contour in profile.surface.contours:
+        if contour.is_island:
+            verts = contour_to_vertices(contour)
+            if len(verts) >= 3:
+                poly = ShapelyPolygon(verts)
+                if poly.is_valid:
+                    return poly
+    return None
+
+
+def build_inset_boundary(board_poly, inset_mm: float = 0.65):
+    """Return a polygon *inset_mm* inward from *board_poly*'s boundary.
+
+    The returned polygon represents the clearance zone boundary.
+    Returns None on failure.
+    """
+    if not _HAS_SHAPELY or board_poly is None:
+        return None
+    inset = board_poly.buffer(-inset_mm)
+    if inset.is_empty or not inset.is_valid:
+        return None
+    return inset
+
+
+def distance_to_outline(comp: Component, board_poly,
+                        packages: list[Package] | None = None) -> float:
+    """Return the minimum distance from any pin/pad of *comp* to the board outline.
+
+    Falls back to centre-point distance if no pin geometry is available.
+    """
+    if not _HAS_SHAPELY or board_poly is None:
+        return float("inf")
+
+    outline = board_poly.boundary
+    min_dist = float("inf")
+
+    # Check toeprint (pin/pad) positions
+    if comp.toeprints:
+        for tp in comp.toeprints:
+            d = outline.distance(ShapelyPoint(tp.x, tp.y))
+            if d < min_dist:
+                min_dist = d
+        return min_dist
+
+    # Fallback: component centre
+    return outline.distance(ShapelyPoint(comp.x, comp.y))
+
+
+def components_in_clearance_zone(
+    components: Sequence[Component],
+    board_poly,
+    inset_poly,
+    packages: list[Package] | None = None,
+) -> list[tuple[Component, float]]:
+    """Return components with pins/pads in the clearance zone.
+
+    The clearance zone is the area between the board outline and the
+    inset boundary.  Returns list of ``(component, min_distance_to_outline)``.
+    """
+    if not _HAS_SHAPELY or board_poly is None or inset_poly is None:
+        return []
+
+    outline = board_poly.boundary
+    results: list[tuple[Component, float]] = []
+
+    for comp in components:
+        in_zone = False
+        min_dist = float("inf")
+
+        if comp.toeprints:
+            for tp in comp.toeprints:
+                pt = ShapelyPoint(tp.x, tp.y)
+                # Point is in clearance zone if inside board but outside inset
+                if board_poly.contains(pt) and not inset_poly.contains(pt):
+                    in_zone = True
+                    d = outline.distance(pt)
+                    if d < min_dist:
+                        min_dist = d
+                # Also check points outside the board entirely
+                elif not board_poly.contains(pt):
+                    in_zone = True
+                    d = outline.distance(pt)
+                    if d < min_dist:
+                        min_dist = d
+        else:
+            # Fallback: check centre only
+            pt = ShapelyPoint(comp.x, comp.y)
+            if board_poly.contains(pt) and not inset_poly.contains(pt):
+                in_zone = True
+                min_dist = outline.distance(pt)
+            elif not board_poly.contains(pt):
+                in_zone = True
+                min_dist = outline.distance(pt)
+
+        if in_zone:
+            results.append((comp, min_dist))
+
+    return results

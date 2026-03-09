@@ -1,0 +1,658 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ODB++ Design Checklist Documentation</title>
+<style>
+  :root {
+    --bg: #f8f9fa;
+    --card-bg: #ffffff;
+    --border: #dee2e6;
+    --text: #212529;
+    --muted: #6c757d;
+    --primary: #0d6efd;
+    --pass: #198754;
+    --fail: #dc3545;
+    --pass-bg: #d1e7dd;
+    --fail-bg: #f8d7da;
+    --badge-placement: #6f42c1;
+    --badge-spacing: #fd7e14;
+    --badge-alignment: #0dcaf0;
+    --badge-clearance: #20c997;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+    padding: 0 0 60px 0;
+  }
+
+  /* Header */
+  .header {
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+    color: #fff;
+    padding: 48px 32px 40px;
+    text-align: center;
+  }
+  .header h1 { font-size: 2rem; font-weight: 700; margin-bottom: 8px; }
+  .header p { font-size: 1.05rem; opacity: 0.85; max-width: 680px; margin: 0 auto; }
+
+  /* Stats bar */
+  .stats-bar {
+    display: flex;
+    justify-content: center;
+    gap: 32px;
+    padding: 20px 32px;
+    background: #fff;
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+  }
+  .stat { text-align: center; }
+  .stat-value { font-size: 1.75rem; font-weight: 700; color: var(--primary); }
+  .stat-label { font-size: 0.82rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
+
+  /* Container */
+  .container { max-width: 1060px; margin: 0 auto; padding: 32px 24px; }
+
+  /* Usage section */
+  .usage {
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 28px 32px;
+    margin-bottom: 36px;
+  }
+  .usage h2 { font-size: 1.2rem; margin-bottom: 14px; }
+  .usage code {
+    display: block;
+    background: #1e1e1e;
+    color: #d4d4d4;
+    padding: 14px 18px;
+    border-radius: 6px;
+    font-size: 0.92rem;
+    margin: 8px 0;
+    overflow-x: auto;
+  }
+  .usage code .flag { color: #9cdcfe; }
+  .usage code .arg  { color: #ce9178; }
+  .usage code .cmd  { color: #dcdcaa; }
+  .usage p { font-size: 0.93rem; color: var(--muted); margin-top: 10px; }
+
+  /* Section titles */
+  .section-title {
+    font-size: 1.15rem;
+    font-weight: 700;
+    margin: 36px 0 18px;
+    padding-bottom: 8px;
+    border-bottom: 2px solid var(--primary);
+    display: inline-block;
+  }
+
+  /* Rule cards */
+  .rule-card {
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    margin-bottom: 18px;
+    overflow: hidden;
+    transition: box-shadow 0.15s;
+  }
+  .rule-card:hover { box-shadow: 0 4px 16px rgba(0,0,0,0.07); }
+
+  .rule-header {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 18px 24px;
+    cursor: pointer;
+    user-select: none;
+  }
+  .rule-header:hover { background: #f8f9fa; }
+
+  .rule-id {
+    font-family: 'Consolas', 'Courier New', monospace;
+    font-weight: 700;
+    font-size: 0.95rem;
+    color: var(--primary);
+    white-space: nowrap;
+    min-width: 110px;
+  }
+  .rule-desc { flex: 1; font-size: 0.95rem; }
+  .badge {
+    display: inline-block;
+    font-size: 0.72rem;
+    font-weight: 600;
+    padding: 3px 10px;
+    border-radius: 12px;
+    color: #fff;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    white-space: nowrap;
+  }
+  .badge-placement  { background: var(--badge-placement); }
+  .badge-spacing    { background: var(--badge-spacing); }
+  .badge-alignment  { background: var(--badge-alignment); }
+  .badge-clearance  { background: var(--badge-clearance); }
+
+  .toggle-icon {
+    font-size: 1.1rem;
+    color: var(--muted);
+    transition: transform 0.2s;
+  }
+  .rule-card.open .toggle-icon { transform: rotate(90deg); }
+
+  .rule-body {
+    display: none;
+    padding: 0 24px 22px;
+    border-top: 1px solid #f0f0f0;
+  }
+  .rule-card.open .rule-body { display: block; }
+
+  .rule-body h4 { font-size: 0.85rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin: 16px 0 8px; }
+
+  .rule-body ol, .rule-body ul { padding-left: 22px; font-size: 0.93rem; }
+  .rule-body li { margin-bottom: 5px; }
+
+  /* Output columns table */
+  .col-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.88rem;
+    margin-top: 6px;
+  }
+  .col-table th {
+    background: #e9ecef;
+    padding: 8px 12px;
+    text-align: left;
+    font-weight: 600;
+    border: 1px solid var(--border);
+  }
+  .col-table td {
+    padding: 7px 12px;
+    border: 1px solid var(--border);
+    vertical-align: top;
+  }
+  .col-table tr:nth-child(even) td { background: #f8f9fa; }
+  .col-name { font-family: monospace; font-weight: 600; color: var(--primary); white-space: nowrap; }
+
+  .pass-fail-note {
+    background: var(--pass-bg);
+    border-left: 4px solid var(--pass);
+    padding: 10px 14px;
+    font-size: 0.88rem;
+    border-radius: 0 6px 6px 0;
+    margin-top: 12px;
+  }
+  .pass-fail-note.fail-note {
+    background: var(--fail-bg);
+    border-left-color: var(--fail);
+  }
+
+  /* Reference files */
+  .ref-tag {
+    display: inline-block;
+    background: #e9ecef;
+    font-family: monospace;
+    font-size: 0.82rem;
+    padding: 2px 8px;
+    border-radius: 4px;
+    margin: 2px 4px 2px 0;
+  }
+
+  /* Footer */
+  .footer {
+    text-align: center;
+    padding: 32px;
+    font-size: 0.82rem;
+    color: var(--muted);
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>ODB++ Design Checklist Documentation</h1>
+  <p>Automated PCB design rule checks for component placement, spacing, orientation, and clearance verification.</p>
+</div>
+
+<div class="stats-bar">
+  <div class="stat">
+    <div class="stat-value">11</div>
+    <div class="stat-label">Total Rules</div>
+  </div>
+  <div class="stat">
+    <div class="stat-value">4</div>
+    <div class="stat-label">Categories</div>
+  </div>
+  <div class="stat">
+    <div class="stat-value">5</div>
+    <div class="stat-label">Reference CSVs</div>
+  </div>
+  <div class="stat">
+    <div class="stat-value">8</div>
+    <div class="stat-label">New Rules</div>
+  </div>
+</div>
+
+<div class="container">
+
+  <!-- Usage -->
+  <div class="usage">
+    <h2>How to Run</h2>
+    <code><span class="cmd">python main.py check</span> <span class="arg">&lt;odb_path&gt;</span></code>
+    <code><span class="cmd">python main.py check</span> <span class="arg">&lt;odb_path&gt;</span> <span class="flag">--rules</span> <span class="arg">CKL-01-001 CKL-03-015</span></code>
+    <code><span class="cmd">python main.py check</span> <span class="arg">&lt;odb_path&gt;</span> <span class="flag">--output</span> <span class="arg">my_report.xlsx</span></code>
+    <p>Results are printed to the console and exported to an Excel file in <strong>output/</strong>. Each rule gets its own sheet with a structured results table.</p>
+  </div>
+
+  <!-- ================================================================== -->
+  <!-- LEGACY RULES -->
+  <!-- ================================================================== -->
+  <div class="section-title">Legacy Rules (CKL-001 ~ CKL-003)</div>
+
+  <!-- CKL-001 -->
+  <div class="rule-card">
+    <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
+      <span class="rule-id">CKL-001</span>
+      <span class="rule-desc">Capacitors on Top layer must be horizontally aligned with connectors on Bottom layer</span>
+      <span class="badge badge-alignment">Alignment</span>
+      <span class="toggle-icon">&#9654;</span>
+    </div>
+    <div class="rule-body">
+      <h4>Inspection Process</h4>
+      <ol>
+        <li>Find all capacitors on the Top layer.</li>
+        <li>Find all connectors on the Bottom layer.</li>
+        <li>For each capacitor, find the nearest bottom connector and check Y-axis alignment (tolerance: 0.254mm).</li>
+      </ol>
+      <h4>Pass/Fail Criteria</h4>
+      <div class="pass-fail-note"><strong>PASS</strong> if the Y-coordinate difference between capacitor and nearest connector is within 0.254mm.</div>
+    </div>
+  </div>
+
+  <!-- CKL-002 -->
+  <div class="rule-card">
+    <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
+      <span class="rule-id">CKL-002</span>
+      <span class="rule-desc">Minimum spacing between components must be maintained (0.2032mm)</span>
+      <span class="badge badge-spacing">Spacing</span>
+      <span class="toggle-icon">&#9654;</span>
+    </div>
+    <div class="rule-body">
+      <h4>Inspection Process</h4>
+      <ol>
+        <li>Build a KD-tree spatial index of all component positions.</li>
+        <li>Query for pairs within the minimum spacing threshold.</li>
+        <li>Flag any pair closer than 0.2032mm.</li>
+      </ol>
+      <h4>Pass/Fail Criteria</h4>
+      <div class="pass-fail-note"><strong>PASS</strong> if all component pairs are at least 0.2032mm apart.</div>
+    </div>
+  </div>
+
+  <!-- CKL-003 -->
+  <div class="rule-card">
+    <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
+      <span class="rule-id">CKL-003</span>
+      <span class="rule-desc">All components must be placed within the board outline</span>
+      <span class="badge badge-placement">Placement</span>
+      <span class="toggle-icon">&#9654;</span>
+    </div>
+    <div class="rule-body">
+      <h4>Inspection Process</h4>
+      <ol>
+        <li>Construct a polygon from the PCB profile outline.</li>
+        <li>Check each component centre against the polygon boundary.</li>
+        <li>Flag any component whose centre falls outside the board outline.</li>
+      </ol>
+      <h4>Pass/Fail Criteria</h4>
+      <div class="pass-fail-note"><strong>PASS</strong> if the component centre is within the board polygon.</div>
+    </div>
+  </div>
+
+  <!-- ================================================================== -->
+  <!-- NEW RULES -->
+  <!-- ================================================================== -->
+  <div class="section-title">Checklist Series 01 &mdash; IC / AP-Memory Placement</div>
+
+  <!-- CKL-01-001 -->
+  <div class="rule-card">
+    <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
+      <span class="rule-id">CKL-01-001</span>
+      <span class="rule-desc">ICs must not overlap with interposers or connectors on the opposite side</span>
+      <span class="badge badge-placement">Placement</span>
+      <span class="toggle-icon">&#9654;</span>
+    </div>
+    <div class="rule-body">
+      <h4>Inspection Process</h4>
+      <ol>
+        <li>Search for all ICs on both Top and Bottom layers.</li>
+        <li>For each IC, check if any interposer or connector component overlaps on the opposite side.</li>
+        <li>Report overlapping pairs.</li>
+      </ol>
+      <h4>Output Columns</h4>
+      <table class="col-table">
+        <tr><th>Column</th><th>Description</th></tr>
+        <tr><td class="col-name">comp</td><td>Name of the IC component</td></tr>
+        <tr><td class="col-name">cmp_layer</td><td>Layer of the IC (Top or Bottom)</td></tr>
+        <tr><td class="col-name">overlapping_cmp</td><td>Name of the overlapping interposer or connector on the opposite side</td></tr>
+        <tr><td class="col-name">status</td><td>PASS or FAIL</td></tr>
+      </table>
+      <h4>Pass/Fail Criteria</h4>
+      <div class="pass-fail-note fail-note"><strong>FAIL</strong> if any interposer or connector overlaps the IC on the opposite side.</div>
+    </div>
+  </div>
+
+  <!-- CKL-01-005 -->
+  <div class="rule-card">
+    <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
+      <span class="rule-id">CKL-01-005</span>
+      <span class="rule-desc">Inductors (&ge;2012) overlapping opposite side of AP/Memory: corner placement and orientation review</span>
+      <span class="badge badge-placement">Placement</span>
+      <span class="toggle-icon">&#9654;</span>
+    </div>
+    <div class="rule-body">
+      <h4>Reference Files</h4>
+      <span class="ref-tag">references/ap_memory.csv</span>
+      <span class="ref-tag">references/inductors_2s_list.csv</span>
+      <h4>Inspection Process</h4>
+      <ol>
+        <li>Search for AP or Memory components on Top and Bottom layers (part names from <code>ap_memory.csv</code>).</li>
+        <li>Search for all inductors overlapping the opposite side of each AP/Memory.</li>
+        <li>Filter inductors to include only those with a size of 2012 or larger.</li>
+        <li>Inspect whether filtered inductors are placed at the corners and check their horizontal/vertical orientation.</li>
+      </ol>
+      <h4>Output Columns</h4>
+      <table class="col-table">
+        <tr><th>Column</th><th>Description</th></tr>
+        <tr><td class="col-name">comp</td><td>Name of the AP or Memory component</td></tr>
+        <tr><td class="col-name">cmp_layer</td><td>Layer of the AP/Memory (Top or Bottom)</td></tr>
+        <tr><td class="col-name">overlapping_ind</td><td>Name of the overlapping inductor (&ge;2012)</td></tr>
+        <tr><td class="col-name">part_name</td><td>Part name of the inductor</td></tr>
+        <tr><td class="col-name">edge</td><td>TRUE if inductor is at the corner of the AP/Memory, FALSE otherwise</td></tr>
+        <tr><td class="col-name">hori/verti</td><td>Orientation relative to the AP/Memory outline (Horizontal or Vertical)</td></tr>
+        <tr><td class="col-name">status</td><td>PASS or FAIL</td></tr>
+      </table>
+      <h4>Pass/Fail Criteria</h4>
+      <div class="pass-fail-note"><strong>PASS</strong> if edge is FALSE <em>and</em> orientation is Horizontal. Otherwise <strong>FAIL</strong>.</div>
+    </div>
+  </div>
+
+  <!-- ================================================================== -->
+  <div class="section-title">Checklist Series 02 &mdash; Capacitor / Inductor vs Connector</div>
+
+  <!-- CKL-02-001 -->
+  <div class="rule-card">
+    <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
+      <span class="rule-id">CKL-02-001</span>
+      <span class="rule-desc">10 managed capacitor types must be at least 1.5mm from connectors on the opposite side</span>
+      <span class="badge badge-spacing">Spacing</span>
+      <span class="toggle-icon">&#9654;</span>
+    </div>
+    <div class="rule-body">
+      <h4>Reference Files</h4>
+      <span class="ref-tag">references/capacitors_10_list.csv</span>
+      <h4>Inspection Process</h4>
+      <ol>
+        <li>Search for 10 managed capacitor types on Top and Bottom layers.</li>
+        <li>Match each identified capacitor with any connector on the opposite side.</li>
+        <li>If an opposite-side connector is found, measure the edge-to-edge distance.</li>
+        <li>Distance must be at least 1.5mm.</li>
+      </ol>
+      <h4>Output Columns</h4>
+      <table class="col-table">
+        <tr><th>Column</th><th>Description</th></tr>
+        <tr><td class="col-name">comp</td><td>Name of the managed capacitor</td></tr>
+        <tr><td class="col-name">cmp_layer</td><td>Layer of the capacitor</td></tr>
+        <tr><td class="col-name">part_name</td><td>Part name of the capacitor</td></tr>
+        <tr><td class="col-name">overlapping_con</td><td>Name of the connector on the opposite side</td></tr>
+        <tr><td class="col-name">distance</td><td>Edge-to-edge distance (mm)</td></tr>
+        <tr><td class="col-name">status</td><td>PASS or FAIL</td></tr>
+      </table>
+      <h4>Pass/Fail Criteria</h4>
+      <div class="pass-fail-note"><strong>PASS</strong> if distance &ge; 1.5mm. Otherwise <strong>FAIL</strong>.</div>
+    </div>
+  </div>
+
+  <!-- CKL-02-006 -->
+  <div class="rule-card">
+    <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
+      <span class="rule-id">CKL-02-006</span>
+      <span class="rule-desc">General capacitors (not in 51 managed types) overlapping connectors: edge and orientation check</span>
+      <span class="badge badge-placement">Placement</span>
+      <span class="toggle-icon">&#9654;</span>
+    </div>
+    <div class="rule-body">
+      <h4>Reference Files</h4>
+      <span class="ref-tag">references/capacitors_41_list.csv</span>
+      <span class="ref-tag">references/capacitors_10_list.csv</span>
+      <h4>Inspection Process</h4>
+      <ol>
+        <li>Load <code>capacitors_41_list.csv</code> and <code>capacitors_10_list.csv</code> to compile a list of 51 managed capacitor types.</li>
+        <li>Search for all connectors on Top/Bottom layers and find all capacitors overlapping on the opposite side.</li>
+        <li>Filter for General Capacitors (those NOT in the 51-type list).</li>
+        <li>Inspect whether general capacitors are at the edge of the connector and check their orientation.</li>
+      </ol>
+      <h4>Output Columns</h4>
+      <table class="col-table">
+        <tr><th>Column</th><th>Description</th></tr>
+        <tr><td class="col-name">comp</td><td>Name of the connector</td></tr>
+        <tr><td class="col-name">cmp_layer</td><td>Layer of the connector</td></tr>
+        <tr><td class="col-name">overlapping_cap</td><td>Name of the overlapping general capacitor</td></tr>
+        <tr><td class="col-name">part_name</td><td>Part name of the capacitor</td></tr>
+        <tr><td class="col-name">edge</td><td>TRUE if capacitor is at the corner of the connector, FALSE otherwise</td></tr>
+        <tr><td class="col-name">hori/verti</td><td>Orientation relative to connector outline (Horizontal or Vertical)</td></tr>
+        <tr><td class="col-name">status</td><td>PASS or FAIL</td></tr>
+      </table>
+      <h4>Pass/Fail Criteria</h4>
+      <div class="pass-fail-note"><strong>PASS</strong> if edge is FALSE <em>and</em> orientation is Horizontal. Otherwise <strong>FAIL</strong>.</div>
+    </div>
+  </div>
+
+  <!-- CKL-02-008 -->
+  <div class="rule-card">
+    <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
+      <span class="rule-id">CKL-02-008</span>
+      <span class="rule-desc">2S Inductors (&ge;2012) overlapping connectors on the opposite side: edge and orientation check</span>
+      <span class="badge badge-placement">Placement</span>
+      <span class="toggle-icon">&#9654;</span>
+    </div>
+    <div class="rule-body">
+      <h4>Reference Files</h4>
+      <span class="ref-tag">references/inductors_2s_list.csv</span>
+      <h4>Inspection Process</h4>
+      <ol>
+        <li>Search for connectors on Top and Bottom layers.</li>
+        <li>Check for 2S Inductors (from <code>inductors_2s_list.csv</code>) overlapping the opposite side of these connectors.</li>
+        <li>Filter for those with a size of 2012 or larger.</li>
+        <li>Inspect edge placement and horizontal/vertical orientation.</li>
+      </ol>
+      <h4>Output Columns</h4>
+      <table class="col-table">
+        <tr><th>Column</th><th>Description</th></tr>
+        <tr><td class="col-name">comp</td><td>Name of the connector</td></tr>
+        <tr><td class="col-name">cmp_layer</td><td>Layer of the connector</td></tr>
+        <tr><td class="col-name">overlapping_ind</td><td>Name of the overlapping 2S inductor</td></tr>
+        <tr><td class="col-name">part_name</td><td>Part name of the 2S inductor</td></tr>
+        <tr><td class="col-name">edge</td><td>TRUE if inductor is at the corner of the connector, FALSE otherwise</td></tr>
+        <tr><td class="col-name">hori/verti</td><td>Orientation relative to connector outline (Horizontal or Vertical)</td></tr>
+        <tr><td class="col-name">status</td><td>PASS or FAIL</td></tr>
+      </table>
+      <h4>Pass/Fail Criteria</h4>
+      <div class="pass-fail-note"><strong>PASS</strong> if edge is FALSE <em>and</em> orientation is Horizontal. Otherwise <strong>FAIL</strong>.</div>
+    </div>
+  </div>
+
+  <!-- CKL-02-009 -->
+  <div class="rule-card">
+    <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
+      <span class="rule-id">CKL-02-009</span>
+      <span class="rule-desc">General Inductors (&ge;2012, excluding 2S) overlapping connectors: edge and orientation check</span>
+      <span class="badge badge-placement">Placement</span>
+      <span class="toggle-icon">&#9654;</span>
+    </div>
+    <div class="rule-body">
+      <h4>Reference Files</h4>
+      <span class="ref-tag">references/inductors_2s_list.csv</span>
+      <h4>Inspection Process</h4>
+      <ol>
+        <li>Search for connectors on Top and Bottom layers.</li>
+        <li>Check for General Inductors (those NOT in <code>inductors_2s_list.csv</code>) overlapping the opposite side.</li>
+        <li>Filter for those with a size of 2012 or larger.</li>
+        <li>Inspect edge placement and horizontal/vertical orientation.</li>
+      </ol>
+      <h4>Output Columns</h4>
+      <table class="col-table">
+        <tr><th>Column</th><th>Description</th></tr>
+        <tr><td class="col-name">comp</td><td>Name of the connector</td></tr>
+        <tr><td class="col-name">cmp_layer</td><td>Layer of the connector</td></tr>
+        <tr><td class="col-name">overlapping_ind</td><td>Name of the general inductor (&ge;2012)</td></tr>
+        <tr><td class="col-name">part_name</td><td>Part name of the inductor</td></tr>
+        <tr><td class="col-name">edge</td><td>TRUE if inductor is at the corner of the connector, FALSE otherwise</td></tr>
+        <tr><td class="col-name">hori/verti</td><td>Orientation relative to connector outline (Horizontal or Vertical)</td></tr>
+        <tr><td class="col-name">status</td><td>PASS or FAIL</td></tr>
+      </table>
+      <h4>Pass/Fail Criteria</h4>
+      <div class="pass-fail-note"><strong>PASS</strong> if edge is FALSE <em>and</em> orientation is Horizontal. Otherwise <strong>FAIL</strong>.</div>
+    </div>
+  </div>
+
+  <!-- CKL-02-010 -->
+  <div class="rule-card">
+    <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
+      <span class="rule-id">CKL-02-010</span>
+      <span class="rule-desc">SIM sockets: capacitors/inductors (&ge;2012) on the opposite side must be horizontally oriented</span>
+      <span class="badge badge-placement">Placement</span>
+      <span class="toggle-icon">&#9654;</span>
+    </div>
+    <div class="rule-body">
+      <h4>Inspection Process</h4>
+      <ol>
+        <li>Locate SIM socket components and identify their placement layer.</li>
+        <li>Search for all capacitors or inductors overlapping on the opposite side.</li>
+        <li>Filter to include only those with a size of 2012 or larger.</li>
+        <li>Inspect horizontal/vertical alignment relative to the SIM socket.</li>
+      </ol>
+      <h4>Output Columns</h4>
+      <table class="col-table">
+        <tr><th>Column</th><th>Description</th></tr>
+        <tr><td class="col-name">comp</td><td>Name of the SIM socket</td></tr>
+        <tr><td class="col-name">cmp_layer</td><td>Layer of the SIM socket (Top or Bottom)</td></tr>
+        <tr><td class="col-name">overlapping_cmp</td><td>Name of the capacitor or inductor (&ge;2012) on the opposite side</td></tr>
+        <tr><td class="col-name">part_name</td><td>Part name of the component</td></tr>
+        <tr><td class="col-name">hori/verti</td><td>Orientation relative to SIM socket outline (Horizontal or Vertical)</td></tr>
+        <tr><td class="col-name">status</td><td>PASS or FAIL</td></tr>
+      </table>
+      <h4>Pass/Fail Criteria</h4>
+      <div class="pass-fail-note"><strong>PASS</strong> if orientation is Horizontal. Otherwise <strong>FAIL</strong>.</div>
+    </div>
+  </div>
+
+  <!-- ================================================================== -->
+  <div class="section-title">Checklist Series 03 &mdash; PCB Outline Clearance</div>
+
+  <!-- CKL-03-015 -->
+  <div class="rule-card">
+    <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
+      <span class="rule-id">CKL-03-015</span>
+      <span class="rule-desc">Components must have at least 0.65mm clearance from the PCB outline</span>
+      <span class="badge badge-clearance">Clearance</span>
+      <span class="toggle-icon">&#9654;</span>
+    </div>
+    <div class="rule-body">
+      <h4>Inspection Process</h4>
+      <ol>
+        <li>Generate a reference boundary line 0.65mm inward from the PCB outline.</li>
+        <li>For the Top layer, identify any component pins or pads within the clearance zone (between the PCB outline and the reference line).</li>
+        <li>Calculate the direct linear distance between the identified components and the PCB outline.</li>
+        <li>Perform the same process for the Bottom layer.</li>
+      </ol>
+      <h4>Output Columns</h4>
+      <table class="col-table">
+        <tr><th>Column</th><th>Description</th></tr>
+        <tr><td class="col-name">comp</td><td>Name of the component</td></tr>
+        <tr><td class="col-name">part_name</td><td>Part name of the component</td></tr>
+        <tr><td class="col-name">cmp_layer</td><td>Layer where the component is placed</td></tr>
+        <tr><td class="col-name">distance</td><td>Measured distance to the PCB outline (mm)</td></tr>
+        <tr><td class="col-name">status</td><td>PASS or FAIL</td></tr>
+      </table>
+      <h4>Pass/Fail Criteria</h4>
+      <div class="pass-fail-note"><strong>PASS</strong> if distance &ge; 0.65mm. Otherwise <strong>FAIL</strong>.</div>
+    </div>
+  </div>
+
+  <!-- ================================================================== -->
+  <div class="section-title">Reference CSV Files</div>
+
+  <div class="usage">
+    <p style="margin-top:0">All reference files are located in the <code style="display:inline; padding:2px 6px;">references/</code> directory. If a required CSV file is missing, the system automatically generates a sample file for testing.</p>
+    <table class="col-table" style="margin-top:14px">
+      <tr><th>File</th><th>Description</th><th>Used By</th></tr>
+      <tr>
+        <td class="col-name">ap_memory.csv</td>
+        <td>AP and Memory component part names with rank and category</td>
+        <td>CKL-01-005</td>
+      </tr>
+      <tr>
+        <td class="col-name">capacitors_10_list.csv</td>
+        <td>10 managed capacitor types with part_name and size</td>
+        <td>CKL-02-001, CKL-02-006, CKL-02-010</td>
+      </tr>
+      <tr>
+        <td class="col-name">capacitors_41_list.csv</td>
+        <td>41 managed capacitor types with part_name and size</td>
+        <td>CKL-02-006</td>
+      </tr>
+      <tr>
+        <td class="col-name">inductors_2s_list.csv</td>
+        <td>2S inductor types with part_name and size</td>
+        <td>CKL-01-005, CKL-02-008, CKL-02-009, CKL-02-010</td>
+      </tr>
+      <tr>
+        <td class="col-name">capacitors_5_list.csv</td>
+        <td>5 managed capacitor types (legacy)</td>
+        <td>manage_list sheet</td>
+      </tr>
+      <tr>
+        <td class="col-name">capacitors_7_list.csv</td>
+        <td>7 managed capacitor types (legacy)</td>
+        <td>manage_list sheet</td>
+      </tr>
+      <tr>
+        <td class="col-name">dpad_capacitors.csv</td>
+        <td>Dual-pad capacitors with geometry options</td>
+        <td>manage_list sheet</td>
+      </tr>
+    </table>
+  </div>
+
+  <!-- Architecture note -->
+  <div class="section-title">Architecture Notes</div>
+  <div class="usage">
+    <h2>Adding New Checklist Rules</h2>
+    <ol style="padding-left: 22px; font-size: 0.93rem;">
+      <li>Create a new file in <code style="display:inline; padding:2px 6px;">src/checklist/rules/</code> (e.g. <code style="display:inline; padding:2px 6px;">ckl_04_001.py</code>).</li>
+      <li>Define a class that extends <code style="display:inline; padding:2px 6px;">ChecklistRule</code> with <code style="display:inline; padding:2px 6px;">rule_id</code>, <code style="display:inline; padding:2px 6px;">description</code>, <code style="display:inline; padding:2px 6px;">category</code>, and an <code style="display:inline; padding:2px 6px;">evaluate()</code> method.</li>
+      <li>Decorate the class with <code style="display:inline; padding:2px 6px;">@register_rule</code>.</li>
+      <li>Return a <code style="display:inline; padding:2px 6px;">RuleResult</code> with <code style="display:inline; padding:2px 6px;">details={"columns": [...], "rows": [...]}</code> for automatic tabular Excel output.</li>
+      <li>Add the import to <code style="display:inline; padding:2px 6px;">main.py</code> inside <code style="display:inline; padding:2px 6px;">cmd_check()</code>.</li>
+    </ol>
+    <p style="margin-top: 14px"><strong>Key utilities available:</strong></p>
+    <ul style="padding-left: 22px; font-size: 0.93rem; margin-top: 6px;">
+      <li><code style="display:inline; padding:2px 6px;">component_classifier.py</code> &mdash; find_ics(), find_connectors(), find_capacitors(), find_inductors(), find_simsockets(), find_interposers()</li>
+      <li><code style="display:inline; padding:2px 6px;">geometry_utils.py</code> &mdash; find_overlapping_components(), is_on_edge(), edge_distance(), get_component_orientation(), filter_by_size(), build_board_polygon(), components_in_clearance_zone()</li>
+      <li><code style="display:inline; padding:2px 6px;">reference_loader.py</code> &mdash; load_reference_csv(), get_managed_part_names(), get_part_size_map() (auto-generates sample CSVs if missing)</li>
+    </ul>
+  </div>
+
+</div>
+
+<div class="footer">
+  ODB++ Design Checklist System &bull; Generated documentation
+</div>
+
+</body>
+</html>

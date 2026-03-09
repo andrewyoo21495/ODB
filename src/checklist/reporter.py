@@ -171,8 +171,16 @@ def _create_detail_sheet(wb: Workbook, results: list[RuleResult]):
 def _create_rule_sheet(wb: Workbook, result: RuleResult):
     """Create a dedicated sheet for a single rule's detailed results.
 
-    The tab name is the rule ID (e.g. "CKL-001").  The sheet contains
-    a header block with rule metadata followed by a table of detail items.
+    The tab name is the rule ID (e.g. "CKL-01-001").  The sheet contains
+    a header block with rule metadata followed by a results table.
+
+    **Tabular mode** (preferred for new-style checklists):
+    If ``result.details`` contains both ``"columns"`` (list of str) and
+    ``"rows"`` (list of dicts), the sheet renders a proper multi-column
+    table with those headers and colour-coded status cells.
+
+    **Legacy mode**: falls back to the original key-value / list rendering
+    for older rule implementations.
     """
     ws = wb.create_sheet(result.rule_id)
 
@@ -199,7 +207,16 @@ def _create_rule_sheet(wb: Workbook, result: RuleResult):
     ws["B5"] = result.message
     ws["A5"].font = Font(bold=True)
 
-    # -- Affected components ---------------------------------------------------
+    # -- Tabular detail rows ---------------------------------------------------
+    columns = result.details.get("columns")
+    rows = result.details.get("rows")
+
+    if isinstance(columns, list) and isinstance(rows, list):
+        _write_tabular_details(ws, columns, rows, start_row=7)
+        _auto_fit_columns(ws)
+        return
+
+    # -- Legacy detail rendering -----------------------------------------------
     if result.affected_components:
         ws["A7"] = "Affected Components:"
         ws["A7"].font = Font(bold=True)
@@ -207,18 +224,16 @@ def _create_rule_sheet(wb: Workbook, result: RuleResult):
             cell = ws.cell(row=8 + i, column=1, value=comp_name)
             cell.border = _THIN_BORDER
 
-    # -- Detail items ----------------------------------------------------------
-    # Each key in result.details becomes its own table section.
     start_row = 8 + len(result.affected_components) + 2 if result.affected_components else 8
 
     for key, value in result.details.items():
-        # Section header
+        if key in ("columns", "rows"):
+            continue
         header_cell = ws.cell(row=start_row, column=1, value=key)
         header_cell.font = Font(bold=True, size=11)
         start_row += 1
 
         if isinstance(value, list):
-            # Table header
             hdr_cell = ws.cell(row=start_row, column=1, value="#")
             hdr_cell.fill = _HEADER_FILL
             hdr_cell.font = _HEADER_FONT
@@ -252,9 +267,43 @@ def _create_rule_sheet(wb: Workbook, result: RuleResult):
             ws.cell(row=start_row, column=1, value=str(value)).border = _THIN_BORDER
             start_row += 1
 
-        start_row += 1  # blank row between sections
+        start_row += 1
 
     _auto_fit_columns(ws)
+
+
+def _write_tabular_details(ws, columns: list[str], rows: list[dict],
+                           start_row: int = 7):
+    """Write a proper multi-column table into *ws*.
+
+    Colour-codes the ``status`` column with PASS/FAIL fills.
+    """
+    # Column headers
+    for col_idx, col_name in enumerate(columns, 1):
+        cell = ws.cell(row=start_row, column=col_idx, value=col_name)
+        cell.fill = _HEADER_FILL
+        cell.font = _HEADER_FONT
+        cell.border = _THIN_BORDER
+        cell.alignment = Alignment(horizontal="center")
+
+    # Data rows
+    for row_offset, row_data in enumerate(rows, 1):
+        current_row = start_row + row_offset
+        for col_idx, col_name in enumerate(columns, 1):
+            value = row_data.get(col_name, "")
+            cell = ws.cell(row=current_row, column=col_idx, value=value)
+            cell.border = _THIN_BORDER
+
+            # Colour-code status column
+            if col_name.lower() == "status":
+                val_str = str(value).upper()
+                if val_str == "PASS":
+                    cell.fill = _PASS_FILL
+                    cell.font = _PASS_FONT
+                elif val_str == "FAIL":
+                    cell.fill = _FAIL_FILL
+                    cell.font = _FAIL_FONT
+                cell.alignment = Alignment(horizontal="center")
 
 
 def _load_managed_parts_csvs(references_dir: Path) -> dict[str, set[str]]:

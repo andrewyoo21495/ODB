@@ -783,6 +783,14 @@ def cmd_check(args):
     import src.checklist.rules.ckl_component_alignment  # noqa: F401
     import src.checklist.rules.ckl_spacing  # noqa: F401
     import src.checklist.rules.ckl_placement  # noqa: F401
+    import src.checklist.rules.ckl_01_001  # noqa: F401
+    import src.checklist.rules.ckl_01_005  # noqa: F401
+    import src.checklist.rules.ckl_02_001  # noqa: F401
+    import src.checklist.rules.ckl_02_006  # noqa: F401
+    import src.checklist.rules.ckl_02_008  # noqa: F401
+    import src.checklist.rules.ckl_02_009  # noqa: F401
+    import src.checklist.rules.ckl_02_010  # noqa: F401
+    import src.checklist.rules.ckl_03_015  # noqa: F401
 
     from src.checklist.engine import load_rules, run_checklist
     from src.checklist.reporter import generate_report
