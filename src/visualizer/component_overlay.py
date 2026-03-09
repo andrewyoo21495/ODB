@@ -199,27 +199,26 @@ def _transform_point(px: float, py: float,
                      comp: Component) -> tuple[float, float]:
     """Transform a single package-local point to board coordinates.
 
-    Top-layer component rotations are stored CCW-positive (negated at cache
-    time).  Bottom-layer component rotations are stored as raw ODB++ CW-positive
-    values; the local X-flip converts CW→CCW implicitly so the same rotation
-    matrix works for both layers.
+    ODB++ rotation angles are clockwise-positive and are applied as-is.
+    Bottom-layer components (comp.mirror=True) are horizontally mirrored
+    (local X negated) before rotation.
     """
     if comp.mirror:
         px = -px  # flip about local Y-axis for bottom-layer components
     angle = math.radians(comp.rotation)
     cos_a = math.cos(angle)
     sin_a = math.sin(angle)
-    return (px * cos_a - py * sin_a + comp.x,
-            px * sin_a + py * cos_a + comp.y)
+    # Clockwise rotation matrix: x' = x*cos + y*sin,  y' = -x*sin + y*cos
+    return (px * cos_a + py * sin_a + comp.x,
+            -px * sin_a + py * cos_a + comp.y)
 
 
 def _transform_pts(pts: np.ndarray, comp: Component) -> np.ndarray:
     """Transform an (N, 2) array of package-local points to board coordinates.
 
-    Top-layer component rotations are stored CCW-positive (negated at cache
-    time).  Bottom-layer component rotations are stored as raw ODB++ CW-positive
-    values; the local X-flip converts CW→CCW implicitly so the same rotation
-    matrix works for both layers.
+    ODB++ rotation angles are clockwise-positive and are applied as-is.
+    Bottom-layer components (comp.mirror=True) are horizontally mirrored
+    (local X negated) before rotation.
     """
     out = pts.copy().astype(float)
     if comp.mirror:
@@ -227,8 +226,9 @@ def _transform_pts(pts: np.ndarray, comp: Component) -> np.ndarray:
     angle = math.radians(comp.rotation)
     cos_a = math.cos(angle)
     sin_a = math.sin(angle)
-    x_rot = out[:, 0] * cos_a - out[:, 1] * sin_a
-    y_rot = out[:, 0] * sin_a + out[:, 1] * cos_a
+    # Clockwise rotation matrix: x' = x*cos + y*sin,  y' = -x*sin + y*cos
+    x_rot = out[:, 0] * cos_a + out[:, 1] * sin_a
+    y_rot = -out[:, 0] * sin_a + out[:, 1] * cos_a
     return np.column_stack([x_rot + comp.x, y_rot + comp.y])
 
 

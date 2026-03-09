@@ -62,20 +62,6 @@ def _scale_components(comps: list, factor: float) -> None:
 
 
 
-def _negate_component_rotations(comps: list) -> None:
-    """Negate component rotation angles in place (top layer only).
-
-    ODB++ uses clockwise-positive angles; matplotlib (and our renderer) uses
-    counter-clockwise-positive.  Negating here means the cached JSON already
-    stores the display-ready CCW-positive angle so the renderer can use it
-    directly.  Only applied to the top layer; bottom-layer angles are kept as
-    raw ODB++ CW-positive values because the local-X-mirror in the transform
-    functions implicitly reverses the rotation direction.
-    """
-    for comp in comps:
-        comp.rotation = -comp.rotation
-
-
 def _scale_outline_params(outline, factor: float) -> None:
     """Scale a PinOutline's coordinate parameters in place."""
     p = outline.params
@@ -423,15 +409,9 @@ def cmd_cache(args):
             data[units_key] = "MM"
             print(f"  Units: scaled {key} INCH -> MM (x25.4)")
 
-    # Negate rotation angles for the top layer only.  ODB++ uses CW-positive
-    # angles; for the top layer we convert to CCW-positive so the renderer can
-    # use them directly.  Bottom-layer rotations are kept as the raw ODB++
-    # (CW-positive) values because the local-X-mirror in _transform_point/
-    # _transform_pts already accounts for the effective rotation reversal.
-    comps_top = data.get("components_top")
-    if comps_top:
-        _negate_component_rotations(comps_top)
-    print(f"  Angles: negated top-layer component rotations (ODB++ CW -> CCW)")
+    # ODB++ rotation angles are clockwise-positive and are stored as-is in the
+    # cache.  The renderer applies them as CW rotations directly.
+    print(f"  Angles: component rotations stored as raw ODB++ CW-positive values")
 
     # Normalise EDA package geometry (inches -> mm)
     eda = data.get("eda_data")
