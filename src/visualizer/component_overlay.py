@@ -199,7 +199,7 @@ def _transform_point(px: float, py: float,
                      comp: Component) -> tuple[float, float]:
     """Transform a single package-local point to board coordinates."""
     if comp.mirror:
-        px = -px  # Bottom components: horizontal (X-axis) flip
+        py = -py  # ODB++ mirror: reflect local Y (flip about local X-axis)
     # Rotation angles are already negated (CW→CCW) at cache time; use directly.
     angle = math.radians(comp.rotation)
     cos_a = math.cos(angle)
@@ -212,7 +212,7 @@ def _transform_pts(pts: np.ndarray, comp: Component) -> np.ndarray:
     """Transform an (N, 2) array of package-local points to board coordinates."""
     out = pts.copy().astype(float)
     if comp.mirror:
-        out[:, 0] = -out[:, 0]  # Bottom components: horizontal (X-axis) flip
+        out[:, 1] = -out[:, 1]  # ODB++ mirror: reflect local Y (flip about local X-axis)
     angle = math.radians(comp.rotation)
     cos_a = math.cos(angle)
     sin_a = math.sin(angle)
