@@ -612,6 +612,13 @@ def _parse_for_view(odb_path: str, layer_names: list[str] = None) -> dict:
             _scale_layer_features(features, _INCH_TO_MM)
             print(f"  Units: scaled {layer_name} features INCH -> MM (x25.4)")
 
+    # Mirror bottom component board-X positions so they align with top-view canvas.
+    if components_bot and profile and profile.surface:
+        _mirror_bottom_x(components_bot, profile)
+        x_min, x_max = _get_profile_x_range(profile)
+        print(f"  Mirror: X-mirrored bottom components around board centre "
+              f"(cx={((x_min + x_max) / 2):.3f}mm)")
+
     return {
         "job": job,
         "profile": profile,
@@ -792,6 +799,13 @@ def _parse_for_comp_view(odb_path: str) -> dict:
         _scale_profile(profile, _INCH_TO_MM)
         profile.units = "MM"
         print(f"  Units: scaled profile INCH -> MM (x25.4)")
+
+    # Mirror bottom component board-X positions so they align with top-view canvas.
+    if components_bot and profile and profile.surface:
+        _mirror_bottom_x(components_bot, profile)
+        x_min, x_max = _get_profile_x_range(profile)
+        print(f"  Mirror: X-mirrored bottom components around board centre "
+              f"(cx={((x_min + x_max) / 2):.3f}mm)")
 
     return {
         "job": job,

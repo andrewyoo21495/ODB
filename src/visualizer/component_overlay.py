@@ -197,7 +197,13 @@ def _outline_to_patch(outline: PinOutline, comp: Component,
 
 def _transform_point(px: float, py: float,
                      comp: Component) -> tuple[float, float]:
-    """Transform a single package-local point to board coordinates."""
+    """Transform a single package-local point to board coordinates.
+
+    Bottom-layer components (comp.mirror=True) are horizontally mirrored
+    (local X negated) so that they align with a top-side view.
+    """
+    if comp.mirror:
+        px = -px  # flip about local Y-axis → left-right mirror for bottom layer
     # Rotation angles are already negated (CW→CCW) at cache time; use directly.
     angle = math.radians(comp.rotation)
     cos_a = math.cos(angle)
@@ -207,8 +213,14 @@ def _transform_point(px: float, py: float,
 
 
 def _transform_pts(pts: np.ndarray, comp: Component) -> np.ndarray:
-    """Transform an (N, 2) array of package-local points to board coordinates."""
+    """Transform an (N, 2) array of package-local points to board coordinates.
+
+    Bottom-layer components (comp.mirror=True) are horizontally mirrored
+    (local X negated) so that they align with a top-side view.
+    """
     out = pts.copy().astype(float)
+    if comp.mirror:
+        out[:, 0] = -out[:, 0]  # flip about local Y-axis → left-right mirror for bottom layer
     angle = math.radians(comp.rotation)
     cos_a = math.cos(angle)
     sin_a = math.sin(angle)
