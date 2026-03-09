@@ -292,7 +292,10 @@ def _transform_point(px: float, py: float,
     # Step 1: mirror X for bottom-layer components (in package space)
     if comp.mirror:
         px = -px
-    # Step 2: CCW rotation matching the ODB++ angle convention
+        # Bottom-layer rotation is defined looking from below, which appears
+        # CW from the top view → reverse the rotation direction.
+        sin_a = -sin_a
+    # Step 2: rotate (CCW for top; CW for bottom via negated sin_a)
     x_rot = px * cos_a - py * sin_a
     y_rot = px * sin_a + py * cos_a
     return (x_rot + comp.x, y_rot + comp.y)
@@ -314,7 +317,10 @@ def _transform_pts(pts: np.ndarray, comp: Component) -> np.ndarray:
     # Step 1: mirror X for bottom-layer components (in package space)
     if comp.mirror:
         out[:, 0] = -out[:, 0]
-    # Step 2: CCW rotation matching the ODB++ angle convention
+        # Bottom-layer rotation is defined looking from below, which appears
+        # CW from the top view → reverse the rotation direction.
+        sin_a = -sin_a
+    # Step 2: rotate (CCW for top; CW for bottom via negated sin_a)
     x_rot = out[:, 0] * cos_a - out[:, 1] * sin_a
     y_rot = out[:, 0] * sin_a + out[:, 1] * cos_a
     return np.column_stack([x_rot + comp.x, y_rot + comp.y])
