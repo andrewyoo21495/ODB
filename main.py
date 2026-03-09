@@ -409,9 +409,14 @@ def cmd_cache(args):
             data[units_key] = "MM"
             print(f"  Units: scaled {key} INCH -> MM (x25.4)")
 
-    # ODB++ rotation angles are clockwise-positive and are stored as-is in the
-    # cache.  The renderer applies them as CW rotations directly.
-    print(f"  Angles: component rotations stored as raw ODB++ CW-positive values")
+    # Negate rotation angles for both layers so the cache stores negative
+    # ODB++ CW-positive angles (e.g. 90° → -90°).
+    for key in ("components_top", "components_bot"):
+        comps = data.get(key)
+        if comps:
+            for comp in comps:
+                comp.rotation = -comp.rotation
+    print(f"  Angles: negated component rotations for both layers")
 
     # Normalise EDA package geometry (inches -> mm)
     eda = data.get("eda_data")
