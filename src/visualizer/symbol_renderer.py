@@ -55,6 +55,8 @@ def symbol_to_patch(symbol_name: str, x: float, y: float,
             [x + s / 2, y + s / 2],
             [x - s / 2, y + s / 2],
         ])
+        if mirror:
+            corners = _mirror_points(corners, x)
         if rotation:
             corners = _rotate_points(corners, x, y, rotation)
         return Polygon(corners, closed=True, color=color, alpha=alpha)
@@ -65,11 +67,11 @@ def symbol_to_patch(symbol_name: str, x: float, y: float,
         if sym.type == "rect_round":
             cr = sym.params.get("corner_radius", 0) * scale
             return _make_rounded_rect(x, y, w, h, cr, sym.params.get("corners", "1234"),
-                                      rotation, color, alpha)
+                                      rotation, color, alpha, mirror=mirror)
         elif sym.type == "rect_chamfer":
             cs = sym.params.get("corner_size", 0) * scale
             return _make_chamfered_rect(x, y, w, h, cs, sym.params.get("corners", "1234"),
-                                        rotation, color, alpha)
+                                        rotation, color, alpha, mirror=mirror)
         else:
             # Use Polygon so rotation is always around the pad centre.
             # Rectangle.set_angle() rotates around the lower-left anchor,
@@ -80,6 +82,8 @@ def symbol_to_patch(symbol_name: str, x: float, y: float,
                 [x + w / 2, y + h / 2],
                 [x - w / 2, y + h / 2],
             ])
+            if mirror:
+                corners = _mirror_points(corners, x)
             if rotation:
                 corners = _rotate_points(corners, x, y, rotation)
             return Polygon(corners, closed=True, color=color, alpha=alpha)
@@ -87,14 +91,16 @@ def symbol_to_patch(symbol_name: str, x: float, y: float,
     elif sym.type == "oval":
         w = sym.params["width"] * scale
         h = sym.params["height"] * scale
-        return _make_oval(x, y, w, h, rotation, color, alpha)
+        return _make_oval(x, y, w, h, rotation, color, alpha, mirror=mirror)
 
     elif sym.type == "ellipse":
         w = sym.params["width"] * scale
         h = sym.params["height"] * scale
         patch = Ellipse((x, y), w, h, color=color, alpha=alpha)
-        if rotation:
-            patch.angle = -rotation
+        # orient_def: mirror flips the rotation direction
+        angle = -rotation if not mirror else rotation
+        if angle:
+            patch.angle = angle
         return patch
 
     elif sym.type == "diamond":
@@ -103,6 +109,8 @@ def symbol_to_patch(symbol_name: str, x: float, y: float,
         verts = np.array([
             [x, y + h], [x + w, y], [x, y - h], [x - w, y], [x, y + h]
         ])
+        if mirror:
+            verts = _mirror_points(verts, x)
         if rotation:
             verts = _rotate_points(verts, x, y, rotation)
         return Polygon(verts, closed=True, color=color, alpha=alpha)
@@ -115,7 +123,8 @@ def symbol_to_patch(symbol_name: str, x: float, y: float,
     elif sym.type == "donut_s":
         od = sym.params["outer_size"] * scale
         id_ = sym.params["inner_size"] * scale
-        return _make_donut_square(x, y, od, id_, rotation, color, alpha)
+        return _make_donut_square(x, y, od, id_, rotation, color, alpha,
+                                  mirror=mirror)
 
     elif sym.type == "donut_s_round":
         od = sym.params["outer_size"] * scale
@@ -123,18 +132,21 @@ def symbol_to_patch(symbol_name: str, x: float, y: float,
         rad = sym.params.get("corner_radius", 0) * scale
         corners = sym.params.get("corners", "1234")
         return _make_donut_square(x, y, od, id_, rotation, color, alpha,
-                                  corner_radius=rad, corners=corners)
+                                  corner_radius=rad, corners=corners,
+                                  mirror=mirror)
 
     elif sym.type == "donut_sr":
         od = sym.params["outer_size"] * scale
         id_ = sym.params["inner_diameter"] * scale
-        return _make_donut_square_round(x, y, od, id_, rotation, color, alpha)
+        return _make_donut_square_round(x, y, od, id_, rotation, color, alpha,
+                                        mirror=mirror)
 
     elif sym.type == "donut_rc":
         ow = sym.params["outer_width"] * scale
         oh = sym.params["outer_height"] * scale
         lw = sym.params["line_width"] * scale
-        return _make_donut_rect(x, y, ow, oh, lw, rotation, color, alpha)
+        return _make_donut_rect(x, y, ow, oh, lw, rotation, color, alpha,
+                                mirror=mirror)
 
     elif sym.type == "donut_rc_round":
         ow = sym.params["outer_width"] * scale
@@ -143,19 +155,23 @@ def symbol_to_patch(symbol_name: str, x: float, y: float,
         rad = sym.params.get("corner_radius", 0) * scale
         corners = sym.params.get("corners", "1234")
         return _make_donut_rect(x, y, ow, oh, lw, rotation, color, alpha,
-                                corner_radius=rad, corners=corners)
+                                corner_radius=rad, corners=corners,
+                                mirror=mirror)
 
     elif sym.type == "donut_o":
         ow = sym.params["outer_width"] * scale
         oh = sym.params["outer_height"] * scale
         lw = sym.params["line_width"] * scale
-        return _make_donut_oval(x, y, ow, oh, lw, rotation, color, alpha)
+        return _make_donut_oval(x, y, ow, oh, lw, rotation, color, alpha,
+                                mirror=mirror)
 
     elif sym.type == "octagon":
         w = sym.params["width"] * scale
         h = sym.params["height"] * scale
         r = sym.params["corner_size"] * scale
         verts = _octagon_vertices(x, y, w, h, r)
+        if mirror:
+            verts = _mirror_points(verts, x)
         if rotation:
             verts = _rotate_points(verts, x, y, rotation)
         return Polygon(verts, closed=True, color=color, alpha=alpha)
@@ -169,6 +185,8 @@ def symbol_to_patch(symbol_name: str, x: float, y: float,
             [x, y + h / 2],
             [x - base / 2, y - h / 2],
         ])
+        if mirror:
+            verts = _mirror_points(verts, x)
         if rotation:
             verts = _rotate_points(verts, x, y, rotation)
         return Polygon(verts, closed=True, color=color, alpha=alpha)
@@ -178,6 +196,8 @@ def symbol_to_patch(symbol_name: str, x: float, y: float,
         h = sym.params["height"] * scale
         r = sym.params["corner_size"] * scale
         verts = _hexagon_vertices(x, y, w, h, r, sym.type)
+        if mirror:
+            verts = _mirror_points(verts, x)
         if rotation:
             verts = _rotate_points(verts, x, y, rotation)
         return Polygon(verts, closed=True, color=color, alpha=alpha)
@@ -185,7 +205,8 @@ def symbol_to_patch(symbol_name: str, x: float, y: float,
     elif sym.type == "half_oval":
         w = sym.params["width"] * scale
         h = sym.params["height"] * scale
-        return _make_half_oval(x, y, w, h, rotation, color, alpha)
+        return _make_half_oval(x, y, w, h, rotation, color, alpha,
+                               mirror=mirror)
 
     elif sym.type == "butterfly":
         d = sym.params["diameter"] * scale
@@ -249,7 +270,8 @@ def symbol_to_patch(symbol_name: str, x: float, y: float,
                              mirror=mirror)
 
     elif sym.type == "fhplate":
-        return _make_fhplate(x, y, sym.params, scale, rotation, color, alpha)
+        return _make_fhplate(x, y, sym.params, scale, rotation, color, alpha,
+                             mirror=mirror)
 
     elif sym.type == "radhplate":
         return _make_radhplate(x, y, sym.params, scale, rotation, color, alpha,
@@ -260,13 +282,16 @@ def symbol_to_patch(symbol_name: str, x: float, y: float,
                             mirror=mirror)
 
     elif sym.type == "cross":
-        return _make_cross(x, y, sym.params, scale, rotation, color, alpha)
+        return _make_cross(x, y, sym.params, scale, rotation, color, alpha,
+                           mirror=mirror)
 
     elif sym.type == "dogbone":
-        return _make_dogbone(x, y, sym.params, scale, rotation, color, alpha)
+        return _make_dogbone(x, y, sym.params, scale, rotation, color, alpha,
+                             mirror=mirror)
 
     elif sym.type == "dpack":
-        return _make_dpack(x, y, sym.params, scale, rotation, color, alpha)
+        return _make_dpack(x, y, sym.params, scale, rotation, color, alpha,
+                           mirror=mirror)
 
     elif sym.type == "moire":
         return _make_moire(x, y, sym.params, scale, rotation, color, alpha)
@@ -414,6 +439,17 @@ def _get_scale_factor(units: str, unit_override: str = None) -> float:
         return 1.0 / 1000.0   # microns → mm
 
 
+def _mirror_points(points: np.ndarray, cx: float) -> np.ndarray:
+    """Mirror points in the X-axis around centre *cx*.
+
+    ODB++ orient_def convention: orient_def values 4-7 and 9 require
+    an X-axis mirror **before** rotation is applied.
+    """
+    result = points.copy()
+    result[:, 0] = 2 * cx - result[:, 0]
+    return result
+
+
 def _rotate_points(points: np.ndarray, cx: float, cy: float,
                    angle_deg: float) -> np.ndarray:
     """Rotate points clockwise around (cx, cy)."""
@@ -512,13 +548,17 @@ def _make_donut_round(x: float, y: float, outer_r: float, inner_r: float,
 
 def _make_donut_square(x: float, y: float, outer_size: float, inner_size: float,
                        rotation: float, color: str, alpha: float,
-                       corner_radius: float = 0, corners: str = "1234"):
+                       corner_radius: float = 0, corners: str = "1234",
+                       mirror: bool = False):
     """Create a square donut (square outer, square inner hole)."""
     if corner_radius > 0:
         outer = _rounded_rect_points(x, y, outer_size, outer_size, corner_radius, corners)
     else:
         outer = _rect_points(x, y, outer_size, outer_size)
     inner = _rect_points(x, y, inner_size, inner_size)[::-1]
+    if mirror:
+        outer = _mirror_points(outer, x)
+        inner = _mirror_points(inner, x)
     if rotation:
         outer = _rotate_points(outer, x, y, rotation)
         inner = _rotate_points(inner, x, y, rotation)
@@ -527,10 +567,13 @@ def _make_donut_square(x: float, y: float, outer_size: float, inner_size: float,
 
 
 def _make_donut_square_round(x: float, y: float, outer_size: float, inner_diam: float,
-                             rotation: float, color: str, alpha: float):
+                             rotation: float, color: str, alpha: float,
+                             mirror: bool = False):
     """Create a square/round donut (square outer, round inner hole)."""
     outer = _rect_points(x, y, outer_size, outer_size)
     inner = _circle_points(x, y, inner_diam / 2, 64)[::-1]
+    if mirror:
+        outer = _mirror_points(outer, x)
     if rotation:
         outer = _rotate_points(outer, x, y, rotation)
     path = _make_path_with_hole(outer, inner)
@@ -539,7 +582,8 @@ def _make_donut_square_round(x: float, y: float, outer_size: float, inner_diam: 
 
 def _make_donut_rect(x: float, y: float, ow: float, oh: float, lw: float,
                      rotation: float, color: str, alpha: float,
-                     corner_radius: float = 0, corners: str = "1234"):
+                     corner_radius: float = 0, corners: str = "1234",
+                     mirror: bool = False):
     """Create a rectangle donut."""
     iw = ow - 2 * lw
     ih = oh - 2 * lw
@@ -548,6 +592,9 @@ def _make_donut_rect(x: float, y: float, ow: float, oh: float, lw: float,
     else:
         outer = _rect_points(x, y, ow, oh)
     inner = _rect_points(x, y, iw, ih)[::-1]
+    if mirror:
+        outer = _mirror_points(outer, x)
+        inner = _mirror_points(inner, x)
     if rotation:
         outer = _rotate_points(outer, x, y, rotation)
         inner = _rotate_points(inner, x, y, rotation)
@@ -556,12 +603,16 @@ def _make_donut_rect(x: float, y: float, ow: float, oh: float, lw: float,
 
 
 def _make_donut_oval(x: float, y: float, ow: float, oh: float, lw: float,
-                     rotation: float, color: str, alpha: float):
+                     rotation: float, color: str, alpha: float,
+                     mirror: bool = False):
     """Create an oval donut."""
     outer = _oval_points(x, y, ow, oh, 64)
     iw = ow - 2 * lw
     ih = oh - 2 * lw
     inner = _oval_points(x, y, iw, ih, 64)[::-1]
+    if mirror:
+        outer = _mirror_points(outer, x)
+        inner = _mirror_points(inner, x)
     if rotation:
         outer = _rotate_points(outer, x, y, rotation)
         inner = _rotate_points(inner, x, y, rotation)
@@ -655,16 +706,20 @@ def _oval_points(cx: float, cy: float, w: float, h: float, n: int = 64) -> np.nd
 
 
 def _make_oval(x: float, y: float, w: float, h: float,
-               rotation: float, color: str, alpha: float):
+               rotation: float, color: str, alpha: float,
+               mirror: bool = False):
     """Create an oval (stadium) shape."""
     pts = _oval_points(x, y, w, h)
+    if mirror:
+        pts = _mirror_points(pts, x)
     if rotation:
         pts = _rotate_points(pts, x, y, rotation)
     return Polygon(pts, closed=True, color=color, alpha=alpha)
 
 
 def _make_half_oval(x: float, y: float, w: float, h: float,
-                    rotation: float, color: str, alpha: float):
+                    rotation: float, color: str, alpha: float,
+                    mirror: bool = False):
     """Create a half-oval shape (flat bottom, rounded top)."""
     hw, hh = w / 2, h / 2
     pts = []
@@ -677,6 +732,8 @@ def _make_half_oval(x: float, y: float, w: float, h: float,
         angle = -math.pi / 2 + i * math.pi / n
         pts.append([x + hw * math.cos(angle), y - hh + h * (0.5 + 0.5 * math.sin(angle))])
     verts = np.array(pts)
+    if mirror:
+        verts = _mirror_points(verts, x)
     if rotation:
         verts = _rotate_points(verts, x, y, rotation)
     return Polygon(verts, closed=True, color=color, alpha=alpha)
@@ -763,16 +820,20 @@ def _rounded_rect_points(cx: float, cy: float, w: float, h: float,
 
 
 def _make_rounded_rect(cx: float, cy: float, w: float, h: float, r: float,
-                       corners: str, rotation: float, color: str, alpha: float):
+                       corners: str, rotation: float, color: str, alpha: float,
+                       mirror: bool = False):
     """Create a rounded rectangle patch."""
     pts = _rounded_rect_points(cx, cy, w, h, r, corners)
+    if mirror:
+        pts = _mirror_points(pts, cx)
     if rotation:
         pts = _rotate_points(pts, cx, cy, rotation)
     return Polygon(pts, closed=True, color=color, alpha=alpha)
 
 
 def _make_chamfered_rect(cx: float, cy: float, w: float, h: float, cs: float,
-                         corners: str, rotation: float, color: str, alpha: float):
+                         corners: str, rotation: float, color: str, alpha: float,
+                         mirror: bool = False):
     """Create a chamfered rectangle patch. Corners: 1=TR, 2=TL, 3=BL, 4=BR."""
     hw, hh = w / 2, h / 2
     cs = min(cs, hw, hh)
@@ -800,6 +861,8 @@ def _make_chamfered_rect(cx: float, cy: float, w: float, h: float, cs: float,
         pts.append([cx + hw, cy + hh])
 
     verts = np.array(pts)
+    if mirror:
+        verts = _mirror_points(verts, cx)
     if rotation:
         verts = _rotate_points(verts, cx, cy, rotation)
     return Polygon(verts, closed=True, color=color, alpha=alpha)
@@ -1051,7 +1114,8 @@ def _make_rhplate(x: float, y: float, params: dict, scale: float,
 
 
 def _make_fhplate(x: float, y: float, params: dict, scale: float,
-                  rotation: float, color: str, alpha: float):
+                  rotation: float, color: str, alpha: float,
+                  mirror: bool = False):
     """Create a flat home plate (fhplate).
     Hexagonal shape with cuts on both vertical sides.
     """
@@ -1072,6 +1136,8 @@ def _make_fhplate(x: float, y: float, params: dict, scale: float,
         [x - hw, y - hh + vc],
     ]
     verts = np.array(pts)
+    if mirror:
+        verts = _mirror_points(verts, x)
     if rotation:
         verts = _rotate_points(verts, x, y, rotation)
     return Polygon(verts, closed=True, color=color, alpha=alpha)
@@ -1149,7 +1215,8 @@ def _make_dshape(x: float, y: float, params: dict, scale: float,
 
 
 def _make_cross(x: float, y: float, params: dict, scale: float,
-                rotation: float, color: str, alpha: float):
+                rotation: float, color: str, alpha: float,
+                mirror: bool = False):
     """Create a cross symbol.
     Two intersecting orthogonal line segments forming a plus/cross shape.
     """
@@ -1177,13 +1244,16 @@ def _make_cross(x: float, y: float, params: dict, scale: float,
         [x - hvs, y - hhs],
     ]
     verts = np.array(pts)
+    if mirror:
+        verts = _mirror_points(verts, x)
     if rotation:
         verts = _rotate_points(verts, x, y, rotation)
     return Polygon(verts, closed=True, color=color, alpha=alpha)
 
 
 def _make_dogbone(x: float, y: float, params: dict, scale: float,
-                  rotation: float, color: str, alpha: float):
+                  rotation: float, color: str, alpha: float,
+                  mirror: bool = False):
     """Create a dogbone symbol.
     Similar to a cross but with only a horizontal bar through a vertical bar.
     """
@@ -1211,13 +1281,16 @@ def _make_dogbone(x: float, y: float, params: dict, scale: float,
         [x - hvs, y - hhs],
     ]
     verts = np.array(pts)
+    if mirror:
+        verts = _mirror_points(verts, x)
     if rotation:
         verts = _rotate_points(verts, x, y, rotation)
     return Polygon(verts, closed=True, color=color, alpha=alpha)
 
 
 def _make_dpack(x: float, y: float, params: dict, scale: float,
-                rotation: float, color: str, alpha: float):
+                rotation: float, color: str, alpha: float,
+                mirror: bool = False):
     """Create a D-Pack symbol.
     A grid of small rectangular pads arranged in rows and columns.
     """
@@ -1261,6 +1334,8 @@ def _make_dpack(x: float, y: float, params: dict, scale: float,
         return Circle((x, y), 0.001, color=color, alpha=alpha * 0.5)
 
     verts_arr = np.array(all_verts)
+    if mirror:
+        verts_arr = _mirror_points(verts_arr, x)
     if rotation:
         verts_arr = _rotate_points(verts_arr, x, y, rotation)
 

@@ -9,10 +9,19 @@ For each placed component the renderer looks up its Package via pkg_ref
 
 All coordinate data (components, EDA packages, profile, layer features) is
 normalised to MM before rendering.  Outline coordinates are in package-local
-space and are transformed to board coordinates by applying mirror → rotate →
-translate.  For bottom-layer components the X-axis is mirrored first (in
-package space) and the rotation is then applied in the mirrored frame, which
-correctly reproduces the final top-view orientation stored in the CMP record.
+space and are transformed to board coordinates following the ODB++ orient_def
+convention: mirror → rotate → translate.  For bottom-layer components the
+X-axis is mirrored first (in package space) and the rotation is then applied
+in the mirrored frame, which correctly reproduces the final top-view
+orientation.
+
+Pad features from layer feature files carry an orient_def value (0–9) that
+encodes both rotation and mirror:
+  0-3  → 0/90/180/270° rotation, no mirror
+  4-7  → 0/90/180/270° rotation, mirrored in X
+  8    → arbitrary angle, no mirror
+  9    → arbitrary angle, mirrored in X
+The mirror is always applied before the rotation.
 
 draw_components() accepts:
   show_pads=True          Draw pin-level pad shapes.
@@ -280,47 +289,43 @@ def _transform_point(px: float, py: float,
                      comp: Component) -> tuple[float, float]:
     """Transform a single package-local point to board coordinates.
 
-    ODB++ convention:
-      1. Rotate CCW by comp.rotation (same formula for top and bottom).
-      2. Mirror X for bottom-layer components (in board-relative space,
-         i.e. after rotation). This gives the correct top-view position:
-         the bottom pin location is the X-mirror of where the same pin
-         would land on the top layer.
-      3. Translate to board position.
+    ODB++ orient_def convention (mirror → rotate → translate):
+      1. Mirror X in package space for bottom-layer components.
+      2. Rotate CCW by comp.rotation.
+      3. Translate to board position (comp.x, comp.y).
     """
+    # Step 1: mirror X in package space for bottom-layer components
+    lx = -px if comp.mirror else px
+    ly = py
+    # Step 2: CCW rotation
     angle = math.radians(comp.rotation)
     cos_a = math.cos(angle)
     sin_a = math.sin(angle)
-    # Step 1: CCW rotation (identical for top and bottom)
-    x_rot = px * cos_a - py * sin_a
-    y_rot = px * sin_a + py * cos_a
-    # Step 2: mirror X in board-relative space for bottom-layer components
-    if comp.mirror:
-        x_rot = -x_rot
+    x_rot = lx * cos_a - ly * sin_a
+    y_rot = lx * sin_a + ly * cos_a
+    # Step 3: translate to board position
     return (x_rot + comp.x, y_rot + comp.y)
 
 
 def _transform_pts(pts: np.ndarray, comp: Component) -> np.ndarray:
     """Transform an (N, 2) array of package-local points to board coordinates.
 
-    ODB++ convention:
-      1. Rotate CCW by comp.rotation (same formula for top and bottom).
-      2. Mirror X for bottom-layer components (in board-relative space,
-         i.e. after rotation). This gives the correct top-view position:
-         the bottom pin location is the X-mirror of where the same pin
-         would land on the top layer.
-      3. Translate to board position.
+    ODB++ orient_def convention (mirror → rotate → translate):
+      1. Mirror X in package space for bottom-layer components.
+      2. Rotate CCW by comp.rotation.
+      3. Translate to board position (comp.x, comp.y).
     """
     out = pts.copy().astype(float)
+    # Step 1: mirror X in package space for bottom-layer components
+    if comp.mirror:
+        out[:, 0] = -out[:, 0]
+    # Step 2: CCW rotation
     angle = math.radians(comp.rotation)
     cos_a = math.cos(angle)
     sin_a = math.sin(angle)
-    # Step 1: CCW rotation (identical for top and bottom)
     x_rot = out[:, 0] * cos_a - out[:, 1] * sin_a
     y_rot = out[:, 0] * sin_a + out[:, 1] * cos_a
-    # Step 2: mirror X in board-relative space for bottom-layer components
-    if comp.mirror:
-        x_rot = -x_rot
+    # Step 3: translate to board position
     return np.column_stack([x_rot + comp.x, y_rot + comp.y])
 
 
