@@ -199,15 +199,19 @@ def _transform_point(px: float, py: float,
                      comp: Component) -> tuple[float, float]:
     """Transform a single package-local point to board coordinates.
 
-    Bottom-layer components (comp.mirror=True) are horizontally mirrored
-    (local X negated) so that they align with a top-side view.
+    Bottom-layer components (comp.mirror=True) are rendered by mirroring the
+    already-transformed board-space shape horizontally in place about comp.x.
+    Algebraically this is equivalent to rotating by the negated angle with no
+    local X-flip:  x = px*cos_a + py*sin_a + comp.x
+                   y = -px*sin_a + py*cos_a + comp.y
     """
-    if comp.mirror:
-        px = -px  # flip about local Y-axis → left-right mirror for bottom layer
-    # Rotation angles are already negated (CW→CCW) at cache time; use directly.
     angle = math.radians(comp.rotation)
     cos_a = math.cos(angle)
     sin_a = math.sin(angle)
+    if comp.mirror:
+        # Horizontal flip in place: negate the sin terms for x/y
+        return (px * cos_a + py * sin_a + comp.x,
+                -px * sin_a + py * cos_a + comp.y)
     return (px * cos_a - py * sin_a + comp.x,
             px * sin_a + py * cos_a + comp.y)
 
@@ -215,17 +219,23 @@ def _transform_point(px: float, py: float,
 def _transform_pts(pts: np.ndarray, comp: Component) -> np.ndarray:
     """Transform an (N, 2) array of package-local points to board coordinates.
 
-    Bottom-layer components (comp.mirror=True) are horizontally mirrored
-    (local X negated) so that they align with a top-side view.
+    Bottom-layer components (comp.mirror=True) are rendered by mirroring the
+    already-transformed board-space shape horizontally in place about comp.x.
+    Algebraically this is equivalent to rotating by the negated angle with no
+    local X-flip:  x = px*cos_a + py*sin_a + comp.x
+                   y = -px*sin_a + py*cos_a + comp.y
     """
     out = pts.copy().astype(float)
-    if comp.mirror:
-        out[:, 0] = -out[:, 0]  # flip about local Y-axis → left-right mirror for bottom layer
     angle = math.radians(comp.rotation)
     cos_a = math.cos(angle)
     sin_a = math.sin(angle)
-    x_rot = out[:, 0] * cos_a - out[:, 1] * sin_a
-    y_rot = out[:, 0] * sin_a + out[:, 1] * cos_a
+    if comp.mirror:
+        # Horizontal flip in place: negate the sin terms for x/y
+        x_rot = out[:, 0] * cos_a + out[:, 1] * sin_a
+        y_rot = -out[:, 0] * sin_a + out[:, 1] * cos_a
+    else:
+        x_rot = out[:, 0] * cos_a - out[:, 1] * sin_a
+        y_rot = out[:, 0] * sin_a + out[:, 1] * cos_a
     return np.column_stack([x_rot + comp.x, y_rot + comp.y])
 
 
