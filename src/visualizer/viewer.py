@@ -224,6 +224,17 @@ class PcbViewer:
             (lf for name, (lf, _) in layers_data.items() if "comp_+_bot" in name),
             None,
         )
+
+        # Build FID-based pin-to-feature lookup (primary pad rendering path).
+        self._fid_resolved: dict = {}
+        if eda_data and eda_data.layer_names:
+            from src.visualizer.fid_lookup import build_fid_map, resolve_fid_features
+            fid_map = build_fid_map(eda_data)
+            if fid_map:
+                self._fid_resolved = resolve_fid_features(
+                    fid_map, eda_data.layer_names, layers_data,
+                )
+
         self._selected_comp:     Optional[Component] = None
         self._selected_pin_name: str               = ""
         self._visible_set:       set[str]          = set()
@@ -362,13 +373,15 @@ class PcbViewer:
                             color="#45CAFF", alpha=0.99,
                             show_pads=True, show_pkg_outlines=False,
                             comp_layer_features=self._comp_layer_top,
-                            user_symbols=self.user_symbols)
+                            user_symbols=self.user_symbols,
+                            fid_resolved=self._fid_resolved, comp_side="T")
         if COMP_BOT_KEY in self._visible_set and self.components_bot:
             draw_components(self.ax, self.components_bot, packages,
                             color="#FF7D90", alpha=0.99,
                             show_pads=True, show_pkg_outlines=False,
                             comp_layer_features=self._comp_layer_bot,
-                            user_symbols=self.user_symbols)
+                            user_symbols=self.user_symbols,
+                            fid_resolved=self._fid_resolved, comp_side="B")
         if COMP_OUTLINE_KEY in self._visible_set:
             self._draw_outlines(packages)
 
@@ -387,7 +400,9 @@ class PcbViewer:
                                 comp_layer_features=(self._comp_layer_bot
                                                      if is_bot
                                                      else self._comp_layer_top),
-                                user_symbols=self.user_symbols)
+                                user_symbols=self.user_symbols,
+                                fid_resolved=self._fid_resolved,
+                                comp_side="B" if is_bot else "T")
 
         self.ax.set_xlabel("X", color="#000000")
         self.ax.set_ylabel("Y", color="#000000")
@@ -414,13 +429,15 @@ class PcbViewer:
                             color="#FFFF00", alpha=0.95,
                             show_pads=False, show_pkg_outlines=True,
                             comp_layer_features=self._comp_layer_top,
-                            user_symbols=self.user_symbols)
+                            user_symbols=self.user_symbols,
+                            fid_resolved=self._fid_resolved, comp_side="T")
         if drew_bot and self.components_bot:
             draw_components(self.ax, self.components_bot, packages,
                             color="#FFFF00", alpha=0.95,
                             show_pads=False, show_pkg_outlines=True,
                             comp_layer_features=self._comp_layer_bot,
-                            user_symbols=self.user_symbols)
+                            user_symbols=self.user_symbols,
+                            fid_resolved=self._fid_resolved, comp_side="B")
         if not drew_top and not drew_bot:
             all_comps = self.components_top + self.components_bot
             if all_comps:

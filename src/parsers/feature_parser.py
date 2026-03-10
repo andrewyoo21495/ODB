@@ -17,11 +17,21 @@ from src.parsers.base_parser import (
 )
 
 
-def parse_features(path: Path) -> LayerFeatures:
+def parse_features(path: Path,
+                    only_indices: set[int] | None = None) -> LayerFeatures:
     """Parse a layer features file.
 
     Handles the full feature format including symbol table,
     attribute lookup tables, and all feature record types.
+
+    Args:
+        path: Path to the features file.
+        only_indices: If given, only features whose sequential index
+            (0-based position among L/P/A/T/B/S records) is in this set
+            are fully parsed and kept.  All other features are replaced
+            by ``None`` placeholders so that index-based FID lookups
+            remain valid.  The symbol table and attribute tables are
+            always loaded in full.
     """
     lines = read_file(path)
     layer = LayerFeatures()
@@ -45,6 +55,10 @@ def parse_features(path: Path) -> LayerFeatures:
     layer.attr_names, layer.attr_texts = parse_attr_lookup(lines)
 
     # Parse feature records
+    # feat_seq tracks the 0-based sequential index of each feature record
+    # (the index used by FID references in the EDA/data file).
+    feat_seq = 0
+    selective = only_indices is not None
     i = 0
     while i < len(lines):
         line = lines[i]
@@ -53,51 +67,97 @@ def parse_features(path: Path) -> LayerFeatures:
             continue
 
         first_char = line[0]
+        is_feature = False
 
         if first_char == "L":
-            record = _parse_line_record(line, layer.attr_names, layer.attr_texts)
-            if record:
-                layer.features.append(record)
+            is_feature = True
+            if not selective or feat_seq in only_indices:
+                record = _parse_line_record(line, layer.attr_names, layer.attr_texts)
+                if record:
+                    layer.features.append(record)
+                else:
+                    layer.features.append(None)
+            else:
+                layer.features.append(None)
             i += 1
 
         elif first_char == "P":
             # Make sure it's a pad record, not a keyword like "POLARITY"
             if len(line) > 1 and line[1] == " ":
-                record = _parse_pad_record(line, layer.attr_names, layer.attr_texts)
-                if record:
-                    layer.features.append(record)
+                is_feature = True
+                if not selective or feat_seq in only_indices:
+                    record = _parse_pad_record(line, layer.attr_names, layer.attr_texts)
+                    if record:
+                        layer.features.append(record)
+                    else:
+                        layer.features.append(None)
+                else:
+                    layer.features.append(None)
             i += 1
 
         elif first_char == "A":
             if len(line) > 1 and line[1] == " ":
-                record = _parse_arc_record(line, layer.attr_names, layer.attr_texts)
-                if record:
-                    layer.features.append(record)
+                is_feature = True
+                if not selective or feat_seq in only_indices:
+                    record = _parse_arc_record(line, layer.attr_names, layer.attr_texts)
+                    if record:
+                        layer.features.append(record)
+                    else:
+                        layer.features.append(None)
+                else:
+                    layer.features.append(None)
             i += 1
 
         elif first_char == "T":
             if len(line) > 1 and line[1] == " ":
-                record = _parse_text_record(line, layer.attr_names, layer.attr_texts)
-                if record:
-                    layer.features.append(record)
+                is_feature = True
+                if not selective or feat_seq in only_indices:
+                    record = _parse_text_record(line, layer.attr_names, layer.attr_texts)
+                    if record:
+                        layer.features.append(record)
+                    else:
+                        layer.features.append(None)
+                else:
+                    layer.features.append(None)
             i += 1
 
         elif first_char == "B":
             if len(line) > 1 and line[1] == " ":
-                record = _parse_barcode_record(line, layer.attr_names, layer.attr_texts)
-                if record:
-                    layer.features.append(record)
+                is_feature = True
+                if not selective or feat_seq in only_indices:
+                    record = _parse_barcode_record(line, layer.attr_names, layer.attr_texts)
+                    if record:
+                        layer.features.append(record)
+                    else:
+                        layer.features.append(None)
+                else:
+                    layer.features.append(None)
             i += 1
 
         elif first_char == "S":
             if len(line) > 1 and line[1] == " ":
-                record, i = _parse_surface_record(lines, i, layer.attr_names, layer.attr_texts)
-                if record:
-                    layer.features.append(record)
+                is_feature = True
+                if not selective or feat_seq in only_indices:
+                    record, i = _parse_surface_record(lines, i, layer.attr_names, layer.attr_texts)
+                    if record:
+                        layer.features.append(record)
+                    else:
+                        layer.features.append(None)
+                else:
+                    # Still need to skip past the surface block (up to SE)
+                    i += 1
+                    while i < len(lines) and lines[i].strip() != "SE":
+                        i += 1
+                    i += 1  # skip the SE line
+                    layer.features.append(None)
             else:
                 i += 1
         else:
             i += 1
+            continue
+
+        if is_feature:
+            feat_seq += 1
 
     return layer
 

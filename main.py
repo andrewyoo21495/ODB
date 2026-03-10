@@ -506,6 +506,19 @@ def _parse_for_view(odb_path: str, layer_names: list[str] = None) -> dict:
     else:
         target_set = None  # load all
 
+    # Collect FID-referenced layers and their required feature indices
+    # so we can selectively load only the features needed for pin rendering.
+    fid_layer_names: set[str] = set()
+    fid_feature_indices: dict[str, set[int]] = {}
+    if eda_data and eda_data.layer_names:
+        from src.visualizer.fid_lookup import (
+            collect_fid_layer_names, collect_fid_feature_indices,
+        )
+        fid_layer_names = collect_fid_layer_names(eda_data)
+        fid_feature_indices = collect_fid_feature_indices(eda_data)
+        if fid_layer_names:
+            print(f"  FID: {len(fid_layer_names)} layers referenced for pin geometry")
+
     components_top = []
     components_bot = []
     layers_data = {}
@@ -525,14 +538,29 @@ def _parse_for_view(odb_path: str, layer_names: list[str] = None) -> dict:
 
         # Parse features (all layers if target_set is None, otherwise only targets)
         if layer_paths.features:
-            if target_set is not None and layer_name not in target_set:
+            is_target = (target_set is None or layer_name in target_set)
+            is_fid_layer = layer_name in fid_layer_names
+
+            if not is_target and not is_fid_layer:
                 continue
+
             try:
-                features = parse_features(layer_paths.features)
+                # For FID-referenced layers not explicitly requested,
+                # use selective loading to only parse needed features.
+                only_indices = None
+                if is_fid_layer and not is_target:
+                    only_indices = fid_feature_indices.get(layer_name)
+
+                features = parse_features(layer_paths.features,
+                                          only_indices=only_indices)
                 ml = layer_lookup.get(layer_name)
                 if ml:
                     layers_data[layer_name] = (features, ml)
-                    print(f"  Loaded: {layer_name} ({len(features.features)} features)")
+                    if only_indices is not None:
+                        print(f"  Loaded: {layer_name} ({len(only_indices)} of "
+                              f"{len(features.features)} features, FID-selective)")
+                    else:
+                        print(f"  Loaded: {layer_name} ({len(features.features)} features)")
             except Exception as e:
                 print(f"  Warning: Failed to load {layer_name}: {e}")
 
@@ -780,9 +808,6 @@ def cmd_view_comp(args):
 def cmd_check(args):
     """Run the automated checklist."""
     # Import rules to trigger registration
-    import src.checklist.rules.ckl_component_alignment  # noqa: F401
-    import src.checklist.rules.ckl_spacing  # noqa: F401
-    import src.checklist.rules.ckl_placement  # noqa: F401
     import src.checklist.rules.ckl_01_001  # noqa: F401
     import src.checklist.rules.ckl_01_005  # noqa: F401
     import src.checklist.rules.ckl_02_001  # noqa: F401

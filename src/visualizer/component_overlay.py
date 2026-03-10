@@ -51,19 +51,32 @@ def draw_components(ax: Axes, components: list[Component],
                     show_pads: bool = True,
                     show_pkg_outlines: bool = True,
                     comp_layer_features: LayerFeatures = None,
-                    user_symbols: dict[str, UserSymbol] = None):
+                    user_symbols: dict[str, UserSymbol] = None,
+                    fid_resolved: dict = None,
+                    comp_side: str = "T"):
     """Draw component geometries derived from EDA package definitions.
 
     All coordinates are expected to be pre-normalised to the same unit (MM).
 
-    When *comp_layer_features* is supplied the renderer uses the actual pad
-    shapes from that layer (comp_+_top or comp_+_bot) keyed by toeprint board
-    position.  This gives accurate polygon pad geometry instead of the
-    simplified RC/CR outlines stored in the EDA package data.
+    Pin pad rendering priority (highest to lowest):
+      0. *fid_resolved* — FID-based lookup from EDA/data SNT→FID records.
+         Deterministic mapping via (side, comp_num, pin_num) → feature.
+      1. *comp_layer_features* — spatial matching by toeprint (x, y) in the
+         comp_+_top or comp_+_bot layer (legacy fallback).
+      2. EDA package pin outlines (RC/CR/SQ/CONTOUR).
+      3. Small circle at the pin centre (last-resort fallback).
+
+    Args:
+        fid_resolved: Pre-resolved FID features — a dict mapping
+            ``(side, comp_num, pin_num)`` to a list of
+            :class:`~src.visualizer.fid_lookup.ResolvedPadFeature`.
+            Built by :func:`~src.visualizer.fid_lookup.resolve_fid_features`.
+        comp_side: "T" for top components, "B" for bottom.
     """
     pkg_lookup: dict[int, Package] = (
         {i: pkg for i, pkg in enumerate(packages)} if packages else {}
     )
+    fid_resolved = fid_resolved or {}
 
     # Build a spatial index: (rounded_x, rounded_y) → pad feature
     # from the component layer so we can look up by toeprint position.
@@ -79,7 +92,7 @@ def draw_components(ax: Axes, components: list[Component],
                 key = (round(feat.x, 4), round(feat.y, 4))
                 pad_by_pos[key] = feat
 
-    for comp in components:
+    for comp_idx, comp in enumerate(components):
         pkg = pkg_lookup.get(comp.pkg_ref)
         drew = _draw_component_geometry(ax, comp, pkg, color, alpha,
                                         draw_pads=show_pads,
@@ -87,7 +100,10 @@ def draw_components(ax: Axes, components: list[Component],
                                         pad_by_pos=pad_by_pos,
                                         pad_sym_lookup=pad_sym_lookup,
                                         pad_units=pad_units,
-                                        user_symbols=user_symbols or {})
+                                        user_symbols=user_symbols or {},
+                                        fid_resolved=fid_resolved,
+                                        comp_side=comp_side,
+                                        comp_idx=comp_idx)
 
         if not drew:
             # Fallback: dashed bounding box
@@ -120,14 +136,17 @@ def _draw_component_geometry(ax: Axes, comp: Component,
                               pad_by_pos: dict = None,
                               pad_sym_lookup: dict = None,
                               pad_units: str = "INCH",
-                              user_symbols: dict = None) -> bool:
+                              user_symbols: dict = None,
+                              fid_resolved: dict = None,
+                              comp_side: str = "T",
+                              comp_idx: int = 0) -> bool:
     """Render pin pads and/or package outlines for one component.
 
     Returns True when at least one patch was added to *ax*.
 
     Pin pad rendering priority:
-      1. Component-layer pad feature at the toeprint position (most accurate —
-         real polygon geometry from the design tool).
+      0. FID-based lookup — deterministic mapping via EDA/data SNT→FID records.
+      1. Component-layer pad feature at the toeprint position (spatial fallback).
       2. EDA package pin outline (RC / CR / SQ / CONTOUR).
       3. Small circle at the pin centre (last-resort fallback).
     """
@@ -138,6 +157,7 @@ def _draw_component_geometry(ax: Axes, comp: Component,
     pad_by_pos = pad_by_pos or {}
     pad_sym_lookup = pad_sym_lookup or {}
     user_symbols = user_symbols or {}
+    fid_resolved = fid_resolved or {}
 
     # -- Pin-level pad shapes ------------------------------------------------
     if draw_pads:
@@ -148,10 +168,17 @@ def _draw_component_geometry(ax: Axes, comp: Component,
 
         for pin_idx, pin in enumerate(pkg.pins):
             drew_pin = False
-
-            # 1. Try component-layer pad at the toeprint position
             tp = toep_by_pin.get(pin_idx) or toep_by_pin.get(pin_idx + 1)
-            if tp is not None and pad_by_pos:
+
+            # 0. FID-based lookup (highest priority — deterministic)
+            if not drew_pin and fid_resolved:
+                drew_pin = _draw_pin_from_fid(
+                    ax, comp, comp_side, comp_idx, pin_idx, tp,
+                    fid_resolved, user_symbols, color, alpha,
+                )
+
+            # 1. Try component-layer pad at the toeprint position (spatial)
+            if not drew_pin and tp is not None and pad_by_pos:
                 key = (round(tp.x, 4), round(tp.y, 4))
                 pad_feat = pad_by_pos.get(key)
                 if pad_feat is not None:
@@ -211,6 +238,65 @@ def _draw_component_geometry(ax: Axes, comp: Component,
                 drew_any = True
 
     return drew_any
+
+
+def _draw_pin_from_fid(ax: Axes, comp: Component,
+                        comp_side: str, comp_idx: int,
+                        pin_idx: int, tp,
+                        fid_resolved: dict,
+                        user_symbols: dict,
+                        color: str, alpha: float) -> bool:
+    """Try to draw a pin pad using FID-resolved features.
+
+    Looks up (side, comp_idx, pin_num) in *fid_resolved* and renders the
+    first matching PadRecord using its resolved symbol.  The pad's own
+    (x, y) from the layer feature file is used as the position, giving
+    exact board-coordinate placement.
+
+    Returns True if at least one patch was drawn.
+    """
+    from src.visualizer.fid_lookup import ResolvedPadFeature
+
+    # Try both pin_idx (0-based) and pin_idx+1 (1-based) as the spec
+    # can use either convention depending on the design tool.
+    for pnum in (pin_idx, pin_idx + 1):
+        key = (comp_side, comp_idx, pnum)
+        pad_features = fid_resolved.get(key)
+        if not pad_features:
+            continue
+
+        drew = False
+        for rpf in pad_features:
+            pad = rpf.pad
+            sym = rpf.symbol
+            # Use the pad's own coordinates from the layer feature file
+            px, py = pad.x, pad.y
+
+            if sym.name in user_symbols:
+                patches = user_symbol_to_patches(
+                    user_symbols[sym.name],
+                    px, py,
+                    pad.rotation, pad.mirror,
+                    color, alpha,
+                )
+                for p in patches:
+                    ax.add_patch(p)
+                if patches:
+                    drew = True
+            else:
+                patch = symbol_to_patch(
+                    sym.name, px, py,
+                    pad.rotation, pad.mirror,
+                    rpf.units, sym.unit_override,
+                    color, alpha, pad.resize_factor,
+                )
+                if patch is not None:
+                    ax.add_patch(patch)
+                    drew = True
+        if drew:
+            return True
+
+    return False
 
 
 def _outline_to_patch(outline: PinOutline, comp: Component,
