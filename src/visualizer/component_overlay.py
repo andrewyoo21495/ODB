@@ -38,10 +38,14 @@ import math
 
 import numpy as np
 from matplotlib.axes import Axes
-from matplotlib.patches import Circle, Polygon, Rectangle
+from matplotlib.patches import Circle, PathPatch, Polygon, Rectangle
+from matplotlib.path import Path as MplPath
 
 from src.models import BBox, Component, LayerFeatures, Package, PinOutline, UserSymbol
-from src.visualizer.symbol_renderer import contour_to_vertices, symbol_to_patch, user_symbol_to_patches
+from src.visualizer.symbol_renderer import (
+    contour_to_vertices, get_line_width_for_symbol, symbol_to_patch,
+    user_symbol_to_patches,
+)
 
 
 def draw_components(ax: Axes, components: list[Component],
@@ -83,14 +87,17 @@ def draw_components(ax: Axes, components: list[Component],
     pad_by_pos: dict[tuple[int, int], object] = {}
     pad_sym_lookup: dict[int, object] = {}
     pad_units: str = "INCH"
+    line_features: list = []
     if comp_layer_features is not None:
-        from src.models import PadRecord
+        from src.models import LineRecord, PadRecord
         pad_units = comp_layer_features.units
         pad_sym_lookup = {s.index: s for s in comp_layer_features.symbols}
         for feat in comp_layer_features.features:
             if isinstance(feat, PadRecord):
                 key = (round(feat.x, 4), round(feat.y, 4))
                 pad_by_pos[key] = feat
+            elif isinstance(feat, LineRecord):
+                line_features.append(feat)
 
     for comp_idx, comp in enumerate(components):
         pkg = pkg_lookup.get(comp.pkg_ref)
@@ -103,7 +110,8 @@ def draw_components(ax: Axes, components: list[Component],
                                         user_symbols=user_symbols or {},
                                         fid_resolved=fid_resolved,
                                         comp_side=comp_side,
-                                        comp_idx=comp_idx)
+                                        comp_idx=comp_idx,
+                                        line_features=line_features)
 
         if not drew:
             # Fallback: dashed bounding box
@@ -139,7 +147,8 @@ def _draw_component_geometry(ax: Axes, comp: Component,
                               user_symbols: dict = None,
                               fid_resolved: dict = None,
                               comp_side: str = "T",
-                              comp_idx: int = 0) -> bool:
+                              comp_idx: int = 0,
+                              line_features: list = None) -> bool:
     """Render pin pads and/or package outlines for one component.
 
     Returns True when at least one patch was added to *ax*.
@@ -161,12 +170,21 @@ def _draw_component_geometry(ax: Axes, comp: Component,
 
     # -- Pin-level pad shapes ------------------------------------------------
     if draw_pads:
+        # Shield-can shortcut: sweep a circle along the polyline outline
+        sc_drawn = False
+        if _is_shield_can(comp) and line_features:
+            sc_drawn = _draw_shield_can(ax, comp, line_features,
+                                        pad_sym_lookup, pad_units,
+                                        color, alpha)
+            if sc_drawn:
+                drew_any = True
+
         # Build a quick lookup from pin index → toeprint board position
         toep_by_pin: dict[int, object] = {}
         for tp in comp.toeprints:
             toep_by_pin[tp.pin_num] = tp
 
-        for pin_idx, pin in enumerate(pkg.pins):
+        for pin_idx, pin in enumerate(pkg.pins if not sc_drawn else []):
             drew_pin = False
             tp = toep_by_pin.get(pin_idx) or toep_by_pin.get(pin_idx + 1)
 
@@ -298,6 +316,270 @@ def _draw_pin_from_fid(ax: Axes, comp: Component,
 
     return False
 
+
+# ---------------------------------------------------------------------------
+# Shield-can helpers (sweep a circle along a polyline)
+# ---------------------------------------------------------------------------
+
+def _is_shield_can(comp: Component) -> bool:
+    """Return True when *comp* looks like a shield-can (ref-des starts with SC)."""
+    return comp.comp_name.upper().startswith("SC")
+
+
+def _sweep_outline(
+    points: list[tuple[float, float]],
+    radius: float,
+    n_cap: int = 16,
+) -> tuple[np.ndarray, np.ndarray | None] | None:
+    """Create a swept outline by moving a circle along a polyline.
+
+    Offsets each segment by *radius* on both sides, joins interior corners
+    with a miter, and caps open endpoints with semicircles.
+
+    Returns ``(outer, inner)`` for closed polylines (ring shape) or
+    ``(outline_verts, None)`` for open polylines.  Returns ``None`` when
+    the input is degenerate.
+    """
+    pts = np.array(points, dtype=float)
+    n = len(pts)
+    if n < 2:
+        return None
+
+    # Detect closed polyline (last point ≈ first point)
+    closed = n > 2 and np.linalg.norm(pts[0] - pts[-1]) < max(radius * 0.1, 0.01)
+    if closed:
+        pts = pts[:-1]
+        n = len(pts)
+
+    # Per-segment unit normals (perpendicular, pointing "left")
+    num_segs = n if closed else n - 1
+    seg_normals: list[np.ndarray] = []
+    for i in range(num_segs):
+        j = (i + 1) % n
+        d = pts[j] - pts[i]
+        length = np.linalg.norm(d)
+        if length < 1e-12:
+            seg_normals.append(np.array([0.0, 1.0]))
+        else:
+            seg_normals.append(np.array([-d[1], d[0]]) / length)
+
+    # Compute miter offset at each vertex
+    left_pts: list[np.ndarray] = []
+    right_pts: list[np.ndarray] = []
+    for i in range(n):
+        if closed:
+            n1 = seg_normals[(i - 1) % num_segs]
+            n2 = seg_normals[i % num_segs]
+        else:
+            if i == 0:
+                n1 = n2 = seg_normals[0]
+            elif i == n - 1:
+                n1 = n2 = seg_normals[-1]
+            else:
+                n1 = seg_normals[i - 1]
+                n2 = seg_normals[i]
+
+        bisector = n1 + n2
+        bis_len = np.linalg.norm(bisector)
+        if bis_len < 1e-12:
+            # Antiparallel segments (180° turn) — use simple offset
+            offset = n1 * radius
+        else:
+            bisector /= bis_len
+            cos_half = np.dot(bisector, n1)
+            miter_scale = 1.0 / max(cos_half, 0.25)   # clamp to avoid spikes
+            offset = bisector * radius * miter_scale
+
+        left_pts.append(pts[i] + offset)
+        right_pts.append(pts[i] - offset)
+
+    if closed:
+        return np.array(left_pts), np.array(right_pts)
+
+    # Open polyline — build a single polygon with semicircle end-caps
+    outline: list[np.ndarray] = []
+
+    # Left side forward
+    outline.extend(left_pts)
+
+    # End cap: semicircle from left[-1] to right[-1]
+    d_end = pts[-1] - pts[-2]
+    angle_end = math.atan2(d_end[1], d_end[0])
+    for k in range(1, n_cap):
+        theta = (angle_end + math.pi / 2) - k * math.pi / n_cap
+        outline.append(
+            pts[-1] + radius * np.array([math.cos(theta), math.sin(theta)])
+        )
+
+    # Right side backward
+    outline.extend(reversed(right_pts))
+
+    # Start cap: semicircle from right[0] to left[0]
+    d_start = pts[1] - pts[0]
+    angle_start = math.atan2(d_start[1], d_start[0])
+    for k in range(1, n_cap):
+        theta = (angle_start - math.pi / 2) - k * math.pi / n_cap
+        outline.append(
+            pts[0] + radius * np.array([math.cos(theta), math.sin(theta)])
+        )
+
+    return np.array(outline), None
+
+
+def _chain_line_segments(lines) -> list[list[tuple[float, float]]]:
+    """Chain line segments into ordered polylines.
+
+    Returns a list of polylines; each polyline is an ordered list of
+    ``(x, y)`` coordinate tuples.
+    """
+    if not lines:
+        return []
+
+    eps = 4  # decimal places for rounding
+
+    # Build adjacency: rounded_endpoint → [(segment_idx, exact_other_end)]
+    adj: dict[tuple[float, float], list[tuple[int, tuple[float, float]]]] = {}
+    for i, line in enumerate(lines):
+        s = (round(line.xs, eps), round(line.ys, eps))
+        e = (round(line.xe, eps), round(line.ye, eps))
+        adj.setdefault(s, []).append((i, (line.xe, line.ye)))
+        adj.setdefault(e, []).append((i, (line.xs, line.ys)))
+
+    used: set[int] = set()
+    polylines: list[list[tuple[float, float]]] = []
+
+    for start_idx in range(len(lines)):
+        if start_idx in used:
+            continue
+        used.add(start_idx)
+        line = lines[start_idx]
+        chain: list[tuple[float, float]] = [(line.xs, line.ys), (line.xe, line.ye)]
+
+        # Extend forward from tail
+        while True:
+            tail = (round(chain[-1][0], eps), round(chain[-1][1], eps))
+            found = False
+            for idx, other_end in adj.get(tail, []):
+                if idx not in used:
+                    used.add(idx)
+                    chain.append(other_end)
+                    found = True
+                    break
+            if not found:
+                break
+
+        # Extend backward from head
+        while True:
+            head = (round(chain[0][0], eps), round(chain[0][1], eps))
+            found = False
+            for idx, other_end in adj.get(head, []):
+                if idx not in used:
+                    used.add(idx)
+                    chain.insert(0, other_end)
+                    found = True
+                    break
+            if not found:
+                break
+
+        polylines.append(chain)
+
+    return polylines
+
+
+def _draw_shield_can(ax: Axes, comp: Component,
+                     line_features: list, sym_lookup: dict,
+                     units: str, color: str, alpha: float) -> bool:
+    """Render a shield-can component as a swept polyline outline.
+
+    Collects ``LineRecord`` features whose endpoints match the component's
+    toeprint positions, chains them into polylines, and draws each as a
+    swept circular outline.
+
+    Returns True if at least one outline was drawn.
+    """
+    from src.models import LineRecord
+
+    # Build set of toeprint positions for this component
+    toep_set: set[tuple[float, float]] = set()
+    for tp in comp.toeprints:
+        toep_set.add((round(tp.x, 4), round(tp.y, 4)))
+
+    if not toep_set:
+        return False
+
+    # Filter lines whose both endpoints match toeprint positions
+    matching: list[LineRecord] = []
+    for feat in line_features:
+        if not isinstance(feat, LineRecord):
+            continue
+        s = (round(feat.xs, 4), round(feat.ys, 4))
+        e = (round(feat.xe, 4), round(feat.ye, 4))
+        if s in toep_set and e in toep_set:
+            matching.append(feat)
+
+    if not matching:
+        return False
+
+    # Get sweep radius from the line symbol
+    sym_ref = sym_lookup.get(matching[0].symbol_idx)
+    if sym_ref is None:
+        return False
+    width = get_line_width_for_symbol(sym_ref.name, units, sym_ref.unit_override)
+    radius = width / 2
+    if radius <= 0:
+        return False
+
+    # Chain segments and sweep
+    polylines = _chain_line_segments(matching)
+    drew = False
+
+    for chain in polylines:
+        result = _sweep_outline(chain, radius)
+        if result is None:
+            continue
+
+        outer, inner = result
+        if inner is not None:
+            # Closed polyline → ring with hole
+            n_out = len(outer)
+            n_in = len(inner)
+
+            verts: list[list[float]] = []
+            codes: list[int] = []
+
+            # Outer boundary
+            verts.extend(outer.tolist())
+            verts.append(outer[0].tolist())
+            codes.append(MplPath.MOVETO)
+            codes.extend([MplPath.LINETO] * (n_out - 1))
+            codes.append(MplPath.CLOSEPOLY)
+
+            # Inner boundary (reversed winding for hole)
+            inner_rev = inner[::-1]
+            verts.extend(inner_rev.tolist())
+            verts.append(inner_rev[0].tolist())
+            codes.append(MplPath.MOVETO)
+            codes.extend([MplPath.LINETO] * (n_in - 1))
+            codes.append(MplPath.CLOSEPOLY)
+
+            path = MplPath(verts, codes)
+            patch = PathPatch(path, facecolor=color, edgecolor="none",
+                              alpha=alpha)
+            ax.add_patch(patch)
+            drew = True
+        else:
+            # Open polyline → single polygon with caps
+            patch = Polygon(outer, closed=True, facecolor=color,
+                            edgecolor="none", alpha=alpha)
+            ax.add_patch(patch)
+            drew = True
+
+    return drew
+
+
+# ---------------------------------------------------------------------------
+# Outline / transform helpers
+# ---------------------------------------------------------------------------
 
 def _outline_to_patch(outline: PinOutline, comp: Component,
                       color: str, alpha: float,
