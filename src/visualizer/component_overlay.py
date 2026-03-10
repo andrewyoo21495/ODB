@@ -93,6 +93,7 @@ def draw_components(ax: Axes, components: list[Component],
         {i: pkg for i, pkg in enumerate(packages)} if packages else {}
     )
     fid_resolved = fid_resolved or {}
+    is_bottom = (comp_side == "B")
 
     # Pre-parse the component layer once: build a global position → pad map
     # and collect line features.  Per-component filtering (to only the pads
@@ -136,11 +137,12 @@ def draw_components(ax: Axes, components: list[Component],
                                         fid_resolved=fid_resolved,
                                         comp_side=comp_side,
                                         comp_idx=comp_idx,
-                                        line_features=line_features)
+                                        line_features=line_features,
+                                        is_bottom=is_bottom)
 
         if not drew:
             # Fallback: dashed bounding box
-            bbox = _get_component_bbox(comp, pkg)
+            bbox = _get_component_bbox(comp, pkg, is_bottom=is_bottom)
             if bbox:
                 _draw_comp_outline(ax, bbox, color,
                                    alpha if show_pads else alpha * 0.7)
@@ -173,7 +175,8 @@ def _draw_component_geometry(ax: Axes, comp: Component,
                               fid_resolved: dict = None,
                               comp_side: str = "T",
                               comp_idx: int = 0,
-                              line_features: list = None) -> bool:
+                              line_features: list = None,
+                              is_bottom: bool = False) -> bool:
     """Render pin pads and/or package outlines for one component.
 
     Returns True when at least one patch was added to *ax*.
@@ -208,7 +211,7 @@ def _draw_component_geometry(ax: Axes, comp: Component,
         # Shield-can fallback: if sweep failed (e.g. comp layer features are
         # empty), draw a simple bounding-box outline and skip individual pins.
         if _is_shield_can(comp) and not sc_drawn:
-            bbox = _get_component_bbox(comp, pkg)
+            bbox = _get_component_bbox(comp, pkg, is_bottom=is_bottom)
             if bbox:
                 _draw_comp_outline(ax, bbox, color, alpha)
                 sc_drawn = True
@@ -262,7 +265,8 @@ def _draw_component_geometry(ax: Axes, comp: Component,
             # 2. Fall back to EDA package pin outlines
             if not drew_pin and pin.outlines:
                 for outline in pin.outlines:
-                    patch = _outline_to_patch(outline, comp, color, alpha)
+                    patch = _outline_to_patch(outline, comp, color, alpha,
+                                              is_bottom=is_bottom)
                     if patch is not None:
                         ax.add_patch(patch)
                         drew_pin = True
@@ -270,7 +274,8 @@ def _draw_component_geometry(ax: Axes, comp: Component,
 
             # 3. Last-resort: small circle at the transformed pin centre
             if not drew_pin:
-                bx, by = _transform_point(pin.center.x, pin.center.y, comp)
+                bx, by = _transform_point(pin.center.x, pin.center.y, comp,
+                                          is_bottom=is_bottom)
                 fhs = pin.finished_hole_size
                 r = fhs / 2 if fhs > 0 else 0.1
                 ax.add_patch(Circle((bx, by), r,
@@ -286,7 +291,8 @@ def _draw_component_geometry(ax: Axes, comp: Component,
         ol_alpha = alpha * 0.9 if draw_pads else alpha
         for outline in pkg.outlines:
             patch = _outline_to_patch(outline, comp, color, ol_alpha,
-                                      filled=False, linestyle="-")
+                                      filled=False, linestyle="-",
+                                      is_bottom=is_bottom)
             if patch is not None:
                 ax.add_patch(patch)
                 drew_any = True
@@ -626,7 +632,8 @@ def _draw_shield_can(ax: Axes, comp: Component,
 def _outline_to_patch(outline: PinOutline, comp: Component,
                       color: str, alpha: float,
                       filled: bool = True,
-                      linestyle: str = "-"):
+                      linestyle: str = "-",
+                      is_bottom: bool = False):
     """Convert a PinOutline to a board-coordinate matplotlib patch.
 
     Returns None for unknown or degenerate shapes.
@@ -637,7 +644,7 @@ def _outline_to_patch(outline: PinOutline, comp: Component,
     # -- Circle (CR) or rounded/chamfered circle (CT) -----------------------
     if outline.type in ("CR", "CT"):
         xc, yc = _transform_point(
-            p.get("xc", 0.0), p.get("yc", 0.0), comp)
+            p.get("xc", 0.0), p.get("yc", 0.0), comp, is_bottom=is_bottom)
         r = p.get("radius", 0.001)
         if r <= 0:
             return None
@@ -659,7 +666,7 @@ def _outline_to_patch(outline: PinOutline, comp: Component,
             [llx + w, lly + h],
             [llx,     lly + h],
         ])
-        pts = _transform_pts(corners, comp)
+        pts = _transform_pts(corners, comp, is_bottom=is_bottom)
         return Polygon(pts, closed=True,
                        facecolor=fc, edgecolor=color,
                        alpha=alpha, linewidth=0.4, linestyle=linestyle)
@@ -677,7 +684,7 @@ def _outline_to_patch(outline: PinOutline, comp: Component,
             [xc + hs, yc + hs],
             [xc - hs, yc + hs],
         ])
-        pts = _transform_pts(corners, comp)
+        pts = _transform_pts(corners, comp, is_bottom=is_bottom)
         return Polygon(pts, closed=True,
                        facecolor=fc, edgecolor=color,
                        alpha=alpha, linewidth=0.4, linestyle=linestyle)
@@ -687,7 +694,7 @@ def _outline_to_patch(outline: PinOutline, comp: Component,
         verts = contour_to_vertices(outline.contour)
         if len(verts) < 2:
             return None
-        pts = _transform_pts(verts, comp)
+        pts = _transform_pts(verts, comp, is_bottom=is_bottom)
         return Polygon(pts, closed=True,
                        facecolor=fc, edgecolor=color,
                        alpha=alpha, linewidth=0.4, linestyle=linestyle)
@@ -696,26 +703,30 @@ def _outline_to_patch(outline: PinOutline, comp: Component,
 
 
 def _transform_point(px: float, py: float,
-                     comp: Component) -> tuple[float, float]:
+                     comp: Component,
+                     is_bottom: bool = False) -> tuple[float, float]:
     """Transform a single package-local point to board coordinates.
 
     ODB++ orient_def convention (mirror → rotate → translate):
-      1. Mirror X in package space (when comp.mirror is set).
-      2. Rotate CCW by comp.rotation.
+      1. Mirror X in package space when effective_mirror is True.
+      2. Rotate by comp.rotation (negated when mirrored, because an
+         X-flip reverses the apparent rotation direction).
       3. Translate to board position (comp.x, comp.y).
 
-    EDA/data PKG outlines are stored in board-view coordinates (the
-    bottom-layer flip is already baked into the data), so comp.mirror
-    is used directly without any is_bottom inversion.
+    Bottom-layer logic:
+      bottom + mirror=N  → effective_mirror = True  (normal bottom placement)
+      bottom + mirror=M  → effective_mirror = False (extra flip cancels)
+      top    + mirror=N  → effective_mirror = False
+      top    + mirror=M  → effective_mirror = True
     """
-    # Step 1: apply X-flip in package space when mirror flag is set.
-    # EDA/data package outlines are stored in board-view coordinates
-    # (i.e. the bottom-layer flip is already baked into the PKG data),
-    # so we use comp.mirror directly without inverting for is_bottom.
-    lx = -px if comp.mirror else px
+    # Step 1: effective mirror and X-flip
+    effective_mirror = (not comp.mirror) if is_bottom else comp.mirror
+    lx = -px if effective_mirror else px
     ly = py
-    # Step 2: CCW rotation
-    angle = math.radians(comp.rotation)
+    # Step 2: CCW rotation; negate angle when mirrored because
+    # an X-flip reverses the apparent rotation direction.
+    rot = -comp.rotation if effective_mirror else comp.rotation
+    angle = math.radians(rot)
     cos_a = math.cos(angle)
     sin_a = math.sin(angle)
     x_rot = lx * cos_a - ly * sin_a
@@ -724,27 +735,27 @@ def _transform_point(px: float, py: float,
     return (x_rot + comp.x, y_rot + comp.y)
 
 
-def _transform_pts(pts: np.ndarray, comp: Component) -> np.ndarray:
+def _transform_pts(pts: np.ndarray, comp: Component,
+                   is_bottom: bool = False) -> np.ndarray:
     """Transform an (N, 2) array of package-local points to board coordinates.
 
     ODB++ orient_def convention (mirror → rotate → translate):
-      1. Mirror X in package space (when comp.mirror is set).
-      2. Rotate CCW by comp.rotation.
+      1. Mirror X in package space when effective_mirror is True.
+      2. Rotate by comp.rotation (negated when mirrored, because an
+         X-flip reverses the apparent rotation direction).
       3. Translate to board position (comp.x, comp.y).
 
-    EDA/data PKG outlines are stored in board-view coordinates (the
-    bottom-layer flip is already baked into the data), so comp.mirror
-    is used directly without any is_bottom inversion.
+    See :func:`_transform_point` for the bottom-layer mirror logic.
     """
     out = pts.copy().astype(float)
-    # Step 1: apply X-flip in package space when mirror flag is set.
-    # EDA/data package outlines are stored in board-view coordinates
-    # (i.e. the bottom-layer flip is already baked into the PKG data),
-    # so we use comp.mirror directly without inverting for is_bottom.
-    if comp.mirror:
+    # Step 1: effective mirror and X-flip
+    effective_mirror = (not comp.mirror) if is_bottom else comp.mirror
+    if effective_mirror:
         out[:, 0] = -out[:, 0]
-    # Step 2: CCW rotation
-    angle = math.radians(comp.rotation)
+    # Step 2: CCW rotation; negate angle when mirrored because
+    # an X-flip reverses the apparent rotation direction.
+    rot = -comp.rotation if effective_mirror else comp.rotation
+    angle = math.radians(rot)
     cos_a = math.cos(angle)
     sin_a = math.sin(angle)
     x_rot = out[:, 0] * cos_a - out[:, 1] * sin_a
@@ -767,14 +778,15 @@ def draw_pin_markers(ax: Axes, components: list[Component],
 
 
 def _get_component_bbox(comp: Component,
-                        pkg: Package | None) -> BBox | None:
+                        pkg: Package | None,
+                        is_bottom: bool = False) -> BBox | None:
     """Compute a board-coordinate bounding box for the fallback outline."""
     if pkg and pkg.bbox:
         bx = pkg.bbox
         hw = (bx.xmax - bx.xmin) / 2
         hh = (bx.ymax - bx.ymin) / 2
         corners = np.array([[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]])
-        pts = _transform_pts(corners, comp)
+        pts = _transform_pts(corners, comp, is_bottom=is_bottom)
         return BBox(float(pts[:, 0].min()), float(pts[:, 1].min()),
                     float(pts[:, 0].max()), float(pts[:, 1].max()))
 
