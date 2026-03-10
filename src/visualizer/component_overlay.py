@@ -288,10 +288,10 @@ def _draw_component_geometry(ax: Axes, comp: Component,
 
     # -- Package-level courtyard / silkscreen outlines -----------------------
     if draw_pkg_outlines:
-        ol_alpha = alpha * 0.5 if draw_pads else alpha
+        ol_alpha = alpha * 0.9 if draw_pads else alpha
         for outline in pkg.outlines:
             patch = _outline_to_patch(outline, comp, color, ol_alpha,
-                                      filled=False, linestyle="--",
+                                      filled=False, linestyle="-",
                                       is_bottom=is_bottom)
             if patch is not None:
                 ax.add_patch(patch)
@@ -804,5 +804,5 @@ def _draw_comp_outline(ax: Axes, bbox: BBox, color: str, alpha: float):
     ax.add_patch(Rectangle(
         (bbox.xmin, bbox.ymin), w, h,
         linewidth=0.5, edgecolor=color, facecolor="none",
-        alpha=alpha, linestyle="--",
+        alpha=alpha, linestyle="-",
     ))

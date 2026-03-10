@@ -370,14 +370,14 @@ class PcbViewer:
         packages = self.eda_data.packages if self.eda_data else None
         if COMP_TOP_KEY in self._visible_set and self.components_top:
             draw_components(self.ax, self.components_top, packages,
-                            color="#45CAFF", alpha=0.99,
+                            color="#2BFFF4", alpha=0.99,
                             show_pads=True, show_pkg_outlines=False,
                             comp_layer_features=self._comp_layer_top,
                             user_symbols=self.user_symbols,
                             fid_resolved=self._fid_resolved, comp_side="T")
         if COMP_BOT_KEY in self._visible_set and self.components_bot:
             draw_components(self.ax, self.components_bot, packages,
-                            color="#FF7D90", alpha=0.99,
+                            color="#FC5BA1", alpha=0.99,
                             show_pads=True, show_pkg_outlines=False,
                             comp_layer_features=self._comp_layer_bot,
                             user_symbols=self.user_symbols,
@@ -760,7 +760,7 @@ class ComponentViewer:
             if show_pins:
                 if top_comps:
                     draw_components(self.ax, top_comps, packages,
-                                    color="#45CAFF", alpha=0.99,
+                                    color="#2BFFF4", alpha=0.99,
                                     show_pads=True, show_pkg_outlines=False,
                                     comp_layer_features=self._comp_layer_top,
                                     user_symbols=self.user_symbols,
@@ -768,7 +768,7 @@ class ComponentViewer:
                                     comp_side="T")
                 if bot_comps:
                     draw_components(self.ax, bot_comps, packages,
-                                    color="#FF7D90", alpha=0.99,
+                                    color="#FC5BA1", alpha=0.99,
                                     show_pads=True, show_pkg_outlines=False,
                                     comp_layer_features=self._comp_layer_bot,
                                     user_symbols=self.user_symbols,
