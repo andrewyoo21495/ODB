@@ -220,7 +220,7 @@
 
 <div class="stats-bar">
   <div class="stat">
-    <div class="stat-value">8</div>
+    <div class="stat-value">12</div>
     <div class="stat-label">Total Rules</div>
   </div>
   <div class="stat">
@@ -228,11 +228,11 @@
     <div class="stat-label">Categories</div>
   </div>
   <div class="stat">
-    <div class="stat-value">3</div>
+    <div class="stat-value">4</div>
     <div class="stat-label">Reference CSVs</div>
   </div>
   <div class="stat">
-    <div class="stat-value">8</div>
+    <div class="stat-value">12</div>
     <div class="stat-label">Rules</div>
   </div>
 </div>
@@ -347,6 +347,39 @@
       </table>
       <h4>Pass/Fail Criteria</h4>
       <div class="pass-fail-note"><strong>PASS</strong> if distance &ge; 1.5mm. Otherwise <strong>FAIL</strong>.</div>
+    </div>
+  </div>
+
+  <!-- CKL-02-002 -->
+  <div class="rule-card">
+    <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
+      <span class="rule-id">CKL-02-002</span>
+      <span class="rule-desc">Managed capacitors (41 types) overlapping connectors on the opposite side must be aligned horizontally</span>
+      <span class="badge badge-placement">Placement</span>
+      <span class="toggle-icon">&#9654;</span>
+    </div>
+    <div class="rule-body">
+      <h4>Reference Files</h4>
+      <span class="ref-tag">references/capacitors_41_list.csv</span>
+      <h4>Inspection Process</h4>
+      <ol>
+        <li>Load the 41 managed capacitor part names from <code>capacitors_41_list.csv</code>.</li>
+        <li>Search for all connectors on Top and Bottom layers.</li>
+        <li>For each connector, find managed capacitors (41 types) overlapping on the opposite side.</li>
+        <li>Check the orientation of each overlapping capacitor.</li>
+      </ol>
+      <h4>Output Columns</h4>
+      <table class="col-table">
+        <tr><th>Column</th><th>Description</th></tr>
+        <tr><td class="col-name">comp</td><td>Name of the connector</td></tr>
+        <tr><td class="col-name">cmp_layer</td><td>Layer of the connector (Top or Bottom)</td></tr>
+        <tr><td class="col-name">overlapping_cap</td><td>Name of the overlapping managed capacitor</td></tr>
+        <tr><td class="col-name">part_name</td><td>Part name of the capacitor</td></tr>
+        <tr><td class="col-name">hori/verti</td><td>Orientation relative to connector outline (Horizontal or Vertical)</td></tr>
+        <tr><td class="col-name">status</td><td>PASS or FAIL</td></tr>
+      </table>
+      <h4>Pass/Fail Criteria</h4>
+      <div class="pass-fail-note"><strong>PASS</strong> if orientation is Horizontal. Otherwise <strong>FAIL</strong>.</div>
     </div>
   </div>
 
@@ -484,8 +517,103 @@
     </div>
   </div>
 
+  <!-- CKL-02-012 -->
+  <div class="rule-card">
+    <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
+      <span class="rule-id">CKL-02-012</span>
+      <span class="rule-desc">Inductors &ge;2012 overlapping both AP/Memory and Shield Can on opposite sides must be avoided</span>
+      <span class="badge badge-placement">Placement</span>
+      <span class="toggle-icon">&#9654;</span>
+    </div>
+    <div class="rule-body">
+      <h4>Reference Files</h4>
+      <span class="ref-tag">references/ap_memory.csv</span>
+      <span class="ref-tag">references/inductors_2s_list.csv</span>
+      <h4>Inspection Process</h4>
+      <ol>
+        <li>Identify AP/Memory components on each layer using part names from <code>ap_memory.csv</code>.</li>
+        <li>Find inductors on the opposite side overlapping each AP/Memory component.</li>
+        <li>Filter inductors to size &ge; 2012 using <code>inductors_2s_list.csv</code>.</li>
+        <li>For each qualifying inductor, check whether a Shield Can on the same side as the AP/Memory also overlaps the inductor.</li>
+        <li>Report any inductor that simultaneously overlaps both an AP/Memory and a Shield Can.</li>
+      </ol>
+      <h4>Output Columns</h4>
+      <table class="col-table">
+        <tr><th>Column</th><th>Description</th></tr>
+        <tr><td class="col-name">comp</td><td>Name of the inductor</td></tr>
+        <tr><td class="col-name">cmp_layer</td><td>Layer where the inductor is placed</td></tr>
+        <tr><td class="col-name">part_name</td><td>Part name of the inductor</td></tr>
+        <tr><td class="col-name">overlapping_ap</td><td>Name of the AP/Memory component on the opposite side</td></tr>
+        <tr><td class="col-name">status</td><td>PASS or FAIL</td></tr>
+      </table>
+      <h4>Pass/Fail Criteria</h4>
+      <div class="pass-fail-note fail-note"><strong>FAIL</strong> if an inductor (&ge;2012) overlaps both an AP/Memory component and a Shield Can simultaneously.</div>
+    </div>
+  </div>
+
   <!-- ================================================================== -->
   <div class="section-title">Checklist Series 03 &mdash; PCB Outline Clearance</div>
+
+  <!-- CKL-03-001 -->
+  <div class="rule-card">
+    <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
+      <span class="rule-id">CKL-03-001</span>
+      <span class="rule-desc">Connectors must not overlap the opposite side of MCP IC components</span>
+      <span class="badge badge-clearance">Clearance</span>
+      <span class="toggle-icon">&#9654;</span>
+    </div>
+    <div class="rule-body">
+      <h4>Reference Files</h4>
+      <span class="ref-tag">references/ap_memory.csv</span>
+      <h4>Inspection Process</h4>
+      <ol>
+        <li>Identify MCP (Multi-Chip Package) ICs on each layer by looking up the category column in <code>ap_memory.csv</code>.</li>
+        <li>Search for connectors on the opposite side of each MCP IC.</li>
+        <li>Report any connector that overlaps the footprint of an MCP IC.</li>
+      </ol>
+      <h4>Output Columns</h4>
+      <table class="col-table">
+        <tr><th>Column</th><th>Description</th></tr>
+        <tr><td class="col-name">comp</td><td>Name of the MCP IC component</td></tr>
+        <tr><td class="col-name">cmp_layer</td><td>Layer of the MCP IC (Top or Bottom)</td></tr>
+        <tr><td class="col-name">overlapping_cmp</td><td>Name of the overlapping connector on the opposite side</td></tr>
+        <tr><td class="col-name">part_name</td><td>Part name of the connector</td></tr>
+        <tr><td class="col-name">status</td><td>PASS or FAIL</td></tr>
+      </table>
+      <h4>Pass/Fail Criteria</h4>
+      <div class="pass-fail-note fail-note"><strong>FAIL</strong> if any connector overlaps an MCP IC on the opposite side.</div>
+    </div>
+  </div>
+
+  <!-- CKL-03-012 -->
+  <div class="rule-card">
+    <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
+      <span class="rule-id">CKL-03-012</span>
+      <span class="rule-desc">OSC components must be at least 1mm from PCB edge and BOTHHOLE components</span>
+      <span class="badge badge-clearance">Clearance</span>
+      <span class="toggle-icon">&#9654;</span>
+    </div>
+    <div class="rule-body">
+      <h4>Inspection Process</h4>
+      <ol>
+        <li>Collect all BOTHHOLE components from both Top and Bottom layers.</li>
+        <li>Build the board outline polygon from the PCB profile data.</li>
+        <li>For each Oscillator (OSC) component, measure the distance to the PCB outline and the distance to the nearest BOTHHOLE.</li>
+        <li>Both distances must be at least 1mm.</li>
+      </ol>
+      <h4>Output Columns</h4>
+      <table class="col-table">
+        <tr><th>Column</th><th>Description</th></tr>
+        <tr><td class="col-name">comp</td><td>Name of the OSC component</td></tr>
+        <tr><td class="col-name">cmp_layer</td><td>Layer where the OSC is placed (Top or Bottom)</td></tr>
+        <tr><td class="col-name">to_pcb</td><td>Edge-to-edge distance to the PCB outline (mm), or N/A if not measurable</td></tr>
+        <tr><td class="col-name">to_BTH</td><td>Edge-to-edge distance to the nearest BOTHHOLE component (mm), or N/A if none present</td></tr>
+        <tr><td class="col-name">status</td><td>PASS or FAIL</td></tr>
+      </table>
+      <h4>Pass/Fail Criteria</h4>
+      <div class="pass-fail-note"><strong>PASS</strong> if both to_pcb &ge; 1mm and to_BTH &ge; 1mm. Otherwise <strong>FAIL</strong>.</div>
+    </div>
+  </div>
 
   <!-- CKL-03-015 -->
   <div class="rule-card">
@@ -527,7 +655,7 @@
       <tr>
         <td class="col-name">ap_memory.csv</td>
         <td>AP and Memory component part names with rank and category</td>
-        <td>CKL-01-005</td>
+        <td>CKL-01-005, CKL-02-012, CKL-03-001</td>
       </tr>
       <tr>
         <td class="col-name">capacitors_10_list.csv</td>
@@ -537,12 +665,12 @@
       <tr>
         <td class="col-name">capacitors_41_list.csv</td>
         <td>41 managed capacitor types with part_name and size</td>
-        <td>CKL-02-006, manage_list</td>
+        <td>CKL-02-002, CKL-02-006, manage_list</td>
       </tr>
       <tr>
         <td class="col-name">inductors_2s_list.csv</td>
         <td>2S inductor types with part_name and size</td>
-        <td>CKL-01-005, CKL-02-008, CKL-02-009, CKL-02-010, manage_list</td>
+        <td>CKL-01-005, CKL-02-008, CKL-02-009, CKL-02-010, CKL-02-012, manage_list</td>
       </tr>
     </table>
   </div>
@@ -560,9 +688,9 @@
     </ol>
     <p style="margin-top: 14px"><strong>Key utilities available:</strong></p>
     <ul style="padding-left: 22px; font-size: 0.93rem; margin-top: 6px;">
-      <li><code style="display:inline; padding:2px 6px;">component_classifier.py</code> &mdash; find_ics(), find_connectors(), find_capacitors(), find_inductors(), find_simsockets(), find_interposers()</li>
-      <li><code style="display:inline; padding:2px 6px;">geometry_utils.py</code> &mdash; find_overlapping_components(), is_on_edge(), edge_distance(), get_component_orientation(), filter_by_size(), build_board_polygon(), components_in_clearance_zone()</li>
-      <li><code style="display:inline; padding:2px 6px;">reference_loader.py</code> &mdash; load_reference_csv(), get_managed_part_names(), get_part_size_map() (auto-generates sample CSVs if missing)</li>
+      <li><code style="display:inline; padding:2px 6px;">component_classifier.py</code> &mdash; find_ics(), find_connectors(), find_capacitors(), find_inductors(), find_simsockets(), find_interposers(), find_shield_cans(), find_oscillators(), find_bothholes()</li>
+      <li><code style="display:inline; padding:2px 6px;">geometry_utils.py</code> &mdash; find_overlapping_components(), is_on_edge(), edge_distance(), distance_to_outline(), get_component_orientation(), filter_by_size(), build_board_polygon(), components_in_clearance_zone()</li>
+      <li><code style="display:inline; padding:2px 6px;">reference_loader.py</code> &mdash; load_reference_csv(), get_managed_part_names(), get_part_size_map(), get_part_category_map() (auto-generates sample CSVs if missing)</li>
     </ul>
   </div>
 
