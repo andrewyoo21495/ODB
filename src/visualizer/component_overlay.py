@@ -280,13 +280,19 @@ def _draw_pin_from_fid(ax: Axes, comp: Component,
     """Try to draw a pin pad using FID-resolved features.
 
     Looks up (side, comp_idx, pin_num) in *fid_resolved* and renders the
-    first matching PadRecord using its resolved symbol.  The pad's own
-    (x, y) from the layer feature file is used as the position, giving
-    exact board-coordinate placement.
+    geometry from the resolved symbol at the toeprint's board position.
+    The toeprint position (from components_top/bot) is authoritative for
+    WHERE to draw; the FID feature supplies only the geometry (symbol name,
+    rotation, mirror).  If no toeprint is available the function returns
+    False immediately.
 
     Returns True if at least one patch was drawn.
     """
-    from src.visualizer.fid_lookup import ResolvedPadFeature
+    # Position must come from the toeprint (components file), not the layer.
+    if tp is None:
+        return False
+
+    px, py = tp.x, tp.y
 
     # Try both pin_idx (0-based) and pin_idx+1 (1-based) as the spec
     # can use either convention depending on the design tool.
@@ -300,8 +306,6 @@ def _draw_pin_from_fid(ax: Axes, comp: Component,
         for rpf in pad_features:
             pad = rpf.pad
             sym = rpf.symbol
-            # Use the pad's own coordinates from the layer feature file
-            px, py = pad.x, pad.y
 
             if sym.name in user_symbols:
                 patches = user_symbol_to_patches(
