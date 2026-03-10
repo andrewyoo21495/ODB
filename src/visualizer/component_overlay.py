@@ -82,9 +82,11 @@ def draw_components(ax: Axes, components: list[Component],
     )
     fid_resolved = fid_resolved or {}
 
-    # Build a spatial index: (rounded_x, rounded_y) → pad feature
-    # from the component layer so we can look up by toeprint position.
-    pad_by_pos: dict[tuple[int, int], object] = {}
+    # Pre-parse the component layer once: build a global position → pad map
+    # and collect line features.  Per-component filtering (to only the pads
+    # that belong to each component's own toeprints) is done inside the loop
+    # so that pads from other components are never accidentally matched.
+    _all_pad_by_pos: dict[tuple[float, float], object] = {}
     pad_sym_lookup: dict[int, object] = {}
     pad_units: str = "INCH"
     line_features: list = []
@@ -95,12 +97,23 @@ def draw_components(ax: Axes, components: list[Component],
         for feat in comp_layer_features.features:
             if isinstance(feat, PadRecord):
                 key = (round(feat.x, 4), round(feat.y, 4))
-                pad_by_pos[key] = feat
+                _all_pad_by_pos[key] = feat
             elif isinstance(feat, LineRecord):
                 line_features.append(feat)
 
     for comp_idx, comp in enumerate(components):
         pkg = pkg_lookup.get(comp.pkg_ref)
+
+        # Build a component-specific pad lookup restricted to this component's
+        # own toeprint positions so that pads belonging to other components are
+        # never drawn here, even if their board positions happen to round to the
+        # same grid key.
+        if _all_pad_by_pos:
+            toep_keys = {(round(tp.x, 4), round(tp.y, 4)) for tp in comp.toeprints}
+            pad_by_pos = {k: v for k, v in _all_pad_by_pos.items() if k in toep_keys}
+        else:
+            pad_by_pos = {}
+
         drew = _draw_component_geometry(ax, comp, pkg, color, alpha,
                                         draw_pads=show_pads,
                                         draw_pkg_outlines=show_pkg_outlines,
