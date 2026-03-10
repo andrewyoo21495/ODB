@@ -801,6 +801,8 @@ def cmd_view_comp(args):
         components_top=data["components_top"],
         components_bot=data["components_bot"],
         eda_data=data.get("eda_data"),
+        layers_data=data.get("layers_data", {}),
+        user_symbols=data.get("user_symbols", {}),
     )
     viewer.show()
 

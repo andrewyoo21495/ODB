@@ -45,7 +45,7 @@ def symbol_to_patch(symbol_name: str, x: float, y: float,
 
     if sym.type == "round":
         d = sym.params["diameter"] * scale
-        return Circle((x, y), d / 2, color=color, alpha=alpha)
+        return Circle((x, y), d / 2, facecolor=color, edgecolor="none", alpha=alpha)
 
     elif sym.type == "square":
         s = sym.params["side"] * scale
@@ -59,7 +59,7 @@ def symbol_to_patch(symbol_name: str, x: float, y: float,
             corners = _mirror_points(corners, x)
         if rotation:
             corners = _rotate_points(corners, x, y, rotation)
-        return Polygon(corners, closed=True, color=color, alpha=alpha)
+        return Polygon(corners, closed=True, facecolor=color, edgecolor="none", alpha=alpha)
 
     elif sym.type in ("rect", "rect_round", "rect_chamfer"):
         w = sym.params["width"] * scale
@@ -86,7 +86,7 @@ def symbol_to_patch(symbol_name: str, x: float, y: float,
                 corners = _mirror_points(corners, x)
             if rotation:
                 corners = _rotate_points(corners, x, y, rotation)
-            return Polygon(corners, closed=True, color=color, alpha=alpha)
+            return Polygon(corners, closed=True, facecolor=color, edgecolor="none", alpha=alpha)
 
     elif sym.type == "oval":
         w = sym.params["width"] * scale
@@ -96,7 +96,7 @@ def symbol_to_patch(symbol_name: str, x: float, y: float,
     elif sym.type == "ellipse":
         w = sym.params["width"] * scale
         h = sym.params["height"] * scale
-        patch = Ellipse((x, y), w, h, color=color, alpha=alpha)
+        patch = Ellipse((x, y), w, h, facecolor=color, edgecolor="none", alpha=alpha)
         # orient_def: mirror flips the rotation direction
         angle = -rotation if not mirror else rotation
         if angle:
@@ -113,7 +113,7 @@ def symbol_to_patch(symbol_name: str, x: float, y: float,
             verts = _mirror_points(verts, x)
         if rotation:
             verts = _rotate_points(verts, x, y, rotation)
-        return Polygon(verts, closed=True, color=color, alpha=alpha)
+        return Polygon(verts, closed=True, facecolor=color, edgecolor="none", alpha=alpha)
 
     elif sym.type == "donut_r":
         od = sym.params["outer_diameter"] * scale
@@ -174,7 +174,7 @@ def symbol_to_patch(symbol_name: str, x: float, y: float,
             verts = _mirror_points(verts, x)
         if rotation:
             verts = _rotate_points(verts, x, y, rotation)
-        return Polygon(verts, closed=True, color=color, alpha=alpha)
+        return Polygon(verts, closed=True, facecolor=color, edgecolor="none", alpha=alpha)
 
     elif sym.type == "triangle":
         base = sym.params["base"] * scale
@@ -189,7 +189,7 @@ def symbol_to_patch(symbol_name: str, x: float, y: float,
             verts = _mirror_points(verts, x)
         if rotation:
             verts = _rotate_points(verts, x, y, rotation)
-        return Polygon(verts, closed=True, color=color, alpha=alpha)
+        return Polygon(verts, closed=True, facecolor=color, edgecolor="none", alpha=alpha)
 
     elif sym.type in ("hex_l", "hex_s"):
         w = sym.params["width"] * scale
@@ -200,7 +200,7 @@ def symbol_to_patch(symbol_name: str, x: float, y: float,
             verts = _mirror_points(verts, x)
         if rotation:
             verts = _rotate_points(verts, x, y, rotation)
-        return Polygon(verts, closed=True, color=color, alpha=alpha)
+        return Polygon(verts, closed=True, facecolor=color, edgecolor="none", alpha=alpha)
 
     elif sym.type == "half_oval":
         w = sym.params["width"] * scale
@@ -304,7 +304,7 @@ def symbol_to_patch(symbol_name: str, x: float, y: float,
         return None
 
     # Fallback: small circle for unrecognized symbols (~1 mil in mm)
-    return Circle((x, y), 0.025, color=color, alpha=alpha * 0.5)
+    return Circle((x, y), 0.025, facecolor=color, edgecolor="none", alpha=alpha * 0.5)
 
 
 def get_line_width_for_symbol(symbol_name: str, units: str = "INCH",
@@ -385,7 +385,7 @@ def user_symbol_to_patches(symbol: UserSymbol, x: float, y: float,
             for island_verts, hole_list in groups:
                 if not hole_list:
                     patches.append(Polygon(island_verts, closed=True,
-                                           color=color, alpha=alpha))
+                                           facecolor=color, edgecolor="none", alpha=alpha))
                 else:
                     # Compound path with holes
                     all_verts = []
@@ -714,7 +714,7 @@ def _make_oval(x: float, y: float, w: float, h: float,
         pts = _mirror_points(pts, x)
     if rotation:
         pts = _rotate_points(pts, x, y, rotation)
-    return Polygon(pts, closed=True, color=color, alpha=alpha)
+    return Polygon(pts, closed=True, facecolor=color, edgecolor="none", alpha=alpha)
 
 
 def _make_half_oval(x: float, y: float, w: float, h: float,
@@ -736,7 +736,7 @@ def _make_half_oval(x: float, y: float, w: float, h: float,
         verts = _mirror_points(verts, x)
     if rotation:
         verts = _rotate_points(verts, x, y, rotation)
-    return Polygon(verts, closed=True, color=color, alpha=alpha)
+    return Polygon(verts, closed=True, facecolor=color, edgecolor="none", alpha=alpha)
 
 
 def _make_butterfly(x: float, y: float, size: float, rotation: float,
@@ -770,7 +770,7 @@ def _make_butterfly(x: float, y: float, size: float, rotation: float,
         verts[:, 0] = 2 * x - verts[:, 0]
     if rotation:
         verts = _rotate_points(verts, x, y, rotation)
-    return Polygon(verts, closed=True, color=color, alpha=alpha)
+    return Polygon(verts, closed=True, facecolor=color, edgecolor="none", alpha=alpha)
 
 
 def _rounded_rect_points(cx: float, cy: float, w: float, h: float,
@@ -828,7 +828,7 @@ def _make_rounded_rect(cx: float, cy: float, w: float, h: float, r: float,
         pts = _mirror_points(pts, cx)
     if rotation:
         pts = _rotate_points(pts, cx, cy, rotation)
-    return Polygon(pts, closed=True, color=color, alpha=alpha)
+    return Polygon(pts, closed=True, facecolor=color, edgecolor="none", alpha=alpha)
 
 
 def _make_chamfered_rect(cx: float, cy: float, w: float, h: float, cs: float,
@@ -865,7 +865,7 @@ def _make_chamfered_rect(cx: float, cy: float, w: float, h: float, cs: float,
         verts = _mirror_points(verts, cx)
     if rotation:
         verts = _rotate_points(verts, cx, cy, rotation)
-    return Polygon(verts, closed=True, color=color, alpha=alpha)
+    return Polygon(verts, closed=True, facecolor=color, edgecolor="none", alpha=alpha)
 
 
 # ---------------------------------------------------------------------------
@@ -1084,7 +1084,7 @@ def _make_hplate(x: float, y: float, params: dict, scale: float,
         verts[:, 0] = 2 * x - verts[:, 0]
     if rotation:
         verts = _rotate_points(verts, x, y, rotation)
-    return Polygon(verts, closed=True, color=color, alpha=alpha)
+    return Polygon(verts, closed=True, facecolor=color, edgecolor="none", alpha=alpha)
 
 
 def _make_rhplate(x: float, y: float, params: dict, scale: float,
@@ -1110,7 +1110,7 @@ def _make_rhplate(x: float, y: float, params: dict, scale: float,
         verts[:, 0] = 2 * x - verts[:, 0]
     if rotation:
         verts = _rotate_points(verts, x, y, rotation)
-    return Polygon(verts, closed=True, color=color, alpha=alpha)
+    return Polygon(verts, closed=True, facecolor=color, edgecolor="none", alpha=alpha)
 
 
 def _make_fhplate(x: float, y: float, params: dict, scale: float,
@@ -1140,7 +1140,7 @@ def _make_fhplate(x: float, y: float, params: dict, scale: float,
         verts = _mirror_points(verts, x)
     if rotation:
         verts = _rotate_points(verts, x, y, rotation)
-    return Polygon(verts, closed=True, color=color, alpha=alpha)
+    return Polygon(verts, closed=True, facecolor=color, edgecolor="none", alpha=alpha)
 
 
 def _make_radhplate(x: float, y: float, params: dict, scale: float,
@@ -1176,7 +1176,7 @@ def _make_radhplate(x: float, y: float, params: dict, scale: float,
         verts[:, 0] = 2 * x - verts[:, 0]
     if rotation:
         verts = _rotate_points(verts, x, y, rotation)
-    return Polygon(verts, closed=True, color=color, alpha=alpha)
+    return Polygon(verts, closed=True, facecolor=color, edgecolor="none", alpha=alpha)
 
 
 def _make_dshape(x: float, y: float, params: dict, scale: float,
@@ -1211,7 +1211,7 @@ def _make_dshape(x: float, y: float, params: dict, scale: float,
         verts[:, 0] = 2 * x - verts[:, 0]
     if rotation:
         verts = _rotate_points(verts, x, y, rotation)
-    return Polygon(verts, closed=True, color=color, alpha=alpha)
+    return Polygon(verts, closed=True, facecolor=color, edgecolor="none", alpha=alpha)
 
 
 def _make_cross(x: float, y: float, params: dict, scale: float,
@@ -1248,7 +1248,7 @@ def _make_cross(x: float, y: float, params: dict, scale: float,
         verts = _mirror_points(verts, x)
     if rotation:
         verts = _rotate_points(verts, x, y, rotation)
-    return Polygon(verts, closed=True, color=color, alpha=alpha)
+    return Polygon(verts, closed=True, facecolor=color, edgecolor="none", alpha=alpha)
 
 
 def _make_dogbone(x: float, y: float, params: dict, scale: float,
@@ -1285,7 +1285,7 @@ def _make_dogbone(x: float, y: float, params: dict, scale: float,
         verts = _mirror_points(verts, x)
     if rotation:
         verts = _rotate_points(verts, x, y, rotation)
-    return Polygon(verts, closed=True, color=color, alpha=alpha)
+    return Polygon(verts, closed=True, facecolor=color, edgecolor="none", alpha=alpha)
 
 
 def _make_dpack(x: float, y: float, params: dict, scale: float,
@@ -1307,7 +1307,7 @@ def _make_dpack(x: float, y: float, params: dict, scale: float,
     pad_h = (h - vg * (vn - 1)) / vn if vn > 0 else h
 
     if pad_w <= 0 or pad_h <= 0:
-        return Circle((x, y), 0.001, color=color, alpha=alpha * 0.5)
+        return Circle((x, y), 0.001, facecolor=color, edgecolor="none", alpha=alpha * 0.5)
 
     all_verts = []
     all_codes = []
@@ -1331,7 +1331,7 @@ def _make_dpack(x: float, y: float, params: dict, scale: float,
                              [MplPath.CLOSEPOLY])
 
     if not all_verts:
-        return Circle((x, y), 0.001, color=color, alpha=alpha * 0.5)
+        return Circle((x, y), 0.001, facecolor=color, edgecolor="none", alpha=alpha * 0.5)
 
     verts_arr = np.array(all_verts)
     if mirror:
@@ -1415,7 +1415,7 @@ def _make_moire(x: float, y: float, params: dict, scale: float,
                           MplPath.LINETO, MplPath.CLOSEPOLY])
 
     if not all_verts:
-        return Circle((x, y), 0.001, color=color, alpha=alpha * 0.5)
+        return Circle((x, y), 0.001, facecolor=color, edgecolor="none", alpha=alpha * 0.5)
 
     path = MplPath(np.array(all_verts), all_codes)
     return PathPatch(path, facecolor=color, alpha=alpha, edgecolor="none")

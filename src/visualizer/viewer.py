@@ -523,11 +523,34 @@ class ComponentViewer:
                  profile: Profile,
                  components_top: list[Component] = None,
                  components_bot: list[Component] = None,
-                 eda_data: EdaData = None):
+                 eda_data: EdaData = None,
+                 layers_data: dict[str, tuple[LayerFeatures, MatrixLayer]] = None,
+                 user_symbols: dict[str, UserSymbol] = None):
         self.profile         = profile
         self.components_top  = components_top or []
         self.components_bot  = components_bot or []
         self.eda_data        = eda_data
+        self.user_symbols    = user_symbols or {}
+        layers_data          = layers_data or {}
+
+        self._comp_layer_top: Optional[LayerFeatures] = next(
+            (lf for name, (lf, _) in layers_data.items() if "comp_+_top" in name),
+            None,
+        )
+        self._comp_layer_bot: Optional[LayerFeatures] = next(
+            (lf for name, (lf, _) in layers_data.items() if "comp_+_bot" in name),
+            None,
+        )
+
+        self._fid_resolved: dict = {}
+        if eda_data and eda_data.layer_names and layers_data:
+            from src.visualizer.fid_lookup import build_fid_map, resolve_fid_features
+            fid_map = build_fid_map(eda_data)
+            if fid_map:
+                self._fid_resolved = resolve_fid_features(
+                    fid_map, eda_data.layer_names, layers_data,
+                )
+
         self._selected_comp:     Optional[Component] = None
         self._selected_pin_name: str               = ""
         self._current_layer      = "Both"
@@ -738,30 +761,41 @@ class ComponentViewer:
                 if top_comps:
                     draw_components(self.ax, top_comps, packages,
                                     color="#45CAFF", alpha=0.99,
-                                    show_pads=True,
-                                    show_pkg_outlines=False)
+                                    show_pads=True, show_pkg_outlines=False,
+                                    comp_layer_features=self._comp_layer_top,
+                                    user_symbols=self.user_symbols,
+                                    fid_resolved=self._fid_resolved,
+                                    comp_side="T")
                 if bot_comps:
                     draw_components(self.ax, bot_comps, packages,
                                     color="#FF7D90", alpha=0.99,
-                                    show_pads=True,
-                                    show_pkg_outlines=False)
+                                    show_pads=True, show_pkg_outlines=False,
+                                    comp_layer_features=self._comp_layer_bot,
+                                    user_symbols=self.user_symbols,
+                                    fid_resolved=self._fid_resolved,
+                                    comp_side="B")
             if show_outline:
                 if top_comps:
                     draw_components(self.ax, top_comps, packages,
                                     color="#FFFF00", alpha=0.99,
-                                    show_pads=False,
-                                    show_pkg_outlines=True)
+                                    show_pads=False, show_pkg_outlines=True)
                 if bot_comps:
                     draw_components(self.ax, bot_comps, packages,
                                     color="#FFFF00", alpha=0.99,
-                                    show_pads=False,
-                                    show_pkg_outlines=True)
+                                    show_pads=False, show_pkg_outlines=True)
 
         # Selection highlight – draw selected component in red on top
         if self._selected_comp is not None and self._selected_comp in (comps or []):
+            is_bot = self._selected_comp in self.components_bot
             draw_components(self.ax, [self._selected_comp], packages,
                             color="#FF0000", alpha=1.0,
-                            show_pads=True, show_pkg_outlines=True)
+                            show_pads=True, show_pkg_outlines=True,
+                            comp_layer_features=(self._comp_layer_bot
+                                                 if is_bot
+                                                 else self._comp_layer_top),
+                            user_symbols=self.user_symbols,
+                            fid_resolved=self._fid_resolved,
+                            comp_side="B" if is_bot else "T")
 
         self._apply_axis_labels()
         self.canvas.draw()
