@@ -306,123 +306,166 @@ def _write_tabular_details(ws, columns: list[str], rows: list[dict],
                 cell.alignment = Alignment(horizontal="center")
 
 
-def _load_managed_parts_csvs(references_dir: Path) -> dict[str, set[str]]:
-    """Load CSV files from references_dir whose names contain 'capacitor' or 'inductor'.
+def _load_csv_part_map(csv_path: Path) -> dict[str, str]:
+    """Load a CSV and return a mapping of part_name -> size."""
+    part_map: dict[str, str] = {}
+    try:
+        with open(csv_path, newline="", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                pn = (row.get("part_name") or "").strip()
+                sz = (row.get("size") or "").strip()
+                if pn:
+                    part_map[pn] = sz
+    except Exception:
+        pass
+    return part_map
 
-    Returns a dict mapping display name (stem) -> set of part_name values.
+
+def _count_usage(part_names: set[str], components_top: list,
+                 components_bot: list) -> dict[str, dict]:
+    """For each managed part_name, count how many board components use it.
+
+    Returns a dict: part_name -> {"top": int, "bottom": int, "total": int}
     """
-    managed: dict[str, set[str]] = {}
-    if not references_dir or not Path(references_dir).is_dir():
-        return managed
-    for csv_path in sorted(Path(references_dir).glob("*.csv")):
-        stem_lower = csv_path.stem.lower()
-        if "capacitor" not in stem_lower and "inductor" not in stem_lower:
-            continue
-        part_names: set[str] = set()
-        try:
-            with open(csv_path, newline="", encoding="utf-8") as f:
-                reader = csv.DictReader(f)
-                for row in reader:
-                    pn = (row.get("part_name") or "").strip()
-                    if pn:
-                        part_names.add(pn)
-        except Exception:
-            continue
-        if part_names:
-            managed[csv_path.stem] = part_names
-    return managed
+    counts: dict[str, dict] = {pn: {"top": 0, "bottom": 0, "total": 0}
+                                for pn in part_names}
+    for comp in components_top:
+        if comp.part_name in counts:
+            counts[comp.part_name]["top"] += 1
+            counts[comp.part_name]["total"] += 1
+    for comp in components_bot:
+        if comp.part_name in counts:
+            counts[comp.part_name]["bottom"] += 1
+            counts[comp.part_name]["total"] += 1
+    return counts
 
 
 def _create_manage_list_sheet(wb: Workbook, components_top: list,
                                components_bot: list,
                                references_dir):
-    """Create the 'manage_list' sheet listing managed capacitors/inductors by layer."""
+    """Create the 'manage_list' sheet tracking usage frequency of managed parts.
+
+    Two sections are generated:
+    - Capacitors (51 types): combined capacitors_10_list + capacitors_41_list
+    - Inductors (2S): inductors_2s_list
+
+    Each section shows one row per managed part_name with TOP/BOTTOM/Total
+    usage counts, sorted by total count descending.
+    """
     ws = wb.create_sheet("manage_list")
 
-    managed = _load_managed_parts_csvs(references_dir)
-    if not managed:
+    ref = Path(references_dir) if references_dir else None
+    if not ref or not ref.is_dir():
         ws["A1"] = "No managed-parts CSV files found in references directory."
         return
 
-    # Build lookup: part_name -> list of (layer, comp_name, part_name)
-    all_matches: dict[str, list[tuple[str, str, str]]] = {}
+    # Load the three active reference CSVs
+    cap10_map  = _load_csv_part_map(ref / "capacitors_10_list.csv")
+    cap41_map  = _load_csv_part_map(ref / "capacitors_41_list.csv")
+    ind2s_map  = _load_csv_part_map(ref / "inductors_2s_list.csv")
 
-    for list_name, part_names in managed.items():
-        matches: list[tuple[str, str, str]] = []
-        for comp in components_top:
-            if comp.part_name in part_names:
-                matches.append(("TOP", comp.comp_name, comp.part_name))
-        for comp in components_bot:
-            if comp.part_name in part_names:
-                matches.append(("BOTTOM", comp.comp_name, comp.part_name))
-        all_matches[list_name] = matches
+    # Merged capacitor map – 10-type entries take precedence for size
+    cap_merged: dict[str, dict] = {}
+    for pn, sz in cap41_map.items():
+        cap_merged[pn] = {"size": sz, "source": "41-type"}
+    for pn, sz in cap10_map.items():
+        cap_merged[pn] = {"size": sz, "source": "10-type"}
+
+    ind_merged: dict[str, dict] = {
+        pn: {"size": sz} for pn, sz in ind2s_map.items()
+    }
+
+    sections = [
+        (f"Capacitors ({len(cap_merged)} types)", cap_merged, True),
+        ("Inductors (2S)", ind_merged, False),
+    ]
 
     # -- Sheet title --
-    ws.merge_cells("A1:E1")
+    NUM_COLS = 6
+    ws.merge_cells(f"A1:{get_column_letter(NUM_COLS)}1")
     title = ws["A1"]
-    title.value = "Managed Parts List (Capacitors / Inductors)"
+    title.value = "Managed Parts — Usage Frequency"
     title.font = Font(bold=True, size=13)
     title.alignment = Alignment(horizontal="center")
 
     current_row = 3
+    _SUBHDR_FILL = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
+    _USED_FILL   = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
+    _ZERO_FILL   = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")
+    _USED_FONT   = Font(color="006100")
+    _ZERO_FONT   = Font(color="A0A0A0", italic=True)
 
-    for list_name, matches in all_matches.items():
-        top_matches = [m for m in matches if m[0] == "TOP"]
-        bot_matches = [m for m in matches if m[0] == "BOTTOM"]
+    for section_title, part_meta, has_source in sections:
+        if not part_meta:
+            continue
 
-        # Section header
-        hdr = ws.cell(row=current_row, column=1, value=list_name)
+        usage = _count_usage(set(part_meta.keys()), components_top, components_bot)
+
+        total_on_board = sum(v["total"] for v in usage.values())
+        used_types     = sum(1 for v in usage.values() if v["total"] > 0)
+
+        # -- Section header (blue bar) --
+        hdr = ws.cell(row=current_row, column=1, value=section_title)
         hdr.font = Font(bold=True, size=11, color="FFFFFF")
-        hdr.fill = _HEADER_FILL
-        for col in range(1, 6):
+        for col in range(1, NUM_COLS + 1):
             ws.cell(row=current_row, column=col).fill = _HEADER_FILL
         ws.merge_cells(
             start_row=current_row, start_column=1,
-            end_row=current_row, end_column=5
+            end_row=current_row, end_column=NUM_COLS
         )
         hdr.alignment = Alignment(horizontal="left")
         current_row += 1
 
-        # Summary row
-        summary = ws.cell(
-            row=current_row, column=1,
-            value=f"TOP: {len(top_matches)}  |  BOTTOM: {len(bot_matches)}  |  Total: {len(matches)}"
+        # -- Summary row --
+        summary_text = (
+            f"Managed types: {len(part_meta)}    "
+            f"Types found on board: {used_types}    "
+            f"Total placements: {total_on_board}"
         )
+        summary = ws.cell(row=current_row, column=1, value=summary_text)
         summary.font = Font(bold=True)
         ws.merge_cells(
             start_row=current_row, start_column=1,
-            end_row=current_row, end_column=5
+            end_row=current_row, end_column=NUM_COLS
         )
         current_row += 1
 
-        if not matches:
-            none_cell = ws.cell(row=current_row, column=2, value="(no matching components found)")
-            none_cell.font = Font(italic=True, color="808080")
-            current_row += 2
-            continue
-
-        # Column headers
-        col_headers = ["Layer", "comp_name", "part_name"]
-        fill_colors = {"TOP": "DDEEFF", "BOTTOM": "FFE8CC"}
+        # -- Column headers --
+        col_headers = ["part_name", "size", "TOP", "BOTTOM", "Total"]
+        if has_source:
+            col_headers.append("source")
         for col, h in enumerate(col_headers, 1):
             cell = ws.cell(row=current_row, column=col, value=h)
             cell.font = Font(bold=True)
-            cell.fill = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
+            cell.fill = _SUBHDR_FILL
             cell.border = _THIN_BORDER
             cell.alignment = Alignment(horizontal="center")
         current_row += 1
 
-        # Detail rows – TOP first, then BOTTOM
-        for layer, comp_name, part_name in sorted(matches, key=lambda m: (m[0] != "TOP", m[1])):
-            row_fill = PatternFill(
-                start_color=fill_colors.get(layer, "FFFFFF"),
-                end_color=fill_colors.get(layer, "FFFFFF"),
-                fill_type="solid"
-            )
-            for col, val in enumerate([layer, comp_name, part_name], 1):
+        # -- Data rows: sort by total descending, then part_name --
+        sorted_parts = sorted(
+            part_meta.items(),
+            key=lambda kv: (-usage[kv[0]]["total"], kv[0])
+        )
+
+        for pn, meta in sorted_parts:
+            cnt = usage[pn]
+            is_used = cnt["total"] > 0
+            row_fill = _USED_FILL if is_used else _ZERO_FILL
+            row_font = _USED_FONT if is_used else _ZERO_FONT
+
+            values = [pn, meta.get("size", ""), cnt["top"], cnt["bottom"], cnt["total"]]
+            if has_source:
+                values.append(meta.get("source", ""))
+
+            for col, val in enumerate(values, 1):
                 cell = ws.cell(row=current_row, column=col, value=val)
                 cell.fill = row_fill
+                cell.font = row_font
                 cell.border = _THIN_BORDER
+                if col in (3, 4, 5):
+                    cell.alignment = Alignment(horizontal="center")
             current_row += 1
 
         current_row += 1  # blank row between sections

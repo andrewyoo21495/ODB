@@ -118,9 +118,9 @@ ODB/
 │       ├── reporter.py            # Excel report generation (openpyxl)
 │       └── rules/                 # Individual rule implementations
 │           ├── __init__.py
-│           ├── ckl_component_alignment.py
-│           ├── ckl_spacing.py
-│           ├── ckl_placement.py
+│           ├── ckl_01_001.py
+│           ├── ckl_01_005.py
+│           ├── ckl_02_001.py
 │           └── ...
 │
 ├── main.py                        # CLI entry point
@@ -473,7 +473,7 @@ Key rendering considerations:
 ```python
 class ChecklistRule:
     """Base class for all checklist rules."""
-    rule_id: str        # e.g., "CKL-001"
+    rule_id: str        # e.g., "CKL-01-001"
     description: str    # Human-readable description
     category: str       # "placement", "spacing", "alignment", etc.
 
@@ -490,11 +490,14 @@ Example rules that can be implemented:
 
 | Rule ID | Description | Logic |
 |---------|-------------|-------|
-| CKL-001 | Capacitor-connector alignment | Check if specific capacitors on Top are horizontally aligned with connectors on Bottom |
-| CKL-002 | Component spacing | Verify minimum distance between components using KDTree (scipy) |
-| CKL-003 | Component placement zone | Check components are within board outline profile |
-| CKL-004 | Solder paste coverage | Verify paste layer features cover component pads |
-| CKL-005 | Via-to-component clearance | Check minimum distance from vias to component bodies |
+| CKL-01-001 | IC overlap check | ICs must not overlap with interposers or connectors on the opposite side |
+| CKL-01-005 | Inductor placement review | Inductors (≥2012) overlapping opposite side of AP/Memory: corner placement and orientation |
+| CKL-02-001 | Capacitor-connector spacing | 10 managed capacitor types must be at least 1.5mm from connectors on the opposite side |
+| CKL-02-006 | General capacitor overlap | General capacitors overlapping connectors: edge and orientation check |
+| CKL-02-008 | 2S inductor overlap | 2S Inductors (≥2012) overlapping connectors: edge and orientation check |
+| CKL-02-009 | General inductor overlap | General Inductors (≥2012, excluding 2S) overlapping connectors: edge and orientation check |
+| CKL-02-010 | SIM socket clearance | SIM sockets: capacitors/inductors (≥2012) on opposite side must be horizontally oriented |
+| CKL-03-015 | PCB outline clearance | Components must have at least 0.65mm clearance from the PCB outline |
 
 Rules use `shapely` for geometric operations (containment, distance, intersection) and `scipy.spatial.KDTree` for efficient nearest-neighbor spacing checks.
 
@@ -505,9 +508,9 @@ Rules use `shapely` for geometric operations (containment, distance, intersectio
 Report structure:
 | Column | Content |
 |--------|---------|
-| Rule ID | CKL-001 |
-| Category | Alignment |
-| Description | Capacitor-connector horizontal alignment |
+| Rule ID | CKL-01-001 |
+| Category | Placement |
+| Description | IC overlap with interposers/connectors on opposite side |
 | Status | PASS / FAIL |
 | Affected Components | R56, C12, ... |
 | Details | Detailed finding message |

@@ -11,7 +11,7 @@ class ChecklistRule(ABC):
     """Abstract base class for design checklist rules.
 
     Subclasses must implement:
-        - rule_id: Unique identifier (e.g., "CKL-001")
+        - rule_id: Unique identifier (e.g., "CKL-01-001")
         - description: Human-readable description
         - category: Category string (e.g., "placement", "spacing", "alignment")
         - evaluate(job_data): Run the check and return a RuleResult

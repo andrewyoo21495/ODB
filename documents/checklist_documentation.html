@@ -220,7 +220,7 @@
 
 <div class="stats-bar">
   <div class="stat">
-    <div class="stat-value">11</div>
+    <div class="stat-value">8</div>
     <div class="stat-label">Total Rules</div>
   </div>
   <div class="stat">
@@ -228,12 +228,12 @@
     <div class="stat-label">Categories</div>
   </div>
   <div class="stat">
-    <div class="stat-value">5</div>
+    <div class="stat-value">3</div>
     <div class="stat-label">Reference CSVs</div>
   </div>
   <div class="stat">
     <div class="stat-value">8</div>
-    <div class="stat-label">New Rules</div>
+    <div class="stat-label">Rules</div>
   </div>
 </div>
 
@@ -248,73 +248,6 @@
     <p>Results are printed to the console and exported to an Excel file in <strong>output/</strong>. Each rule gets its own sheet with a structured results table.</p>
   </div>
 
-  <!-- ================================================================== -->
-  <!-- LEGACY RULES -->
-  <!-- ================================================================== -->
-  <div class="section-title">Legacy Rules (CKL-001 ~ CKL-003)</div>
-
-  <!-- CKL-001 -->
-  <div class="rule-card">
-    <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
-      <span class="rule-id">CKL-001</span>
-      <span class="rule-desc">Capacitors on Top layer must be horizontally aligned with connectors on Bottom layer</span>
-      <span class="badge badge-alignment">Alignment</span>
-      <span class="toggle-icon">&#9654;</span>
-    </div>
-    <div class="rule-body">
-      <h4>Inspection Process</h4>
-      <ol>
-        <li>Find all capacitors on the Top layer.</li>
-        <li>Find all connectors on the Bottom layer.</li>
-        <li>For each capacitor, find the nearest bottom connector and check Y-axis alignment (tolerance: 0.254mm).</li>
-      </ol>
-      <h4>Pass/Fail Criteria</h4>
-      <div class="pass-fail-note"><strong>PASS</strong> if the Y-coordinate difference between capacitor and nearest connector is within 0.254mm.</div>
-    </div>
-  </div>
-
-  <!-- CKL-002 -->
-  <div class="rule-card">
-    <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
-      <span class="rule-id">CKL-002</span>
-      <span class="rule-desc">Minimum spacing between components must be maintained (0.2032mm)</span>
-      <span class="badge badge-spacing">Spacing</span>
-      <span class="toggle-icon">&#9654;</span>
-    </div>
-    <div class="rule-body">
-      <h4>Inspection Process</h4>
-      <ol>
-        <li>Build a KD-tree spatial index of all component positions.</li>
-        <li>Query for pairs within the minimum spacing threshold.</li>
-        <li>Flag any pair closer than 0.2032mm.</li>
-      </ol>
-      <h4>Pass/Fail Criteria</h4>
-      <div class="pass-fail-note"><strong>PASS</strong> if all component pairs are at least 0.2032mm apart.</div>
-    </div>
-  </div>
-
-  <!-- CKL-003 -->
-  <div class="rule-card">
-    <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
-      <span class="rule-id">CKL-003</span>
-      <span class="rule-desc">All components must be placed within the board outline</span>
-      <span class="badge badge-placement">Placement</span>
-      <span class="toggle-icon">&#9654;</span>
-    </div>
-    <div class="rule-body">
-      <h4>Inspection Process</h4>
-      <ol>
-        <li>Construct a polygon from the PCB profile outline.</li>
-        <li>Check each component centre against the polygon boundary.</li>
-        <li>Flag any component whose centre falls outside the board outline.</li>
-      </ol>
-      <h4>Pass/Fail Criteria</h4>
-      <div class="pass-fail-note"><strong>PASS</strong> if the component centre is within the board polygon.</div>
-    </div>
-  </div>
-
-  <!-- ================================================================== -->
-  <!-- NEW RULES -->
   <!-- ================================================================== -->
   <div class="section-title">Checklist Series 01 &mdash; IC / AP-Memory Placement</div>
 
@@ -599,32 +532,17 @@
       <tr>
         <td class="col-name">capacitors_10_list.csv</td>
         <td>10 managed capacitor types with part_name and size</td>
-        <td>CKL-02-001, CKL-02-006, CKL-02-010</td>
+        <td>CKL-02-001, CKL-02-006, CKL-02-010, manage_list</td>
       </tr>
       <tr>
         <td class="col-name">capacitors_41_list.csv</td>
         <td>41 managed capacitor types with part_name and size</td>
-        <td>CKL-02-006</td>
+        <td>CKL-02-006, manage_list</td>
       </tr>
       <tr>
         <td class="col-name">inductors_2s_list.csv</td>
         <td>2S inductor types with part_name and size</td>
-        <td>CKL-01-005, CKL-02-008, CKL-02-009, CKL-02-010</td>
-      </tr>
-      <tr>
-        <td class="col-name">capacitors_5_list.csv</td>
-        <td>5 managed capacitor types (legacy)</td>
-        <td>manage_list sheet</td>
-      </tr>
-      <tr>
-        <td class="col-name">capacitors_7_list.csv</td>
-        <td>7 managed capacitor types (legacy)</td>
-        <td>manage_list sheet</td>
-      </tr>
-      <tr>
-        <td class="col-name">dpad_capacitors.csv</td>
-        <td>Dual-pad capacitors with geometry options</td>
-        <td>manage_list sheet</td>
+        <td>CKL-01-005, CKL-02-008, CKL-02-009, CKL-02-010, manage_list</td>
       </tr>
     </table>
   </div>

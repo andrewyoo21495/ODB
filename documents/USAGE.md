@@ -293,7 +293,7 @@ python main.py check data/designodb_rigidflex.tgz
 ### Run Specific Rules
 
 ```bash
-python main.py check data/designodb_rigidflex.tgz --rules CKL-001 CKL-003
+python main.py check data/designodb_rigidflex.tgz --rules CKL-01-001 CKL-03-015
 ```
 
 ### Custom Output Path
@@ -312,11 +312,7 @@ Default output path: `output/checklist_report.xlsx`
 
 ### Built-in Rules
 
-| Rule ID | Category | Description |
-|---------|----------|-------------|
-| CKL-001 | Alignment | Capacitors on the Top layer must be horizontally aligned with connectors on the Bottom layer. Checks Y-coordinate difference against a 0.010" tolerance. Component categories are determined by the classifier (see below). |
-| CKL-002 | Spacing | Minimum spacing between components must be maintained. Uses KDTree spatial indexing to find component pairs closer than 0.008" (~0.2mm). |
-| CKL-003 | Placement | All components must be placed within the board outline. Uses the board profile polygon and Shapely point-in-polygon tests. |
+Rules are listed in the [Checklist Documentation](checklist_documentation.html). Use the `--rules` flag to run specific rules by ID (e.g. `CKL-01-001`, `CKL-03-015`).
 
 ### Console Output
 
@@ -326,15 +322,13 @@ The checklist prints a summary to the console before generating the Excel file:
 ============================================================
 CHECKLIST RESULTS
 ============================================================
-  [+] CKL-001: Capacitors on Top layer must be horizontally aligned...
-      Status: PASS - No applicable capacitor-connector pairs found.
-  [X] CKL-002: Minimum spacing between components must be maintained
-      Status: FAIL - 1 spacing violation(s) found.
-      Components: XD1
-  [+] CKL-003: All components must be placed within the board outline
-      Status: PASS - All 692 components are within the board outline.
+  [+] CKL-01-001: ICs must not overlap with interposers or connectors...
+      Status: PASS - No overlapping components found.
+  [X] CKL-03-015: Components must have at least 0.65mm clearance...
+      Status: FAIL - 3 component(s) within clearance zone.
+      Components: C12, R56, L3
 
-Summary: 2 passed, 1 failed out of 3 rules
+Summary: 1 passed, 1 failed out of 2 rules
 ```
 
 ### Excel Report Structure
@@ -345,9 +339,9 @@ The generated `.xlsx` file contains a **Summary** sheet, a **Details** sheet, an
 |-----|---------|
 | **Summary** | Title with job name, pass/fail statistics, and a table with columns: Rule ID, Category, Description, Status (color-coded), Message, Affected Components. |
 | **Details** | Same columns as Summary plus a Details column with expanded violation information (e.g., exact distances, coordinate pairs). |
-| **CKL-001**, **CKL-002**, ... | One tab per rule. Contains a metadata header (rule ID, category, description, status, message), an affected components list, and detailed findings tables. |
+| **CKL-01-001**, **CKL-02-001**, ... | One tab per rule. Contains a metadata header (rule ID, category, description, status, message), an affected components list, and detailed findings tables. |
 
-Rule tabs are automatically sorted so that they appear in numerical order (e.g. CKL-001, CKL-002, CKL-003, ..., CKL-01-001, CKL-03-010). This ordering is maintained regardless of the naming convention used for rule IDs.
+Rule tabs are automatically sorted so that they appear in numerical order (e.g. CKL-01-001, CKL-01-005, ..., CKL-03-015). This ordering is maintained regardless of the naming convention used for rule IDs.
 
 ---
 
