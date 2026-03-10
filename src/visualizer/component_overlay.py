@@ -10,10 +10,20 @@ For each placed component the renderer looks up its Package via pkg_ref
 All coordinate data (components, EDA packages, profile, layer features) is
 normalised to MM before rendering.  Outline coordinates are in package-local
 space and are transformed to board coordinates following the ODB++ orient_def
-convention: mirror → rotate → translate.  For bottom-layer components the
-X-axis is mirrored first (in package space) and the rotation is then applied
-in the mirrored frame, which correctly reproduces the final top-view
-orientation.
+convention: mirror → rotate → translate.
+
+**Bottom-layer mirroring:**
+Components in comp_+_bot are viewed from the top.  Their CMP x/y and toeprint
+coordinates are already in board space (top-view), but package-local geometry
+(pin outlines, package outlines, bounding boxes) must be X-mirrored before
+rotation and translation because the component sits on the underside.  The
+CMP record's mirror flag indicates *additional* mirroring beyond the implicit
+bottom-layer flip:
+
+  bottom + mirror=N  → effective mirror = True  (normal bottom placement)
+  bottom + mirror=M  → effective mirror = False (extra flip cancels)
+  top    + mirror=N  → effective mirror = False
+  top    + mirror=M  → effective mirror = True
 
 Pad features from layer feature files carry an orient_def value (0–9) that
 encodes both rotation and mirror:
@@ -65,6 +75,8 @@ def draw_components(ax: Axes, components: list[Component],
     Pin pad rendering priority (highest to lowest):
       0. *fid_resolved* — FID-based lookup from EDA/data SNT→FID records.
          Deterministic mapping via (side, comp_num, pin_num) → feature.
+         Only ONE pad shape is drawn per pin (first successful layer match)
+         to avoid overlapping shapes from multiple copper/mask layers.
       1. *comp_layer_features* — spatial matching by toeprint (x, y) in the
          comp_+_top or comp_+_bot layer (legacy fallback).
       2. EDA package pin outlines (RC/CR/SQ/CONTOUR).
@@ -81,6 +93,7 @@ def draw_components(ax: Axes, components: list[Component],
         {i: pkg for i, pkg in enumerate(packages)} if packages else {}
     )
     fid_resolved = fid_resolved or {}
+    is_bottom = (comp_side == "B")
 
     # Pre-parse the component layer once: build a global position → pad map
     # and collect line features.  Per-component filtering (to only the pads
@@ -124,11 +137,12 @@ def draw_components(ax: Axes, components: list[Component],
                                         fid_resolved=fid_resolved,
                                         comp_side=comp_side,
                                         comp_idx=comp_idx,
-                                        line_features=line_features)
+                                        line_features=line_features,
+                                        is_bottom=is_bottom)
 
         if not drew:
             # Fallback: dashed bounding box
-            bbox = _get_component_bbox(comp, pkg)
+            bbox = _get_component_bbox(comp, pkg, is_bottom=is_bottom)
             if bbox:
                 _draw_comp_outline(ax, bbox, color,
                                    alpha if show_pads else alpha * 0.7)
@@ -161,13 +175,15 @@ def _draw_component_geometry(ax: Axes, comp: Component,
                               fid_resolved: dict = None,
                               comp_side: str = "T",
                               comp_idx: int = 0,
-                              line_features: list = None) -> bool:
+                              line_features: list = None,
+                              is_bottom: bool = False) -> bool:
     """Render pin pads and/or package outlines for one component.
 
     Returns True when at least one patch was added to *ax*.
 
     Pin pad rendering priority:
       0. FID-based lookup — deterministic mapping via EDA/data SNT→FID records.
+         Only one pad drawn per pin to avoid overlapping shapes.
       1. Component-layer pad feature at the toeprint position (spatial fallback).
       2. EDA package pin outline (RC / CR / SQ / CONTOUR).
       3. Small circle at the pin centre (last-resort fallback).
@@ -190,6 +206,15 @@ def _draw_component_geometry(ax: Axes, comp: Component,
                                         pad_sym_lookup, pad_units,
                                         color, alpha)
             if sc_drawn:
+                drew_any = True
+
+        # Shield-can fallback: if sweep failed (e.g. comp layer features are
+        # empty), draw a simple bounding-box outline and skip individual pins.
+        if _is_shield_can(comp) and not sc_drawn:
+            bbox = _get_component_bbox(comp, pkg, is_bottom=is_bottom)
+            if bbox:
+                _draw_comp_outline(ax, bbox, color, alpha)
+                sc_drawn = True
                 drew_any = True
 
         # Build a quick lookup from pin index → toeprint board position
@@ -240,14 +265,17 @@ def _draw_component_geometry(ax: Axes, comp: Component,
             # 2. Fall back to EDA package pin outlines
             if not drew_pin and pin.outlines:
                 for outline in pin.outlines:
-                    patch = _outline_to_patch(outline, comp, color, alpha)
+                    patch = _outline_to_patch(outline, comp, color, alpha,
+                                              is_bottom=is_bottom)
                     if patch is not None:
                         ax.add_patch(patch)
                         drew_pin = True
+                        break  # one outline per pin is enough
 
             # 3. Last-resort: small circle at the transformed pin centre
             if not drew_pin:
-                bx, by = _transform_point(pin.center.x, pin.center.y, comp)
+                bx, by = _transform_point(pin.center.x, pin.center.y,
+                                          comp, is_bottom=is_bottom)
                 fhs = pin.finished_hole_size
                 r = fhs / 2 if fhs > 0 else 0.1
                 ax.add_patch(Circle((bx, by), r,
@@ -263,7 +291,8 @@ def _draw_component_geometry(ax: Axes, comp: Component,
         ol_alpha = alpha * 0.5 if draw_pads else alpha
         for outline in pkg.outlines:
             patch = _outline_to_patch(outline, comp, color, ol_alpha,
-                                      filled=False, linestyle="--")
+                                      filled=False, linestyle="--",
+                                      is_bottom=is_bottom)
             if patch is not None:
                 ax.add_patch(patch)
                 drew_any = True
@@ -286,7 +315,10 @@ def _draw_pin_from_fid(ax: Axes, comp: Component,
     rotation, mirror).  If no toeprint is available the function returns
     False immediately.
 
-    Returns True if at least one patch was drawn.
+    Only ONE pad shape is drawn per pin (the first successfully resolved
+    feature) to avoid overlapping shapes from multiple copper/mask layers.
+
+    Returns True if a patch was drawn.
     """
     # Position must come from the toeprint (components file), not the layer.
     if tp is None:
@@ -302,7 +334,8 @@ def _draw_pin_from_fid(ax: Axes, comp: Component,
         if not pad_features:
             continue
 
-        drew = False
+        # Draw only the FIRST successfully resolved feature to avoid
+        # overlapping pads from multiple layers (e.g. signal + solder mask).
         for rpf in pad_features:
             pad = rpf.pad
             sym = rpf.symbol
@@ -317,7 +350,7 @@ def _draw_pin_from_fid(ax: Axes, comp: Component,
                 for p in patches:
                     ax.add_patch(p)
                 if patches:
-                    drew = True
+                    return True
             else:
                 patch = symbol_to_patch(
                     sym.name, px, py,
@@ -327,9 +360,7 @@ def _draw_pin_from_fid(ax: Axes, comp: Component,
                 )
                 if patch is not None:
                     ax.add_patch(patch)
-                    drew = True
-        if drew:
-            return True
+                    return True
 
     return False
 
@@ -601,8 +632,13 @@ def _draw_shield_can(ax: Axes, comp: Component,
 def _outline_to_patch(outline: PinOutline, comp: Component,
                       color: str, alpha: float,
                       filled: bool = True,
-                      linestyle: str = "-"):
+                      linestyle: str = "-",
+                      is_bottom: bool = False):
     """Convert a PinOutline to a board-coordinate matplotlib patch.
+
+    Args:
+        is_bottom: True for bottom-layer components; inverts the effective
+            mirror so that package-local geometry is correctly X-flipped.
 
     Returns None for unknown or degenerate shapes.
     """
@@ -612,7 +648,8 @@ def _outline_to_patch(outline: PinOutline, comp: Component,
     # -- Circle (CR) or rounded/chamfered circle (CT) -----------------------
     if outline.type in ("CR", "CT"):
         xc, yc = _transform_point(
-            p.get("xc", 0.0), p.get("yc", 0.0), comp)
+            p.get("xc", 0.0), p.get("yc", 0.0), comp,
+            is_bottom=is_bottom)
         r = p.get("radius", 0.001)
         if r <= 0:
             return None
@@ -634,7 +671,7 @@ def _outline_to_patch(outline: PinOutline, comp: Component,
             [llx + w, lly + h],
             [llx,     lly + h],
         ])
-        pts = _transform_pts(corners, comp)
+        pts = _transform_pts(corners, comp, is_bottom=is_bottom)
         return Polygon(pts, closed=True,
                        facecolor=fc, edgecolor=color,
                        alpha=alpha, linewidth=0.4, linestyle=linestyle)
@@ -652,7 +689,7 @@ def _outline_to_patch(outline: PinOutline, comp: Component,
             [xc + hs, yc + hs],
             [xc - hs, yc + hs],
         ])
-        pts = _transform_pts(corners, comp)
+        pts = _transform_pts(corners, comp, is_bottom=is_bottom)
         return Polygon(pts, closed=True,
                        facecolor=fc, edgecolor=color,
                        alpha=alpha, linewidth=0.4, linestyle=linestyle)
@@ -662,7 +699,7 @@ def _outline_to_patch(outline: PinOutline, comp: Component,
         verts = contour_to_vertices(outline.contour)
         if len(verts) < 2:
             return None
-        pts = _transform_pts(verts, comp)
+        pts = _transform_pts(verts, comp, is_bottom=is_bottom)
         return Polygon(pts, closed=True,
                        facecolor=fc, edgecolor=color,
                        alpha=alpha, linewidth=0.4, linestyle=linestyle)
@@ -671,16 +708,22 @@ def _outline_to_patch(outline: PinOutline, comp: Component,
 
 
 def _transform_point(px: float, py: float,
-                     comp: Component) -> tuple[float, float]:
+                     comp: Component,
+                     is_bottom: bool = False) -> tuple[float, float]:
     """Transform a single package-local point to board coordinates.
 
     ODB++ orient_def convention (mirror → rotate → translate):
-      1. Mirror X in package space for bottom-layer components.
+      1. Mirror X in package space.
       2. Rotate CCW by comp.rotation.
       3. Translate to board position (comp.x, comp.y).
+
+    For bottom-layer components (*is_bottom=True*) the effective mirror is
+    inverted: mirror=False (normal bottom placement) means X-mirror is
+    needed; mirror=True (extra flip) cancels the implicit bottom mirror.
     """
-    # Step 1: mirror X in package space for bottom-layer components
-    lx = -px if comp.mirror else px
+    # Step 1: compute effective mirror and apply X-flip in package space
+    effective_mirror = (not comp.mirror) if is_bottom else comp.mirror
+    lx = -px if effective_mirror else px
     ly = py
     # Step 2: CCW rotation
     angle = math.radians(comp.rotation)
@@ -692,17 +735,22 @@ def _transform_point(px: float, py: float,
     return (x_rot + comp.x, y_rot + comp.y)
 
 
-def _transform_pts(pts: np.ndarray, comp: Component) -> np.ndarray:
+def _transform_pts(pts: np.ndarray, comp: Component,
+                   is_bottom: bool = False) -> np.ndarray:
     """Transform an (N, 2) array of package-local points to board coordinates.
 
     ODB++ orient_def convention (mirror → rotate → translate):
-      1. Mirror X in package space for bottom-layer components.
+      1. Mirror X in package space.
       2. Rotate CCW by comp.rotation.
       3. Translate to board position (comp.x, comp.y).
+
+    For bottom-layer components (*is_bottom=True*) the effective mirror is
+    inverted (see :func:`_transform_point` docstring).
     """
     out = pts.copy().astype(float)
-    # Step 1: mirror X in package space for bottom-layer components
-    if comp.mirror:
+    # Step 1: compute effective mirror and apply X-flip in package space
+    effective_mirror = (not comp.mirror) if is_bottom else comp.mirror
+    if effective_mirror:
         out[:, 0] = -out[:, 0]
     # Step 2: CCW rotation
     angle = math.radians(comp.rotation)
@@ -728,14 +776,15 @@ def draw_pin_markers(ax: Axes, components: list[Component],
 
 
 def _get_component_bbox(comp: Component,
-                        pkg: Package | None) -> BBox | None:
+                        pkg: Package | None,
+                        is_bottom: bool = False) -> BBox | None:
     """Compute a board-coordinate bounding box for the fallback outline."""
     if pkg and pkg.bbox:
         bx = pkg.bbox
         hw = (bx.xmax - bx.xmin) / 2
         hh = (bx.ymax - bx.ymin) / 2
         corners = np.array([[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]])
-        pts = _transform_pts(corners, comp)
+        pts = _transform_pts(corners, comp, is_bottom=is_bottom)
         return BBox(float(pts[:, 0].min()), float(pts[:, 1].min()),
                     float(pts[:, 0].max()), float(pts[:, 1].max()))
 
