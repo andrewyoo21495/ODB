@@ -779,11 +779,19 @@ class ComponentViewer:
                 if top_comps:
                     draw_components(self.ax, top_comps, packages,
                                     color="#FFFF00", alpha=0.99,
-                                    show_pads=False, show_pkg_outlines=True)
+                                    show_pads=False, show_pkg_outlines=True,
+                                    comp_layer_features=self._comp_layer_top,
+                                    user_symbols=self.user_symbols,
+                                    fid_resolved=self._fid_resolved,
+                                    comp_side="T")
                 if bot_comps:
                     draw_components(self.ax, bot_comps, packages,
                                     color="#FFFF00", alpha=0.99,
-                                    show_pads=False, show_pkg_outlines=True)
+                                    show_pads=False, show_pkg_outlines=True,
+                                    comp_layer_features=self._comp_layer_bot,
+                                    user_symbols=self.user_symbols,
+                                    fid_resolved=self._fid_resolved,
+                                    comp_side="B")
 
         # Selection highlight – draw selected component in red on top
         if self._selected_comp is not None and self._selected_comp in (comps or []):
@@ -1231,11 +1239,19 @@ class ViaViewer:
                 if top_comps:
                     draw_components(self.ax, top_comps, packages,
                                     color="#FFFF00", alpha=0.99,
-                                    show_pads=False, show_pkg_outlines=True)
+                                    show_pads=False, show_pkg_outlines=True,
+                                    comp_layer_features=self._comp_layer_top,
+                                    user_symbols=self.user_symbols,
+                                    fid_resolved=self._fid_resolved,
+                                    comp_side="T")
                 if bot_comps:
                     draw_components(self.ax, bot_comps, packages,
                                     color="#FFFF00", alpha=0.99,
-                                    show_pads=False, show_pkg_outlines=True)
+                                    show_pads=False, show_pkg_outlines=True,
+                                    comp_layer_features=self._comp_layer_bot,
+                                    user_symbols=self.user_symbols,
+                                    fid_resolved=self._fid_resolved,
+                                    comp_side="B")
 
         # Selection highlight
         if self._selected_comp is not None and self._selected_comp in (comps or []):
