@@ -166,6 +166,25 @@ def _scale_layer_features(features, factor: float) -> None:
                         seg.center.y *= factor
 
 
+def _scale_user_symbols(user_symbols: dict, factor: float) -> None:
+    """Scale contour coordinates of all user-defined symbols in place."""
+    from src.models import SurfaceRecord, ArcSegment
+    for symbol in user_symbols.values():
+        if symbol.units == "INCH":
+            for feat in symbol.features:
+                if isinstance(feat, SurfaceRecord):
+                    for contour in feat.contours:
+                        contour.start.x *= factor
+                        contour.start.y *= factor
+                        for seg in contour.segments:
+                            seg.end.x *= factor
+                            seg.end.y *= factor
+                            if isinstance(seg, ArcSegment):
+                                seg.center.x *= factor
+                                seg.center.y *= factor
+            symbol.units = "MM"
+
+
 def _calibrate_eda_to_components(components_top: list, components_bot: list,
                                    eda_data) -> None:
     """Detect and correct any residual EDA package scale mismatch.
@@ -452,6 +471,11 @@ def cmd_cache(args):
                 _scale_layer_features(feats, _INCH_TO_MM)
                 print(f"  Units: scaled {key} INCH -> MM (x25.4)")
 
+    # Normalise user-defined symbol coordinates (inches -> mm).
+    if data.get("symbols"):
+        _scale_user_symbols(data["symbols"], _INCH_TO_MM)
+        print(f"  Units: scaled user-defined symbol coordinates INCH -> MM (x25.4)")
+
     # Write cache
     print(f"\nWriting cache...")
     cache_job(cache_name, data, cache_dir)
@@ -590,6 +614,10 @@ def _parse_for_view(odb_path: str, layer_names: list[str] = None) -> dict:
         if features.units == "INCH":
             _scale_layer_features(features, _INCH_TO_MM)
             print(f"  Units: scaled {layer_name} features INCH -> MM (x25.4)")
+
+    if user_symbols:
+        _scale_user_symbols(user_symbols, _INCH_TO_MM)
+        print(f"  Units: scaled user-defined symbol coordinates INCH -> MM (x25.4)")
 
     return {
         "job": job,
