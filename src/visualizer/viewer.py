@@ -34,6 +34,7 @@ from src.models import (
     Component, EdaData, LayerFeatures, MatrixLayer, Profile,
     StrokeFont, UserSymbol,
 )
+from src.visualizer.symbol_renderer import symbol_to_patch, user_symbol_to_patches
 from src.visualizer.layer_renderer import LAYER_COLORS, render_layer
 from src.visualizer.component_overlay import draw_components
 from src.visualizer.renderer import _draw_profile
@@ -855,7 +856,456 @@ class ComponentViewer:
         return best_comp, best_pin
 
     # ------------------------------------------------------------------
-    # Coordinate formatter
+    # Coordinate formatter  (ComponentViewer)
+    # ------------------------------------------------------------------
+
+    def _format_coord(self, x: float, y: float) -> str:
+        return f"x={x:.4f}mm y={y:.4f}mm"
+
+
+# ===========================================================================
+# Via viewer  (extends ComponentViewer with VIA overlay)
+# ===========================================================================
+
+class ViaViewer:
+    """Component viewer with an additional VIA visualize toggle.
+
+    Shares the same base as ``ComponentViewer`` — top/bottom layer radio
+    buttons, component listbox, display options — but adds a *VIA visualize*
+    button that overlays SNT VIA pad features in dark grey.
+    """
+
+    _VIA_COLOR = "#505050"   # dark grey
+
+    def __init__(self,
+                 profile: Profile,
+                 components_top: list[Component] = None,
+                 components_bot: list[Component] = None,
+                 eda_data: EdaData = None,
+                 layers_data: dict[str, tuple[LayerFeatures, MatrixLayer]] = None,
+                 user_symbols: dict[str, UserSymbol] = None):
+        self.profile         = profile
+        self.components_top  = components_top or []
+        self.components_bot  = components_bot or []
+        self.eda_data        = eda_data
+        self.user_symbols    = user_symbols or {}
+        layers_data          = layers_data or {}
+
+        self._comp_layer_top: Optional[LayerFeatures] = next(
+            (lf for name, (lf, _) in layers_data.items() if "comp_+_top" in name),
+            None,
+        )
+        self._comp_layer_bot: Optional[LayerFeatures] = next(
+            (lf for name, (lf, _) in layers_data.items() if "comp_+_bot" in name),
+            None,
+        )
+
+        self._fid_resolved: dict = {}
+        if eda_data and eda_data.layer_names and layers_data:
+            from src.visualizer.fid_lookup import build_fid_map, resolve_fid_features
+            fid_map = build_fid_map(eda_data)
+            if fid_map:
+                self._fid_resolved = resolve_fid_features(
+                    fid_map, eda_data.layer_names, layers_data,
+                )
+
+        # Resolve VIA features
+        self._via_features: list = []
+        if eda_data and eda_data.layer_names and layers_data:
+            from src.visualizer.fid_lookup import resolve_via_features
+            self._via_features = resolve_via_features(eda_data, layers_data)
+
+        # Identify top/bottom signal layer names for filtering vias by layer
+        self._via_layer_top: set[str] = set()
+        self._via_layer_bot: set[str] = set()
+        if eda_data and eda_data.layer_names and layers_data:
+            from src.visualizer.fid_lookup import identify_signal_layers
+            matrix_map = {n: ml for n, (_, ml) in layers_data.items()}
+            sig = identify_signal_layers(eda_data.layer_names, matrix_map)
+            if "sigt" in sig:
+                self._via_layer_top.add(sig["sigt"])
+            if "sigb" in sig:
+                self._via_layer_bot.add(sig["sigb"])
+
+        self._selected_comp:     Optional[Component] = None
+        self._selected_pin_name: str               = ""
+        self._current_layer      = "Both"
+        self._drawn_comps:       list[Component]   = []
+        self._comp_names:        list[str]         = []
+        self._current_comps:     list[Component]   = []
+        self._current_show_pins: bool              = True
+        self._current_show_outline: bool           = False
+        self._show_vias: bool                      = False
+
+    # ------------------------------------------------------------------
+    # Public entry point
+    # ------------------------------------------------------------------
+
+    def show(self, figsize: tuple[float, float] = (14, 9)):
+        root = tk.Tk()
+        root.title("ODB++ Via Viewer")
+        root.configure(bg=_BG)
+        try:
+            root.state("zoomed")
+        except tk.TclError:
+            pass
+
+        # ---- Left panel ---------------------------------------------------
+        left = tk.Frame(root, bg=_BG, width=240)
+        left.pack(side=tk.LEFT, fill=tk.Y, padx=(6, 3), pady=6)
+        left.pack_propagate(False)
+
+        # Layer selection
+        _section_label(left, "Layer Selection").pack(anchor="w", pady=(4, 4))
+        radio_frame = tk.Frame(left, bg=_BG)
+        radio_frame.pack(fill=tk.X, pady=(0, 6))
+        self._layer_var = tk.StringVar(value="Both")
+        for label in ("Top", "Bottom", "Both"):
+            tk.Radiobutton(
+                radio_frame, text=label,
+                variable=self._layer_var, value=label,
+                bg=_BG, fg=_FG,
+                selectcolor="#d0d8e8",
+                activebackground=_BG, activeforeground=_FG,
+                font=_FONT,
+                command=self._on_layer_change,
+            ).pack(side=tk.LEFT, padx=(0, 6))
+
+        # Component selection
+        _divider(left).pack(fill=tk.X, pady=(0, 4))
+        _section_label(left, "Component Selection").pack(anchor="w", pady=(0, 4))
+
+        lb_frame, self._comp_lb = _make_listbox(left, height=10)
+        lb_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 4))
+
+        sel_btn_frame = tk.Frame(left, bg=_BG)
+        sel_btn_frame.pack(fill=tk.X, pady=(0, 6))
+        for btn_text, btn_cmd in [
+            ("Select All",       self._select_all),
+            ("Deselect All",     self._deselect_all),
+            ("Invert Selection", self._invert_selection),
+        ]:
+            tk.Button(
+                sel_btn_frame, text=btn_text,
+                bg="#e0e0e0", fg="#1a1a1a",
+                activebackground="#c8c8c8", activeforeground="#1a1a1a",
+                font=("Segoe UI", 9),
+                relief=tk.FLAT, cursor="hand2",
+                command=btn_cmd,
+            ).pack(fill=tk.X, pady=1, padx=2)
+
+        # Display options
+        _divider(left).pack(fill=tk.X, pady=(0, 4))
+        _section_label(left, "Display Options").pack(anchor="w", pady=(0, 4))
+        opts_frame = tk.Frame(left, bg=_BG)
+        opts_frame.pack(fill=tk.X, pady=(0, 6))
+        self._show_pins_var    = tk.BooleanVar(value=True)
+        self._show_outline_var = tk.BooleanVar(value=False)
+        for text, var in [("Show Pins", self._show_pins_var),
+                          ("Show Component Outline", self._show_outline_var)]:
+            tk.Checkbutton(
+                opts_frame, text=text, variable=var,
+                bg=_BG, fg=_FG,
+                selectcolor="#d0d8e8",
+                activebackground=_BG, activeforeground=_FG,
+                font=("Segoe UI", 9),
+            ).pack(anchor="w")
+
+        # Update button
+        tk.Button(
+            left, text="Update Visualization",
+            bg="#1a73e8", fg="#ffffff",
+            activebackground="#1557b0", activeforeground="#ffffff",
+            font=("Segoe UI", 10, "bold"),
+            relief=tk.FLAT, cursor="hand2",
+            command=self._on_update_click,
+        ).pack(fill=tk.X, pady=(0, 8), padx=2)
+
+        # VIA visualize button
+        _divider(left).pack(fill=tk.X, pady=(0, 4))
+        self._via_btn = tk.Button(
+            left, text="VIA visualize",
+            bg="#e0e0e0", fg="#1a1a1a",
+            activebackground="#c8c8c8", activeforeground="#1a1a1a",
+            font=("Segoe UI", 10, "bold"),
+            relief=tk.FLAT, cursor="hand2",
+            command=self._toggle_vias,
+        )
+        self._via_btn.pack(fill=tk.X, pady=(0, 8), padx=2)
+
+        # Component info
+        _divider(left).pack(fill=tk.X, pady=(0, 4))
+        _section_label(left, "Component Info").pack(anchor="w", pady=(0, 4))
+        info_frame = tk.Frame(left, bg=_BG)
+        info_frame.pack(fill=tk.BOTH, expand=True, padx=2, pady=(0, 4))
+        self._info_text = _make_info_text(info_frame, height=12)
+        self._info_text.pack(fill=tk.BOTH, expand=True)
+        self._info_text.config(state=tk.NORMAL)
+        self._info_text.insert(
+            tk.END, "Click on a component\npin to view info", "sep")
+        self._info_text.config(state=tk.DISABLED)
+
+        # ---- Right panel (matplotlib canvas) ------------------------------
+        right = tk.Frame(root, bg="white")
+        right.pack(side=tk.LEFT, fill=tk.BOTH, expand=True,
+                   padx=(3, 6), pady=6)
+
+        self.fig = Figure(figsize=figsize, facecolor="white")
+        self.ax  = self.fig.add_axes([0.07, 0.07, 0.90, 0.88])
+        _style_axes(self.ax)
+
+        self.canvas = FigureCanvasTkAgg(self.fig, master=right)
+        toolbar = NavigationToolbar2Tk(self.canvas, right)
+        toolbar.update()
+        self.canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+
+        self._draw_board_only()
+        self.canvas.mpl_connect("button_press_event", self._on_click)
+
+        self._rebuild_component_list()
+
+        root.mainloop()
+
+    # ------------------------------------------------------------------
+    # VIA toggle
+    # ------------------------------------------------------------------
+
+    def _toggle_vias(self):
+        self._show_vias = not self._show_vias
+        if self._show_vias:
+            self._via_btn.configure(bg="#505050", fg="#ffffff",
+                                    activebackground="#666666",
+                                    activeforeground="#ffffff")
+        else:
+            self._via_btn.configure(bg="#e0e0e0", fg="#1a1a1a",
+                                    activebackground="#c8c8c8",
+                                    activeforeground="#1a1a1a")
+        self._redraw(self._current_comps,
+                     self._current_show_pins,
+                     self._current_show_outline)
+
+    def _draw_vias(self):
+        """Render VIA pad features in dark grey, filtered by current layer."""
+        if not self._via_features:
+            return
+
+        layer = self._current_layer
+        for rpf in self._via_features:
+            # Filter by layer when viewing a single side
+            if layer == "Top" and rpf.layer_name not in self._via_layer_top:
+                continue
+            if layer == "Bottom" and rpf.layer_name not in self._via_layer_bot:
+                continue
+
+            pad = rpf.pad
+            sym_name = rpf.symbol.name
+            units = rpf.units
+            unit_override = rpf.symbol.unit_override
+
+            # Try user-defined symbol first, then standard
+            if sym_name in self.user_symbols:
+                patches = user_symbol_to_patches(
+                    self.user_symbols[sym_name],
+                    pad.x, pad.y,
+                    rotation=pad.rotation,
+                    mirror=pad.mirror,
+                    color=self._VIA_COLOR,
+                    alpha=0.85,
+                )
+                for p in patches:
+                    self.ax.add_patch(p)
+            else:
+                p = symbol_to_patch(
+                    sym_name, pad.x, pad.y,
+                    rotation=pad.rotation,
+                    mirror=pad.mirror,
+                    units=units,
+                    unit_override=unit_override,
+                    color=self._VIA_COLOR,
+                    alpha=0.85,
+                )
+                if p is not None:
+                    self.ax.add_patch(p)
+
+    # ------------------------------------------------------------------
+    # Layer radio handler
+    # ------------------------------------------------------------------
+
+    def _on_layer_change(self):
+        self._current_layer = self._layer_var.get()
+        self._rebuild_component_list()
+
+    def _get_layer_components(self) -> list[Component]:
+        if self._current_layer == "Top":
+            return list(self.components_top)
+        if self._current_layer == "Bottom":
+            return list(self.components_bot)
+        return list(self.components_top) + list(self.components_bot)
+
+    def _rebuild_component_list(self):
+        self._comp_lb.delete(0, tk.END)
+        comps = sorted(self._get_layer_components(), key=lambda c: c.comp_name)
+        self._comp_names = [c.comp_name for c in comps]
+        for name in self._comp_names:
+            self._comp_lb.insert(tk.END, name)
+
+    def _select_all(self):
+        self._comp_lb.selection_set(0, tk.END)
+
+    def _deselect_all(self):
+        self._comp_lb.selection_clear(0, tk.END)
+
+    def _invert_selection(self):
+        for i in range(self._comp_lb.size()):
+            if self._comp_lb.selection_includes(i):
+                self._comp_lb.selection_clear(i)
+            else:
+                self._comp_lb.selection_set(i)
+
+    # ------------------------------------------------------------------
+    # Update button
+    # ------------------------------------------------------------------
+
+    def _on_update_click(self):
+        selected = self._comp_lb.curselection()
+        selected_names = {self._comp_names[i] for i in selected}
+        show_pins    = self._show_pins_var.get()
+        show_outline = self._show_outline_var.get()
+        comps = [c for c in self._get_layer_components()
+                 if c.comp_name in selected_names]
+        self._drawn_comps       = comps
+        self._current_comps     = comps
+        self._current_show_pins = show_pins
+        self._current_show_outline = show_outline
+        self._redraw(comps, show_pins, show_outline)
+
+    # ------------------------------------------------------------------
+    # Draw helpers
+    # ------------------------------------------------------------------
+
+    def _draw_board_only(self):
+        self.ax.clear()
+        _style_axes(self.ax)
+        if self.profile and self.profile.surface:
+            _draw_profile(self.ax, self.profile)
+        if self._show_vias:
+            self._draw_vias()
+        self._apply_axis_labels()
+        self.canvas.draw()
+
+    def _redraw(self, comps: list[Component],
+                show_pins: bool, show_outline: bool):
+        self.ax.clear()
+        _style_axes(self.ax)
+
+        if self.profile and self.profile.surface:
+            _draw_profile(self.ax, self.profile)
+
+        # Draw vias underneath components when enabled
+        if self._show_vias:
+            self._draw_vias()
+
+        packages = self.eda_data.packages if self.eda_data else None
+        if comps and (show_pins or show_outline):
+            top_set   = {c.comp_name for c in self.components_top}
+            top_comps = [c for c in comps if c.comp_name in top_set]
+            bot_comps = [c for c in comps if c.comp_name not in top_set]
+            if show_pins:
+                if top_comps:
+                    draw_components(self.ax, top_comps, packages,
+                                    color="#2BFFF4", alpha=0.99,
+                                    show_pads=True, show_pkg_outlines=False,
+                                    comp_layer_features=self._comp_layer_top,
+                                    user_symbols=self.user_symbols,
+                                    fid_resolved=self._fid_resolved,
+                                    comp_side="T")
+                if bot_comps:
+                    draw_components(self.ax, bot_comps, packages,
+                                    color="#FC5BA1", alpha=0.99,
+                                    show_pads=True, show_pkg_outlines=False,
+                                    comp_layer_features=self._comp_layer_bot,
+                                    user_symbols=self.user_symbols,
+                                    fid_resolved=self._fid_resolved,
+                                    comp_side="B")
+            if show_outline:
+                if top_comps:
+                    draw_components(self.ax, top_comps, packages,
+                                    color="#FFFF00", alpha=0.99,
+                                    show_pads=False, show_pkg_outlines=True)
+                if bot_comps:
+                    draw_components(self.ax, bot_comps, packages,
+                                    color="#FFFF00", alpha=0.99,
+                                    show_pads=False, show_pkg_outlines=True)
+
+        # Selection highlight
+        if self._selected_comp is not None and self._selected_comp in (comps or []):
+            is_bot = self._selected_comp in self.components_bot
+            draw_components(self.ax, [self._selected_comp], packages,
+                            color="#FF0000", alpha=1.0,
+                            show_pads=True, show_pkg_outlines=True,
+                            comp_layer_features=(self._comp_layer_bot
+                                                 if is_bot
+                                                 else self._comp_layer_top),
+                            user_symbols=self.user_symbols,
+                            fid_resolved=self._fid_resolved,
+                            comp_side="B" if is_bot else "T")
+
+        self._apply_axis_labels()
+        self.canvas.draw()
+
+    def _apply_axis_labels(self):
+        self.ax.set_xlabel("X", color="#000000")
+        self.ax.set_ylabel("Y", color="#000000")
+        layer = self._layer_var.get() if hasattr(self, '_layer_var') else "Both"
+        via_suffix = " + VIA" if self._show_vias else ""
+        self.ax.set_title(f"Components: {layer}{via_suffix}", color="#000000")
+        self.ax.grid(False)
+        self.ax.set_aspect("equal")
+        self.ax.format_coord = self._format_coord
+
+    # ------------------------------------------------------------------
+    # Click handler
+    # ------------------------------------------------------------------
+
+    def _on_click(self, event):
+        if event.inaxes != self.ax:
+            return
+        if event.xdata is None or event.ydata is None:
+            return
+        comp, pin_name = self._find_nearest_component(event.xdata, event.ydata)
+        if comp is not None:
+            if comp is not self._selected_comp or pin_name != self._selected_pin_name:
+                self._selected_comp     = comp
+                self._selected_pin_name = pin_name
+                _populate_info_text(self._info_text, comp,
+                                    self.profile, self.eda_data, pin_name)
+                self._redraw(self._current_comps,
+                             self._current_show_pins,
+                             self._current_show_outline)
+
+    def _find_nearest_component(self, x: float,
+                                 y: float) -> tuple[Optional[Component], str]:
+        xlim         = self.ax.get_xlim()
+        threshold_sq = ((xlim[1] - xlim[0]) * 0.02) ** 2
+        best_comp    = None
+        best_dist_sq = threshold_sq
+        best_pin     = ""
+        for comp in self._drawn_comps:
+            d = (comp.x - x) ** 2 + (comp.y - y) ** 2
+            if d < best_dist_sq:
+                best_dist_sq = d
+                best_comp    = comp
+                best_pin     = ""
+            for tp in comp.toeprints:
+                d = (tp.x - x) ** 2 + (tp.y - y) ** 2
+                if d < best_dist_sq:
+                    best_dist_sq = d
+                    best_comp    = comp
+                    best_pin     = tp.name
+        return best_comp, best_pin
+
+    # ------------------------------------------------------------------
+    # Coordinate formatter  (ViaViewer)
     # ------------------------------------------------------------------
 
     def _format_coord(self, x: float, y: float) -> str:

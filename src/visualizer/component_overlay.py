@@ -240,11 +240,14 @@ def _draw_component_geometry(ax: Axes, comp: Component,
                 if pad_feat is not None:
                     sym_ref = pad_sym_lookup.get(pad_feat.symbol_idx)
                     if sym_ref is not None:
+                        # Bottom-layer pad rotations are stored relative to
+                        # the component's bottom-side view; negate for top-view.
+                        pad_rot = -pad_feat.rotation if is_bottom else pad_feat.rotation
                         if sym_ref.name in user_symbols:
                             patches = user_symbol_to_patches(
                                 user_symbols[sym_ref.name],
                                 tp.x, tp.y,
-                                pad_feat.rotation, pad_feat.mirror,
+                                pad_rot, pad_feat.mirror,
                                 color, alpha,
                             )
                             for p in patches:
@@ -254,7 +257,7 @@ def _draw_component_geometry(ax: Axes, comp: Component,
                         else:
                             patch = symbol_to_patch(
                                 sym_ref.name, tp.x, tp.y,
-                                pad_feat.rotation, pad_feat.mirror,
+                                pad_rot, pad_feat.mirror,
                                 pad_units, sym_ref.unit_override,
                                 color, alpha, pad_feat.resize_factor,
                             )
@@ -325,6 +328,9 @@ def _draw_pin_from_fid(ax: Axes, comp: Component,
         return False
 
     px, py = tp.x, tp.y
+    # Bottom-layer pad rotations are stored relative to the component's
+    # bottom-side view; negate for top-view rendering.
+    is_bottom = (comp_side == "B")
 
     # Try both pin_idx (0-based) and pin_idx+1 (1-based) as the spec
     # can use either convention depending on the design tool.
@@ -339,12 +345,13 @@ def _draw_pin_from_fid(ax: Axes, comp: Component,
         for rpf in pad_features:
             pad = rpf.pad
             sym = rpf.symbol
+            pad_rot = -pad.rotation if is_bottom else pad.rotation
 
             if sym.name in user_symbols:
                 patches = user_symbol_to_patches(
                     user_symbols[sym.name],
                     px, py,
-                    pad.rotation, pad.mirror,
+                    pad_rot, pad.mirror,
                     color, alpha,
                 )
                 for p in patches:
@@ -354,7 +361,7 @@ def _draw_pin_from_fid(ax: Axes, comp: Component,
             else:
                 patch = symbol_to_patch(
                     sym.name, px, py,
-                    pad.rotation, pad.mirror,
+                    pad_rot, pad.mirror,
                     rpf.units, sym.unit_override,
                     color, alpha, pad.resize_factor,
                 )

@@ -152,6 +152,20 @@ def get_managed_part_names(filename: str,
     return {r["part_name"] for r in rows if r.get("part_name")}
 
 
+def get_part_category_map(filename: str,
+                          references_dir: Optional[str | Path] = None,
+                          ) -> dict[str, str]:
+    """Return a mapping ``part_name -> category`` from a reference CSV."""
+    rows = load_reference_csv(filename, references_dir)
+    result: dict[str, str] = {}
+    for r in rows:
+        pn = r.get("part_name", "")
+        cat = r.get("category", "")
+        if pn and cat:
+            result[pn] = cat
+    return result
+
+
 def get_part_size_map(filename: str,
                       references_dir: Optional[str | Path] = None,
                       ) -> dict[str, int]:

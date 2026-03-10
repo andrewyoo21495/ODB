@@ -214,6 +214,89 @@ def resolve_fid_features(
 
 
 # ---------------------------------------------------------------------------
+# VIA subnet FID resolution
+# ---------------------------------------------------------------------------
+
+def build_via_fid_list(
+    eda_data: EdaData,
+) -> list[FeatureIdRef]:
+    """Collect all FID references from VIA-type subnets.
+
+    VIA subnets represent through-board via connections and carry FID
+    references to pad features on one or more copper layers.  Unlike TOP
+    subnets they have no side/comp_num/toep_num fields — they are purely
+    layer-feature pointers.
+
+    Returns a flat list of :class:`FeatureIdRef` records (type ``"C"`` only).
+    """
+    fid_list: list[FeatureIdRef] = []
+    for net in eda_data.nets:
+        for subnet in net.subnets:
+            if subnet.type != "VIA":
+                continue
+            for fid in subnet.feature_ids:
+                if fid.type == "C":
+                    fid_list.append(fid)
+    return fid_list
+
+
+def resolve_via_features(
+    eda_data: EdaData,
+    layers_data: dict[str, tuple[LayerFeatures, MatrixLayer]],
+) -> list[ResolvedPadFeature]:
+    """Resolve VIA subnet FIDs to renderable pad features.
+
+    Returns a deduplicated list of :class:`ResolvedPadFeature` — one per
+    unique (x, y) board position — suitable for drawing via pads.
+    """
+    fid_list = build_via_fid_list(eda_data)
+    if not fid_list:
+        return []
+
+    layer_name_map = build_layer_name_map(eda_data.layer_names)
+
+    _layer_cache: dict[str, tuple[list, dict[int, SymbolRef], str]] = {}
+    for lname, (lf, _ml) in layers_data.items():
+        sym_lookup = {s.index: s for s in lf.symbols}
+        _layer_cache[lname] = (lf.features, sym_lookup, lf.units)
+
+    seen_layer_positions: set[tuple[str, float, float]] = set()
+    result: list[ResolvedPadFeature] = []
+
+    for fid in fid_list:
+        layer_name = layer_name_map.get(fid.layer_idx)
+        if layer_name is None:
+            continue
+
+        cached = _layer_cache.get(layer_name)
+        if cached is None:
+            continue
+
+        features, sym_lookup, units = cached
+        if fid.feature_idx < 0 or fid.feature_idx >= len(features):
+            continue
+
+        feat = features[fid.feature_idx]
+        if not isinstance(feat, PadRecord):
+            continue
+
+        pos_key = (layer_name, round(feat.x, 4), round(feat.y, 4))
+        if pos_key in seen_layer_positions:
+            continue
+        seen_layer_positions.add(pos_key)
+
+        sym = sym_lookup.get(feat.symbol_idx)
+        if sym is None:
+            continue
+
+        result.append(ResolvedPadFeature(
+            pad=feat, symbol=sym, layer_name=layer_name, units=units,
+        ))
+
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Collect FID-referenced layer names (for selective loading)
 # ---------------------------------------------------------------------------
 

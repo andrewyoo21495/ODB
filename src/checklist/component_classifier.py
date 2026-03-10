@@ -143,3 +143,18 @@ def find_capacitors(components: Sequence[Component]) -> list[Component]:
         if pkg_type == "capacitor" or pkg_device_type == "capacitor" or part.startswith("2203-"):
             result.append(c)
     return result
+
+
+def find_oscillators(components: Sequence[Component]) -> list[Component]:
+    """Return Oscillator components: comp_name starts with 'OSC'."""
+    return [c for c in components if (c.comp_name or "").startswith("OSC")]
+
+
+def find_bothholes(components: Sequence[Component]) -> list[Component]:
+    """Return BOTHHOLE components: comp_name starts with 'BOTHHOLE'."""
+    return [c for c in components if (c.comp_name or "").startswith("BOTHHOLE")]
+
+
+def find_shield_cans(components: Sequence[Component]) -> list[Component]:
+    """Return Shield Can components: comp_name starts with 'SC'."""
+    return [c for c in components if (c.comp_name or "").upper().startswith("SC")]
