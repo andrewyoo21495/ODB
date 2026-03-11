@@ -303,13 +303,14 @@ def cmd_info(args):
     job.cleanup()
 
 
-def _parse_copper_weight(attrlist_path: Path) -> float | None:
-    """Read .copper_weight value from a layer attrlist file."""
+def _parse_attrlist_value(attrlist_path: Path, key: str) -> float | None:
+    """Read a numeric value for *key* (e.g. '.copper_weight') from a layer attrlist file."""
+    prefix = key if key.endswith("=") else key + "="
     try:
         with open(attrlist_path, "r", encoding="utf-8", errors="replace") as f:
             for line in f:
                 line = line.strip()
-                if line.startswith(".copper_weight="):
+                if line.startswith(prefix):
                     return float(line.split("=", 1)[1].strip())
     except Exception:
         pass
@@ -413,12 +414,17 @@ def cmd_cache(args):
                 except Exception as e:
                     print(f"    Warning: Failed to parse {layer_name}/features: {e}")
 
-            # Copper weight (Signal and Dielectric layers only)
+            # Thickness (Signal and Dielectric layers only)
             layer_type = layer_type_map.get(layer_name, "")
-            if layer_type in ("SIGNAL", "DIELECTRIC") and layer_paths.attrlist:
-                cw = _parse_copper_weight(layer_paths.attrlist)
-                if cw is not None:
-                    copper_data[layer_name] = cw / 1000.0
+            if layer_paths.attrlist:
+                if layer_type == "SIGNAL":
+                    cw = _parse_attrlist_value(layer_paths.attrlist, ".copper_weight")
+                    if cw is not None:
+                        copper_data[layer_name] = cw / 1000.0
+                elif layer_type == "DIELECTRIC":
+                    dt = _parse_attrlist_value(layer_paths.attrlist, ".layer_dielectric")
+                    if dt is not None:
+                        copper_data[layer_name] = dt
 
         if copper_data:
             data["copper_data"] = copper_data
@@ -974,6 +980,8 @@ def cmd_copper(args):
     with open(copper_file, "r", encoding="utf-8") as f:
         copper_data: dict[str, float] = json.load(f)
 
+    total = sum(copper_data.values())
+
     print(f"\n{'='*55}")
     print(f"Copper Check: Layer Thickness")
     print(f"{'='*55}")
@@ -981,6 +989,8 @@ def cmd_copper(args):
     print(f"{'-'*30}  {'-'*15}")
     for layer_name, thickness in copper_data.items():
         print(f"{layer_name:<30s}  {thickness:>15.6f}")
+    print(f"{'-'*30}  {'-'*15}")
+    print(f"{'Total Thickness':<30s}  {total:>15.6f}")
     print(f"\n{len(copper_data)} layer(s) found.")
 
 
