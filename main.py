@@ -6,6 +6,7 @@ Usage:
     python main.py view-comp  <odb_path>                         Launch component viewer
     python main.py check      <odb_path> [--rules R1 R2 ...]     Run checklist
     python main.py info       <odb_path>                         Print job summary
+    python main.py copper     <odb_path>                         Display layer thickness
 """
 
 from __future__ import annotations
@@ -302,6 +303,19 @@ def cmd_info(args):
     job.cleanup()
 
 
+def _parse_copper_weight(attrlist_path: Path) -> float | None:
+    """Read .copper_weight value from a layer attrlist file."""
+    try:
+        with open(attrlist_path, "r", encoding="utf-8", errors="replace") as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith(".copper_weight="):
+                    return float(line.split("=", 1)[1].strip())
+    except Exception:
+        pass
+    return None
+
+
 def cmd_cache(args):
     """Parse ODB++ data and cache to JSON files."""
     print(f"Loading ODB++ from: {args.odb_path}")
@@ -326,11 +340,13 @@ def cmd_cache(args):
         print(f"  Parsed: misc/info")
 
     # Parse matrix
+    layer_type_map: dict[str, str] = {}
     if job.matrix_path:
         from src.parsers.matrix_parser import parse_matrix
         steps, layers = parse_matrix(job.matrix_path)
         data["matrix_steps"] = steps
         data["matrix_layers"] = layers
+        layer_type_map = {ml.name: ml.type for ml in layers}
         print(f"  Parsed: matrix ({len(steps)} steps, {len(layers)} layers)")
 
     # Parse font
@@ -376,6 +392,8 @@ def cmd_cache(args):
         from src.parsers.component_parser import parse_components
         from src.parsers.feature_parser import parse_features
 
+        copper_data: dict[str, float] = {}
+
         for layer_name, layer_paths in step_paths.layers.items():
             # Components
             if layer_paths.components:
@@ -394,6 +412,17 @@ def cmd_cache(args):
                     print(f"    Parsed: {layer_name}/features ({len(features.features)} features)")
                 except Exception as e:
                     print(f"    Warning: Failed to parse {layer_name}/features: {e}")
+
+            # Copper weight (Signal and Dielectric layers only)
+            layer_type = layer_type_map.get(layer_name, "")
+            if layer_type in ("SIGNAL", "DIELECTRIC") and layer_paths.attrlist:
+                cw = _parse_copper_weight(layer_paths.attrlist)
+                if cw is not None:
+                    copper_data[layer_name] = cw / 1000.0
+
+        if copper_data:
+            data["copper_data"] = copper_data
+            print(f"    Extracted copper weight for {len(copper_data)} layers")
 
     # Parse user-defined symbols
     if job.symbols:
@@ -927,6 +956,34 @@ def cmd_check(args):
     )
 
 
+def cmd_copper(args):
+    """Display layer thickness (copper weight) for each Signal and Dielectric layer."""
+    import json
+
+    cache_dir = Path(getattr(args, "cache_dir", None) or "cache")
+    cache_name = _ensure_cache(args.odb_path, cache_dir)
+
+    copper_file = cache_dir / cache_name / "copper_data.json"
+    if not copper_file.exists():
+        print(
+            "No copper data found in cache. "
+            "Please re-run 'cache' to rebuild: python main.py cache <odb_path>"
+        )
+        return
+
+    with open(copper_file, "r", encoding="utf-8") as f:
+        copper_data: dict[str, float] = json.load(f)
+
+    print(f"\n{'='*55}")
+    print(f"Copper Check: Layer Thickness")
+    print(f"{'='*55}")
+    print(f"{'Layer':<30s}  {'Layer Thickness':>15s}")
+    print(f"{'-'*30}  {'-'*15}")
+    for layer_name, thickness in copper_data.items():
+        print(f"{layer_name:<30s}  {thickness:>15.6f}")
+    print(f"\n{len(copper_data)} layer(s) found.")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="ODB++ Processing System",
@@ -967,6 +1024,11 @@ def main():
     p_check.add_argument("--output", help="Output Excel path")
     p_check.add_argument("--cache-dir", default="cache", help="Cache directory")
 
+    # copper command
+    p_copper = subparsers.add_parser("copper", help="Display layer thickness per layer")
+    p_copper.add_argument("odb_path", help="Path to ODB++ archive or directory")
+    p_copper.add_argument("--cache-dir", default="cache", help="Cache directory")
+
     args = parser.parse_args()
 
     if args.command == "info":
@@ -981,6 +1043,8 @@ def main():
         cmd_view_via(args)
     elif args.command == "check":
         cmd_check(args)
+    elif args.command == "copper":
+        cmd_copper(args)
     else:
         parser.print_help()
 
