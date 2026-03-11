@@ -1373,6 +1373,12 @@ class CopperRatioViewer:
 
         self._selected_layer: Optional[str] = None
         self._ratio_result:   Optional[float] = None
+        self._subsection_ratios = None   # np.ndarray (n_rows, n_cols) or None
+        self._n_rows: int = 5
+        self._n_cols: int = 5
+        self._colorbar = None            # matplotlib Colorbar or None
+        self._subsection_mode = None     # tk.BooleanVar, set in show()
+        self._subsection_text = None     # tk.Text widget for grid results
         self._root: Optional[tk.Tk] = None
 
     # ------------------------------------------------------------------
@@ -1419,6 +1425,17 @@ class CopperRatioViewer:
             command=self._on_calculate,
         ).pack(fill=tk.X, pady=(0, 4), padx=2)
 
+        # Sub-section checkbox
+        self._subsection_mode = tk.BooleanVar(value=False)
+        tk.Checkbutton(
+            left, text="Calculate by Sub-section",
+            variable=self._subsection_mode,
+            bg=_BG, fg="#333333",
+            font=("Segoe UI", 9),
+            activebackground=_BG,
+            command=self._on_subsection_toggle,
+        ).pack(anchor="w", padx=2, pady=(0, 6))
+
         # Result label
         self._result_var = tk.StringVar(value="")
         tk.Label(
@@ -1426,7 +1443,30 @@ class CopperRatioViewer:
             bg=_BG, fg="#1a73e8",
             font=("Segoe UI", 10, "bold"),
             anchor="w", wraplength=220,
-        ).pack(fill=tk.X, padx=4, pady=(0, 6))
+        ).pack(fill=tk.X, padx=4, pady=(0, 4))
+
+        # Sub-section grid result (shown when grid mode is active)
+        _section_label(left, "Sub-section Results").pack(anchor="w", pady=(0, 2))
+        self._subsection_text = tk.Text(
+            left,
+            height=9,
+            bg=_BG2,
+            fg="#333333",
+            font=("Consolas", 8),
+            borderwidth=0,
+            highlightbackground="#cccccc",
+            highlightthickness=1,
+            wrap=tk.NONE,
+            state=tk.DISABLED,
+            cursor="arrow",
+        )
+        self._subsection_text.tag_configure(
+            "sep", font=("Consolas", 8), foreground="#999999")
+        self._subsection_text.tag_configure(
+            "kv",  font=("Consolas", 8), foreground="#333333")
+        self._subsection_text.tag_configure(
+            "title", font=("Consolas", 8, "bold"), foreground="#000000")
+        self._subsection_text.pack(fill=tk.X, padx=2, pady=(0, 6))
 
         _divider(left).pack(fill=tk.X, pady=(0, 6))
 
@@ -1479,7 +1519,8 @@ class CopperRatioViewer:
                 tk.END, f"{'Total':<19} {total:>7.4f}\n", "title")
         self._thickness_text.config(state=tk.DISABLED)
 
-    # ------------------------------------------------------------------
+    # ---------------------------------------------------------
+    # ---------
     # Event handlers
     # ------------------------------------------------------------------
 
@@ -1487,31 +1528,74 @@ class CopperRatioViewer:
         sel = self._layer_lb.curselection()
         self._selected_layer = self._signal_layers[sel[0]] if sel else None
         self._ratio_result = None
+        self._subsection_ratios = None
         self._result_var.set("")
+        self._clear_subsection_display()
+        self._redraw()
+
+    def _on_subsection_toggle(self):
+        """Clear results when the sub-section checkbox is toggled."""
+        self._ratio_result = None
+        self._subsection_ratios = None
+        self._result_var.set("")
+        self._clear_subsection_display()
         self._redraw()
 
     def _on_calculate(self):
+        import numpy as np
+
         if self._selected_layer is None:
             self._result_var.set("Select a layer first.")
             return
         self._result_var.set("Calculating\u2026")
         if self._root:
             self._root.update_idletasks()
-        ratio = self._calculate_ratio()
-        if ratio is not None:
-            self._ratio_result = ratio
-            self._result_var.set(
-                f"Ratio: {ratio:.4f}  ({ratio * 100:.2f}%)"
-            )
-            self._redraw()   # refresh title with ratio
+
+        if self._subsection_mode and self._subsection_mode.get():
+            # ---- Grid-based calculation -----------------------------------
+            self._ratio_result = None
+            ratios = self._calculate_subsection_ratios()
+            if ratios is not None:
+                self._subsection_ratios = ratios
+                valid = ratios[~np.isnan(ratios)]
+                if len(valid):
+                    avg = float(valid.mean())
+                    lo  = float(valid.min())
+                    hi  = float(valid.max())
+                    self._result_var.set(
+                        f"Avg: {avg*100:.2f}%  "
+                        f"[{lo*100:.1f}% – {hi*100:.1f}%]"
+                    )
+                else:
+                    self._result_var.set("No PCB area found.")
+                self._update_subsection_display()
+                self._redraw()
+            else:
+                self._result_var.set("Calculation failed.")
         else:
-            self._result_var.set("Calculation failed.")
+            # ---- Whole-board calculation (existing) -----------------------
+            self._subsection_ratios = None
+            self._clear_subsection_display()
+            ratio = self._calculate_ratio()
+            if ratio is not None:
+                self._ratio_result = ratio
+                self._result_var.set(
+                    f"Ratio: {ratio:.4f}  ({ratio * 100:.2f}%)"
+                )
+                self._redraw()
+            else:
+                self._result_var.set("Calculation failed.")
 
     # ------------------------------------------------------------------
     # Rendering
     # ------------------------------------------------------------------
 
     def _redraw(self):
+        # Remove previous colorbar before clearing axes
+        if self._colorbar is not None:
+            self._colorbar.remove()
+            self._colorbar = None
+
         self.ax.clear()
         _style_axes(self.ax)
 
@@ -1526,10 +1610,16 @@ class CopperRatioViewer:
                          alpha=0.85, user_symbols=self.user_symbols,
                          font=self.font)
 
+        if self._subsection_ratios is not None:
+            self._draw_subsection_overlay()
+
         if self._selected_layer:
             title = self._selected_layer
             if self._ratio_result is not None:
                 title += f"  |  Copper Ratio: {self._ratio_result:.4f}"
+            elif self._subsection_ratios is not None:
+                title += (f"  |  Sub-section Ratios "
+                          f"({self._n_rows}\u00d7{self._n_cols})")
         else:
             title = "Select a Signal Layer"
 
@@ -1545,25 +1635,26 @@ class CopperRatioViewer:
     # Ratio calculation
     # ------------------------------------------------------------------
 
-    def _calculate_ratio(self) -> Optional[float]:
-        """Copper fill ratio for the currently selected layer.
+    # ------------------------------------------------------------------
+    # Rasterization helper (shared by whole-board and grid calculations)
+    # ------------------------------------------------------------------
+
+    def _rasterize_layer(self) -> Optional[dict]:
+        """Render the selected layer off-screen and return pixel data.
+
+        Returns a dict with keys:
+            rgb       – np.ndarray (H, W, 3) uint8 rendered image
+            pcb_mask  – np.ndarray (H, W) bool, True inside PCB outline
+            xmin, xmax, ymin, ymax  – bounding box in data coords (mm)
+            img_w, img_h            – image dimensions in pixels
+
+        Returns None if the profile or selected layer is unavailable.
 
         Algorithm
         ---------
-        A dedicated **off-screen** figure is created at a fixed high
-        resolution (200 DPI, axes tight-fitted to the PCB bounding box)
-        so the result is completely independent of the user's zoom level
-        or the window size.
-
-        1. Build a fixed-resolution off-screen render of the PCB outline
-           + selected layer using the Agg (non-interactive) backend.
-        2. Set axis limits exactly to the PCB bounding box — no margins —
-           so every pixel represents the same physical area.
-        3. Transform the PCB outline vertices to image-pixel coordinates.
-        4. Build a boolean inside-PCB mask via ``matplotlib.path.Path``.
-        5. Within that mask count pixels that are neither black (empty
-           board area) nor the red profile outline.
-        6. Return  copper_pixels / total_inside_pixels  (0 – 1).
+        A dedicated **off-screen** figure is created at 200 DPI with the
+        axes tight-fitted to the PCB bounding box so the result is
+        completely independent of the user's zoom level or window size.
         """
         import numpy as np
         from matplotlib.figure import Figure
@@ -1583,7 +1674,6 @@ class CopperRatioViewer:
             if contour.is_island and len(verts) >= 3:
                 outline_verts = verts
                 break
-
         if outline_verts is None:
             return None
 
@@ -1600,8 +1690,8 @@ class CopperRatioViewer:
         # ---- 3. Build a fixed-resolution off-screen figure ---------------
         # Target ~2 000 px on the longer axis at 200 DPI → figure is
         # ~10 in on that axis regardless of actual board physical size.
-        _DPI = 200
-        _LONG = 10.0          # inches on the longer axis
+        _DPI  = 200
+        _LONG = 10.0
         if board_w >= board_h:
             fig_w, fig_h = _LONG, _LONG * board_h / board_w
         else:
@@ -1610,17 +1700,18 @@ class CopperRatioViewer:
         fig_h = max(fig_h, 1.0)
 
         calc_fig = Figure(figsize=(fig_w, fig_h), dpi=_DPI, facecolor="black")
-        # axes spans the entire figure — zero wasted pixels
-        calc_ax = calc_fig.add_axes([0.0, 0.0, 1.0, 1.0])
+        calc_ax  = calc_fig.add_axes([0.0, 0.0, 1.0, 1.0])
         calc_ax.set_facecolor("#000000")
         calc_ax.set_xlim(xmin, xmax)
         calc_ax.set_ylim(ymin, ymax)
         calc_ax.set_aspect("equal", adjustable="box")
         calc_ax.axis("off")
 
-        # Draw board outline then layer features at full opacity
-        _draw_profile(calc_ax, self.profile)
-
+        # NOTE: _draw_profile is intentionally omitted here.
+        # The PCB polygon mask is built from outline_verts geometrically
+        # (Path.contains_points), so the rendered outline is not needed.
+        # Including it causes anti-aliased edge pixels (blended red+black)
+        # to be miscounted as copper, especially in narrow/tail regions.
         features, matrix_layer = self.layers_data[self._selected_layer]
         color = LAYER_COLORS.get(matrix_layer.type, "#00CC00")
         render_layer(calc_ax, features, color=color,
@@ -1631,10 +1722,10 @@ class CopperRatioViewer:
         # ---- 4. Rasterise to numpy RGBA ----------------------------------
         agg = FigureCanvasAgg(calc_fig)
         agg.draw()
-        buf = agg.buffer_rgba()
+        buf  = agg.buffer_rgba()
         w, h = agg.get_width_height()
-        img = np.frombuffer(buf, dtype=np.uint8).reshape(h, w, 4)
-        rgb = img[:, :, :3]
+        img  = np.frombuffer(buf, dtype=np.uint8).reshape(h, w, 4)
+        rgb  = img[:, :, :3]
 
         # ---- 5. Map outline → image-pixel coordinates --------------------
         # transData: data → display pixels (origin bottom-left of figure)
@@ -1649,21 +1740,242 @@ class CopperRatioViewer:
         path = Path(img_pts)
         ys, xs = np.mgrid[0:h, 0:w]
         pts = np.column_stack([xs.ravel() + 0.5, ys.ravel() + 0.5])
-        inside_mask = path.contains_points(pts).reshape(h, w)
+        pcb_mask = path.contains_points(pts).reshape(h, w)
 
+        return {
+            "rgb":      rgb,
+            "pcb_mask": pcb_mask,
+            "xmin": xmin, "xmax": xmax,
+            "ymin": ymin, "ymax": ymax,
+            "img_w": w,   "img_h": h,
+        }
+
+    # ------------------------------------------------------------------
+    # Ratio calculation
+    # ------------------------------------------------------------------
+
+    def _calculate_ratio(self) -> Optional[float]:
+        """Copper fill ratio for the entire selected layer (0 – 1)."""
+        import numpy as np
+
+        data = self._rasterize_layer()
+        if data is None:
+            return None
+
+        rgb        = data["rgb"]
+        inside_mask = data["pcb_mask"]
         total_inside = int(inside_mask.sum())
         if total_inside == 0:
             return None
 
-        # ---- 7. Count copper pixels --------------------------------------
         # "copper" = non-black AND not the red profile-outline colour
         is_nonblack = np.any(rgb > 20, axis=2)
         is_red = (
             (rgb[:, :, 0] > 180) &
-            (rgb[:, :, 1] < 60) &
+            (rgb[:, :, 1] < 60)  &
+            (rgb[:, :, 2] < 60)
+        )
+        is_copper    = is_nonblack & ~is_red
+        copper_inside = int((inside_mask & is_copper).sum())
+        return copper_inside / total_inside
+
+    def _calculate_subsection_ratios(self):
+        """Copper fill ratio for each cell of an n_rows × n_cols grid.
+
+        Returns an np.ndarray of shape (n_rows, n_cols) with values in
+        [0, 1].  Cells that contain no PCB area are set to np.nan.
+        Returns None if rasterization fails.
+
+        Grid orientation
+        ----------------
+        Row 0 is the *top* of the PCB (y = ymax), row n_rows-1 is the
+        bottom (y = ymin), matching standard image-coordinate order.
+        Column 0 is the *left* (x = xmin).
+        """
+        import numpy as np
+
+        data = self._rasterize_layer()
+        if data is None:
+            return None
+
+        rgb      = data["rgb"]
+        pcb_mask = data["pcb_mask"]
+        h, w     = data["img_h"], data["img_w"]
+
+        # Copper pixel classification (same thresholds as _calculate_ratio)
+        is_nonblack = np.any(rgb > 20, axis=2)
+        is_red = (
+            (rgb[:, :, 0] > 180) &
+            (rgb[:, :, 1] < 60)  &
             (rgb[:, :, 2] < 60)
         )
         is_copper = is_nonblack & ~is_red
-        copper_inside = int((inside_mask & is_copper).sum())
 
-        return copper_inside / total_inside
+        ratios = np.full((self._n_rows, self._n_cols), np.nan)
+        for i in range(self._n_rows):
+            r0 = round(i       * h / self._n_rows)
+            r1 = round((i + 1) * h / self._n_rows)
+            for j in range(self._n_cols):
+                c0 = round(j       * w / self._n_cols)
+                c1 = round((j + 1) * w / self._n_cols)
+
+                cell_pcb = pcb_mask[r0:r1, c0:c1]
+                total    = int(cell_pcb.sum())
+                if total == 0:
+                    continue
+                copper = int((cell_pcb & is_copper[r0:r1, c0:c1]).sum())
+                ratios[i, j] = copper / total
+
+        return ratios
+
+    # ------------------------------------------------------------------
+    # Sub-section overlay (drawn on the interactive canvas)
+    # ------------------------------------------------------------------
+
+    def _draw_subsection_overlay(self):
+        """Draw a colour-coded grid heatmap on self.ax.
+
+        Each cell is filled with a RdYlGn colour proportional to its
+        copper ratio.  Cells with no PCB area are drawn as translucent
+        grey.  A colorbar legend is added to the figure.
+        """
+        import numpy as np
+        import matplotlib.cm as cm
+        import matplotlib.colors as mcolors
+        import matplotlib.patches as mpatches
+        from src.visualizer.symbol_renderer import contour_to_vertices
+
+        ratios = self._subsection_ratios
+        if ratios is None:
+            return
+
+        # Re-derive bounding box from profile (fast, no rendering)
+        outline_verts = None
+        for contour in self.profile.surface.contours:
+            verts = contour_to_vertices(contour)
+            if contour.is_island and len(verts) >= 3:
+                outline_verts = verts
+                break
+        if outline_verts is None:
+            return
+
+        xmin = float(outline_verts[:, 0].min())
+        xmax = float(outline_verts[:, 0].max())
+        ymin = float(outline_verts[:, 1].min())
+        ymax = float(outline_verts[:, 1].max())
+        board_w = xmax - xmin
+        board_h = ymax - ymin
+        cell_w  = board_w / self._n_cols
+        cell_h  = board_h / self._n_rows
+
+        cmap = cm.RdYlGn
+        norm = mcolors.Normalize(vmin=0.0, vmax=1.0)
+
+        for i in range(self._n_rows):
+            # Row 0 in ratios array = top of board = ymax
+            y_bottom = ymax - (i + 1) * cell_h
+            for j in range(self._n_cols):
+                x_left = xmin + j * cell_w
+                ratio  = ratios[i, j]
+
+                if np.isnan(ratio):
+                    facecolor = "#aaaaaa"
+                    alpha     = 0.15
+                    label     = ""
+                else:
+                    facecolor = cmap(norm(ratio))
+                    alpha     = 0.55
+                    label     = f"{ratio * 100:.1f}%"
+
+                rect = mpatches.Rectangle(
+                    (x_left, y_bottom), cell_w, cell_h,
+                    facecolor=facecolor,
+                    edgecolor="white",
+                    linewidth=0.8,
+                    alpha=alpha,
+                    zorder=5,
+                )
+                self.ax.add_patch(rect)
+
+                if label:
+                    cx = x_left  + cell_w / 2
+                    cy = y_bottom + cell_h / 2
+                    # Pick text colour for readability over the cell fill
+                    r, g, b, _ = cmap(norm(ratio))
+                    lum = 0.2126 * r + 0.7152 * g + 0.0722 * b
+                    txt_color = "black" if lum > 0.40 else "white"
+                    self.ax.text(
+                        cx, cy, label,
+                        ha="center", va="center",
+                        fontsize=7, color=txt_color,
+                        fontweight="bold", zorder=6,
+                    )
+
+        # Colorbar
+        sm = cm.ScalarMappable(cmap=cmap, norm=norm)
+        sm.set_array([])
+        self._colorbar = self.fig.colorbar(
+            sm, ax=self.ax,
+            fraction=0.02, pad=0.02, shrink=0.6,
+            label="Copper Ratio",
+        )
+        self._colorbar.set_ticks([0, 0.25, 0.50, 0.75, 1.0])
+        self._colorbar.set_ticklabels(["0%", "25%", "50%", "75%", "100%"])
+
+    # ------------------------------------------------------------------
+    # Sub-section text-panel helpers
+    # ------------------------------------------------------------------
+
+    def _update_subsection_display(self):
+        """Populate the sub-section Text widget with a formatted grid."""
+        import numpy as np
+
+        if self._subsection_text is None:
+            return
+
+        self._subsection_text.config(state=tk.NORMAL)
+        self._subsection_text.delete("1.0", tk.END)
+
+        ratios = self._subsection_ratios
+        if ratios is None:
+            self._subsection_text.insert(tk.END, "(no data)", "sep")
+            self._subsection_text.config(state=tk.DISABLED)
+            return
+
+        # Column header
+        hdr = "    " + " ".join(f" C{j+1:1d}  " for j in range(self._n_cols))
+        self._subsection_text.insert(tk.END, hdr + "\n", "sep")
+        self._subsection_text.insert(
+            tk.END, "\u2500" * len(hdr) + "\n", "sep")
+
+        for i in range(self._n_rows):
+            row = f"R{i+1} "
+            for j in range(self._n_cols):
+                v = ratios[i, j]
+                row += ("  -- " if np.isnan(v) else f"{v*100:5.1f}%") + " "
+            self._subsection_text.insert(tk.END, row.rstrip() + "\n", "kv")
+
+        valid = ratios[~np.isnan(ratios)]
+        if len(valid):
+            sep = "\u2500" * len(hdr)
+            self._subsection_text.insert(tk.END, sep + "\n", "sep")
+            self._subsection_text.insert(
+                tk.END,
+                f"Min {valid.min()*100:5.1f}%  Max {valid.max()*100:5.1f}%\n",
+                "kv",
+            )
+            self._subsection_text.insert(
+                tk.END,
+                f"Avg {valid.mean()*100:5.1f}%\n",
+                "title",
+            )
+
+        self._subsection_text.config(state=tk.DISABLED)
+
+    def _clear_subsection_display(self):
+        """Clear the sub-section Text widget."""
+        if self._subsection_text is None:
+            return
+        self._subsection_text.config(state=tk.NORMAL)
+        self._subsection_text.delete("1.0", tk.END)
+        self._subsection_text.config(state=tk.DISABLED)
