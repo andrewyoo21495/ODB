@@ -316,7 +316,87 @@ def find_overlapping_components(
 
 
 # ---------------------------------------------------------------------------
-# 7. Component Size Utilities
+# 7. Pad-to-Pad Overlap Detection
+# ---------------------------------------------------------------------------
+
+def _get_pad_union(comp: Component, packages: list[Package]):
+    """Build a union of all individual pad polygons for *comp*.
+
+    For each pin in the package, the pin outline vertices are transformed to
+    board coordinates and turned into a Shapely polygon.  Falls back to a
+    small circular buffer around the toeprint position if no outline is found.
+
+    Returns a Shapely geometry (union of all pads) or None.
+    """
+    if not _HAS_SHAPELY:
+        return None
+    if comp.pkg_ref < 0 or comp.pkg_ref >= len(packages):
+        return None
+
+    pkg = packages[comp.pkg_ref]
+    pad_polys = []
+
+    for pin in pkg.pins:
+        placed = False
+        for outline in pin.outlines:
+            verts = _outline_vertices(outline)
+            if not verts:
+                continue
+            board_verts = [transform_point(v[0], v[1], comp) for v in verts]
+            if len(board_verts) >= 3:
+                try:
+                    poly = ShapelyPolygon(board_verts)
+                    if poly.is_valid and not poly.is_empty:
+                        pad_polys.append(poly)
+                        placed = True
+                        break
+                except Exception:
+                    pass
+        if not placed:
+            bx, by = transform_point(pin.center.x, pin.center.y, comp)
+            pad_polys.append(ShapelyPoint(bx, by).buffer(0.05))
+
+    # Fallback: toeprint positions if package has no pin data
+    if not pad_polys:
+        for tp in comp.toeprints:
+            pad_polys.append(ShapelyPoint(tp.x, tp.y).buffer(0.05))
+
+    if not pad_polys:
+        return None
+
+    return unary_union(pad_polys)
+
+
+def find_pad_overlapping_components(
+    comp: Component,
+    candidates: Sequence[Component],
+    packages: list[Package],
+) -> list[Component]:
+    """Return *candidates* whose pads overlap *comp*'s pads.
+
+    Unlike :func:`find_overlapping_components` (which uses the full outline
+    convex hull), this function checks pad-level geometry only.  Outline
+    overlap is acceptable; pad-to-pad contact is not.
+    """
+    if not _HAS_SHAPELY:
+        return []
+
+    pad_union_comp = _get_pad_union(comp, packages)
+    if pad_union_comp is None:
+        pad_union_comp = ShapelyPoint(comp.x, comp.y).buffer(0.05)
+
+    overlapping: list[Component] = []
+    for cand in candidates:
+        pad_union_cand = _get_pad_union(cand, packages)
+        if pad_union_cand is None:
+            pad_union_cand = ShapelyPoint(cand.x, cand.y).buffer(0.05)
+        if pad_union_comp.intersects(pad_union_cand):
+            overlapping.append(cand)
+    return overlapping
+
+
+# ---------------------------------------------------------------------------
+# 8. Component Size Utilities
 # ---------------------------------------------------------------------------
 
 def get_component_size(comp: Component,
@@ -372,7 +452,7 @@ def filter_by_size(components: Sequence[Component],
 
 
 # ---------------------------------------------------------------------------
-# 8. PCB Outline Clearance
+# 9. PCB Outline Clearance
 # ---------------------------------------------------------------------------
 
 def build_board_polygon(profile) -> Optional[object]:
