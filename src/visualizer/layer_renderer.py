@@ -22,7 +22,7 @@ from src.visualizer.symbol_renderer import (
 
 # Default layer colors by type
 LAYER_COLORS = {
-    "SIGNAL": "#CC0000",
+    "SIGNAL": "#008E5C",
     "POWER_GROUND": "#0000CC",
     "SOLDER_MASK": "#00AA00",
     "SOLDER_PASTE": "#888888",

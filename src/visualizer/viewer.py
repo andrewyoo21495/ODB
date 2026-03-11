@@ -68,7 +68,12 @@ def _style_axes(ax) -> None:
 
 
 def _make_listbox(parent, **kwargs) -> tuple[tk.Frame, tk.Listbox]:
-    """Return (frame, Listbox) with dark multi-select styling and a scrollbar."""
+    """Return (frame, Listbox) with dark styling and a scrollbar.
+
+    Pass ``selectmode=tk.SINGLE`` (or any tk constant) to override the
+    default ``tk.MULTIPLE`` behaviour.
+    """
+    selectmode = kwargs.pop("selectmode", tk.MULTIPLE)
     frame = tk.Frame(
         parent, bg=_BG2,
         highlightbackground="#cccccc", highlightthickness=1,
@@ -79,7 +84,7 @@ def _make_listbox(parent, **kwargs) -> tuple[tk.Frame, tk.Listbox]:
     )
     lb = tk.Listbox(
         frame,
-        selectmode=tk.MULTIPLE,
+        selectmode=selectmode,
         bg=_BG2,
         fg=_FG,
         selectbackground=_SEL_BG,
@@ -1326,3 +1331,339 @@ class ViaViewer:
 
     def _format_coord(self, x: float, y: float) -> str:
         return f"x={x:.4f}mm y={y:.4f}mm"
+
+
+# ===========================================================================
+# Copper Ratio viewer
+# ===========================================================================
+
+class CopperRatioViewer:
+    """Signal-layer copper fill ratio calculator.
+
+    Left panel (top → bottom):
+      - Layer Selection  : Listbox (single-select, SIGNAL layers only)
+      - Calculate Copper Ratio button
+      - Result label
+      - Layer Thickness  : read-only table from copper_data cache
+
+    Right panel: matplotlib canvas that renders the selected signal layer
+    together with the PCB outline.  Clicking "Calculate Copper Ratio"
+    performs a pixel-based fill analysis and displays the result.
+    """
+
+    def __init__(self,
+                 profile: Profile,
+                 layers_data: dict[str, tuple[LayerFeatures, MatrixLayer]],
+                 copper_data: dict[str, float] = None,
+                 user_symbols: dict[str, UserSymbol] = None,
+                 font: StrokeFont = None):
+        self.profile      = profile
+        self.layers_data  = layers_data
+        self.copper_data  = copper_data or {}
+        self.user_symbols = user_symbols or {}
+        self.font         = font
+
+        # Build ordered list of SIGNAL layers only
+        self._signal_layers: list[str] = [
+            name for name, (_, ml) in sorted(
+                layers_data.items(), key=lambda x: x[1][1].row
+            )
+            if ml.type == "SIGNAL"
+        ]
+
+        self._selected_layer: Optional[str] = None
+        self._ratio_result:   Optional[float] = None
+        self._root: Optional[tk.Tk] = None
+
+    # ------------------------------------------------------------------
+    # Public entry point
+    # ------------------------------------------------------------------
+
+    def show(self, figsize: tuple[float, float] = (14, 9)):
+        """Launch the copper ratio viewer."""
+        root = tk.Tk()
+        self._root = root
+        root.title("ODB++ Copper Ratio Viewer")
+        root.configure(bg=_BG)
+        try:
+            root.state("zoomed")
+        except tk.TclError:
+            pass
+
+        # ---- Left panel ---------------------------------------------------
+        left = tk.Frame(root, bg=_BG, width=240)
+        left.pack(side=tk.LEFT, fill=tk.Y, padx=(6, 3), pady=6)
+        left.pack_propagate(False)
+
+        # Layer selection (SIGNAL layers, single-select)
+        _section_label(left, "Layer Selection").pack(anchor="w", pady=(4, 4))
+
+        lb_frame, self._layer_lb = _make_listbox(
+            left, height=10, selectmode=tk.SINGLE,
+        )
+        lb_frame.pack(fill=tk.BOTH, expand=False, pady=(0, 6))
+
+        for name in self._signal_layers:
+            self._layer_lb.insert(tk.END, name)
+        self._layer_lb.bind("<<ListboxSelect>>", self._on_layer_select)
+
+        _divider(left).pack(fill=tk.X, pady=(0, 6))
+
+        # Calculate button
+        tk.Button(
+            left, text="Calculate Copper Ratio",
+            bg="#1a73e8", fg="#ffffff",
+            activebackground="#1557b0", activeforeground="#ffffff",
+            font=("Segoe UI", 10, "bold"),
+            relief=tk.FLAT, cursor="hand2",
+            command=self._on_calculate,
+        ).pack(fill=tk.X, pady=(0, 4), padx=2)
+
+        # Result label
+        self._result_var = tk.StringVar(value="")
+        tk.Label(
+            left, textvariable=self._result_var,
+            bg=_BG, fg="#1a73e8",
+            font=("Segoe UI", 10, "bold"),
+            anchor="w", wraplength=220,
+        ).pack(fill=tk.X, padx=4, pady=(0, 6))
+
+        _divider(left).pack(fill=tk.X, pady=(0, 6))
+
+        # Layer Thickness table
+        _section_label(left, "Layer Thickness").pack(anchor="w", pady=(0, 4))
+        self._thickness_text = _make_info_text(left, height=10)
+        self._thickness_text.pack(fill=tk.BOTH, expand=True, padx=2, pady=(0, 6))
+        self._populate_thickness_table()
+
+        # ---- Right panel (matplotlib canvas) ------------------------------
+        right = tk.Frame(root, bg="white")
+        right.pack(side=tk.LEFT, fill=tk.BOTH, expand=True,
+                   padx=(3, 6), pady=6)
+
+        self.fig = Figure(figsize=figsize, facecolor="white")
+        self.ax  = self.fig.add_axes([0.07, 0.07, 0.90, 0.88])
+        _style_axes(self.ax)
+
+        self.canvas = FigureCanvasTkAgg(self.fig, master=right)
+        toolbar = NavigationToolbar2Tk(self.canvas, right)
+        toolbar.update()
+        self.canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+
+        self._redraw()
+        root.mainloop()
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    def _populate_thickness_table(self):
+        self._thickness_text.config(state=tk.NORMAL)
+        self._thickness_text.delete("1.0", tk.END)
+        if not self.copper_data:
+            self._thickness_text.insert(tk.END, "(no data available)", "small")
+        else:
+            self._thickness_text.insert(
+                tk.END, f"{'Layer':<19} {'mm':>7}\n", "sep")
+            self._thickness_text.insert(tk.END, "\u2500" * 26 + "\n", "sep")
+            total = 0.0
+            for layer_name, thickness in self.copper_data.items():
+                total += thickness
+                self._thickness_text.insert(
+                    tk.END,
+                    f"{layer_name[:18]:<19} {thickness:>7.4f}\n",
+                    "kv",
+                )
+            self._thickness_text.insert(tk.END, "\u2500" * 26 + "\n", "sep")
+            self._thickness_text.insert(
+                tk.END, f"{'Total':<19} {total:>7.4f}\n", "title")
+        self._thickness_text.config(state=tk.DISABLED)
+
+    # ------------------------------------------------------------------
+    # Event handlers
+    # ------------------------------------------------------------------
+
+    def _on_layer_select(self, _event):
+        sel = self._layer_lb.curselection()
+        self._selected_layer = self._signal_layers[sel[0]] if sel else None
+        self._ratio_result = None
+        self._result_var.set("")
+        self._redraw()
+
+    def _on_calculate(self):
+        if self._selected_layer is None:
+            self._result_var.set("Select a layer first.")
+            return
+        self._result_var.set("Calculating\u2026")
+        if self._root:
+            self._root.update_idletasks()
+        ratio = self._calculate_ratio()
+        if ratio is not None:
+            self._ratio_result = ratio
+            self._result_var.set(
+                f"Ratio: {ratio:.4f}  ({ratio * 100:.2f}%)"
+            )
+            self._redraw()   # refresh title with ratio
+        else:
+            self._result_var.set("Calculation failed.")
+
+    # ------------------------------------------------------------------
+    # Rendering
+    # ------------------------------------------------------------------
+
+    def _redraw(self):
+        self.ax.clear()
+        _style_axes(self.ax)
+
+        if self.profile and self.profile.surface:
+            _draw_profile(self.ax, self.profile)
+
+        if self._selected_layer and self._selected_layer in self.layers_data:
+            features, matrix_layer = self.layers_data[self._selected_layer]
+            color = LAYER_COLORS.get(matrix_layer.type, "#00CC00")
+            render_layer(self.ax, features, color=color,
+                         layer_type=matrix_layer.type,
+                         alpha=0.85, user_symbols=self.user_symbols,
+                         font=self.font)
+
+        if self._selected_layer:
+            title = self._selected_layer
+            if self._ratio_result is not None:
+                title += f"  |  Copper Ratio: {self._ratio_result:.4f}"
+        else:
+            title = "Select a Signal Layer"
+
+        self.ax.set_title(title, color="#000000")
+        self.ax.set_xlabel("X", color="#000000")
+        self.ax.set_ylabel("Y", color="#000000")
+        self.ax.grid(False)
+        self.ax.set_aspect("equal")
+        self.ax.format_coord = lambda x, y: f"x={x:.4f}mm y={y:.4f}mm"
+        self.canvas.draw()
+
+    # ------------------------------------------------------------------
+    # Ratio calculation
+    # ------------------------------------------------------------------
+
+    def _calculate_ratio(self) -> Optional[float]:
+        """Copper fill ratio for the currently selected layer.
+
+        Algorithm
+        ---------
+        A dedicated **off-screen** figure is created at a fixed high
+        resolution (200 DPI, axes tight-fitted to the PCB bounding box)
+        so the result is completely independent of the user's zoom level
+        or the window size.
+
+        1. Build a fixed-resolution off-screen render of the PCB outline
+           + selected layer using the Agg (non-interactive) backend.
+        2. Set axis limits exactly to the PCB bounding box — no margins —
+           so every pixel represents the same physical area.
+        3. Transform the PCB outline vertices to image-pixel coordinates.
+        4. Build a boolean inside-PCB mask via ``matplotlib.path.Path``.
+        5. Within that mask count pixels that are neither black (empty
+           board area) nor the red profile outline.
+        6. Return  copper_pixels / total_inside_pixels  (0 – 1).
+        """
+        import numpy as np
+        from matplotlib.figure import Figure
+        from matplotlib.backends.backend_agg import FigureCanvasAgg
+        from matplotlib.path import Path
+        from src.visualizer.symbol_renderer import contour_to_vertices
+
+        if not self.profile or not self.profile.surface:
+            return None
+        if self._selected_layer not in self.layers_data:
+            return None
+
+        # ---- 1. Find the PCB outline (island contour) --------------------
+        outline_verts = None
+        for contour in self.profile.surface.contours:
+            verts = contour_to_vertices(contour)
+            if contour.is_island and len(verts) >= 3:
+                outline_verts = verts
+                break
+
+        if outline_verts is None:
+            return None
+
+        # ---- 2. Compute tight PCB bounding box ---------------------------
+        xmin = float(outline_verts[:, 0].min())
+        xmax = float(outline_verts[:, 0].max())
+        ymin = float(outline_verts[:, 1].min())
+        ymax = float(outline_verts[:, 1].max())
+        board_w = xmax - xmin
+        board_h = ymax - ymin
+        if board_w <= 0 or board_h <= 0:
+            return None
+
+        # ---- 3. Build a fixed-resolution off-screen figure ---------------
+        # Target ~2 000 px on the longer axis at 200 DPI → figure is
+        # ~10 in on that axis regardless of actual board physical size.
+        _DPI = 200
+        _LONG = 10.0          # inches on the longer axis
+        if board_w >= board_h:
+            fig_w, fig_h = _LONG, _LONG * board_h / board_w
+        else:
+            fig_w, fig_h = _LONG * board_w / board_h, _LONG
+        fig_w = max(fig_w, 1.0)
+        fig_h = max(fig_h, 1.0)
+
+        calc_fig = Figure(figsize=(fig_w, fig_h), dpi=_DPI, facecolor="black")
+        # axes spans the entire figure — zero wasted pixels
+        calc_ax = calc_fig.add_axes([0.0, 0.0, 1.0, 1.0])
+        calc_ax.set_facecolor("#000000")
+        calc_ax.set_xlim(xmin, xmax)
+        calc_ax.set_ylim(ymin, ymax)
+        calc_ax.set_aspect("equal", adjustable="box")
+        calc_ax.axis("off")
+
+        # Draw board outline then layer features at full opacity
+        _draw_profile(calc_ax, self.profile)
+
+        features, matrix_layer = self.layers_data[self._selected_layer]
+        color = LAYER_COLORS.get(matrix_layer.type, "#00CC00")
+        render_layer(calc_ax, features, color=color,
+                     layer_type=matrix_layer.type,
+                     alpha=1.0, user_symbols=self.user_symbols,
+                     font=self.font)
+
+        # ---- 4. Rasterise to numpy RGBA ----------------------------------
+        agg = FigureCanvasAgg(calc_fig)
+        agg.draw()
+        buf = agg.buffer_rgba()
+        w, h = agg.get_width_height()
+        img = np.frombuffer(buf, dtype=np.uint8).reshape(h, w, 4)
+        rgb = img[:, :, :3]
+
+        # ---- 5. Map outline → image-pixel coordinates --------------------
+        # transData: data → display pixels (origin bottom-left of figure)
+        # image:     origin top-left, y increases downward  →  flip y
+        display_pts = calc_ax.transData.transform(outline_verts)
+        img_pts = np.column_stack([
+            display_pts[:, 0],
+            h - display_pts[:, 1],
+        ])
+
+        # ---- 6. Inside-PCB mask ------------------------------------------
+        path = Path(img_pts)
+        ys, xs = np.mgrid[0:h, 0:w]
+        pts = np.column_stack([xs.ravel() + 0.5, ys.ravel() + 0.5])
+        inside_mask = path.contains_points(pts).reshape(h, w)
+
+        total_inside = int(inside_mask.sum())
+        if total_inside == 0:
+            return None
+
+        # ---- 7. Count copper pixels --------------------------------------
+        # "copper" = non-black AND not the red profile-outline colour
+        is_nonblack = np.any(rgb > 20, axis=2)
+        is_red = (
+            (rgb[:, :, 0] > 180) &
+            (rgb[:, :, 1] < 60) &
+            (rgb[:, :, 2] < 60)
+        )
+        is_copper = is_nonblack & ~is_red
+        copper_inside = int((inside_mask & is_copper).sum())
+
+        return copper_inside / total_inside

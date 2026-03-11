@@ -1,12 +1,13 @@
 """ODB++ Processing System - CLI Entry Point.
 
 Usage:
-    python main.py cache      <odb_path>                         Parse and cache to JSON
-    python main.py view       <odb_path> [--layers L1 L2 ...]    Launch visualizer
-    python main.py view-comp  <odb_path>                         Launch component viewer
-    python main.py check      <odb_path> [--rules R1 R2 ...]     Run checklist
-    python main.py info       <odb_path>                         Print job summary
-    python main.py copper     <odb_path>                         Display layer thickness
+    python main.py cache         <odb_path>                         Parse and cache to JSON
+    python main.py view          <odb_path> [--layers L1 L2 ...]    Launch visualizer
+    python main.py view-comp     <odb_path>                         Launch component viewer
+    python main.py check         <odb_path> [--rules R1 R2 ...]     Run checklist
+    python main.py info          <odb_path>                         Print job summary
+    python main.py copper        <odb_path>                         Display layer thickness
+    python main.py copper-ratio  <odb_path>                         Launch copper ratio viewer
 """
 
 from __future__ import annotations
@@ -962,6 +963,34 @@ def cmd_check(args):
     )
 
 
+def cmd_copper_ratio(args):
+    """Launch the interactive copper ratio viewer."""
+    import json
+    import matplotlib
+    matplotlib.use("TkAgg")
+
+    cache_dir = Path(getattr(args, "cache_dir", None) or "cache")
+    cache_name = _ensure_cache(args.odb_path, cache_dir)
+    data = _load_from_cache(cache_dir, cache_name)
+
+    copper_data: dict[str, float] = {}
+    copper_file = cache_dir / cache_name / "copper_data.json"
+    if copper_file.exists():
+        with open(copper_file, "r", encoding="utf-8") as f:
+            copper_data = json.load(f)
+
+    from src.visualizer.viewer import CopperRatioViewer
+
+    viewer = CopperRatioViewer(
+        profile=data.get("profile"),
+        layers_data=data.get("layers_data", {}),
+        copper_data=copper_data,
+        user_symbols=data.get("user_symbols", {}),
+        font=data.get("font"),
+    )
+    viewer.show()
+
+
 def cmd_copper(args):
     """Display layer thickness (copper weight) for each Signal and Dielectric layer."""
     import json
@@ -1039,6 +1068,11 @@ def main():
     p_copper.add_argument("odb_path", help="Path to ODB++ archive or directory")
     p_copper.add_argument("--cache-dir", default="cache", help="Cache directory")
 
+    # copper-ratio command
+    p_copper_ratio = subparsers.add_parser("copper-ratio", help="Launch copper ratio viewer")
+    p_copper_ratio.add_argument("odb_path", help="Path to ODB++ archive or directory")
+    p_copper_ratio.add_argument("--cache-dir", default="cache", help="Cache directory")
+
     args = parser.parse_args()
 
     if args.command == "info":
@@ -1055,6 +1089,8 @@ def main():
         cmd_check(args)
     elif args.command == "copper":
         cmd_copper(args)
+    elif args.command == "copper-ratio":
+        cmd_copper_ratio(args)
     else:
         parser.print_help()
 
