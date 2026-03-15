@@ -38,6 +38,7 @@ from src.visualizer.symbol_renderer import symbol_to_patch, user_symbol_to_patch
 from src.visualizer.layer_renderer import LAYER_COLORS, render_layer
 from src.visualizer.component_overlay import draw_components
 from src.visualizer.renderer import _draw_profile
+from src.visualizer import copper_utils
 
 # Sentinel keys used in the layer list
 COMP_TOP_KEY     = "__components_top__"
@@ -1642,113 +1643,14 @@ class CopperRatioViewer:
     def _rasterize_layer(self) -> Optional[dict]:
         """Render the selected layer off-screen and return pixel data.
 
-        Returns a dict with keys:
-            rgb       – np.ndarray (H, W, 3) uint8 rendered image
-            pcb_mask  – np.ndarray (H, W) bool, True inside PCB outline
-            xmin, xmax, ymin, ymax  – bounding box in data coords (mm)
-            img_w, img_h            – image dimensions in pixels
-
-        Returns None if the profile or selected layer is unavailable.
-
-        Algorithm
-        ---------
-        A dedicated **off-screen** figure is created at 200 DPI with the
-        axes tight-fitted to the PCB bounding box so the result is
-        completely independent of the user's zoom level or window size.
+        Delegates to copper_utils.rasterize_layer.
         """
-        import numpy as np
-        from matplotlib.figure import Figure
-        from matplotlib.backends.backend_agg import FigureCanvasAgg
-        from matplotlib.path import Path
-        from src.visualizer.symbol_renderer import contour_to_vertices
-
-        if not self.profile or not self.profile.surface:
+        if self._selected_layer is None:
             return None
-        if self._selected_layer not in self.layers_data:
-            return None
-
-        # ---- 1. Find the PCB outline (island contour) --------------------
-        outline_verts = None
-        for contour in self.profile.surface.contours:
-            verts = contour_to_vertices(contour)
-            if contour.is_island and len(verts) >= 3:
-                outline_verts = verts
-                break
-        if outline_verts is None:
-            return None
-
-        # ---- 2. Compute tight PCB bounding box ---------------------------
-        xmin = float(outline_verts[:, 0].min())
-        xmax = float(outline_verts[:, 0].max())
-        ymin = float(outline_verts[:, 1].min())
-        ymax = float(outline_verts[:, 1].max())
-        board_w = xmax - xmin
-        board_h = ymax - ymin
-        if board_w <= 0 or board_h <= 0:
-            return None
-
-        # ---- 3. Build a fixed-resolution off-screen figure ---------------
-        # Target ~2 000 px on the longer axis at 200 DPI → figure is
-        # ~10 in on that axis regardless of actual board physical size.
-        _DPI  = 200
-        _LONG = 10.0
-        if board_w >= board_h:
-            fig_w, fig_h = _LONG, _LONG * board_h / board_w
-        else:
-            fig_w, fig_h = _LONG * board_w / board_h, _LONG
-        fig_w = max(fig_w, 1.0)
-        fig_h = max(fig_h, 1.0)
-
-        calc_fig = Figure(figsize=(fig_w, fig_h), dpi=_DPI, facecolor="black")
-        calc_ax  = calc_fig.add_axes([0.0, 0.0, 1.0, 1.0])
-        calc_ax.set_facecolor("#000000")
-        calc_ax.set_xlim(xmin, xmax)
-        calc_ax.set_ylim(ymin, ymax)
-        calc_ax.set_aspect("equal", adjustable="box")
-        calc_ax.axis("off")
-
-        # NOTE: _draw_profile is intentionally omitted here.
-        # The PCB polygon mask is built from outline_verts geometrically
-        # (Path.contains_points), so the rendered outline is not needed.
-        # Including it causes anti-aliased edge pixels (blended red+black)
-        # to be miscounted as copper, especially in narrow/tail regions.
-        features, matrix_layer = self.layers_data[self._selected_layer]
-        color = LAYER_COLORS.get(matrix_layer.type, "#00CC00")
-        render_layer(calc_ax, features, color=color,
-                     layer_type=matrix_layer.type,
-                     alpha=1.0, user_symbols=self.user_symbols,
-                     font=self.font)
-
-        # ---- 4. Rasterise to numpy RGBA ----------------------------------
-        agg = FigureCanvasAgg(calc_fig)
-        agg.draw()
-        buf  = agg.buffer_rgba()
-        w, h = agg.get_width_height()
-        img  = np.frombuffer(buf, dtype=np.uint8).reshape(h, w, 4)
-        rgb  = img[:, :, :3]
-
-        # ---- 5. Map outline → image-pixel coordinates --------------------
-        # transData: data → display pixels (origin bottom-left of figure)
-        # image:     origin top-left, y increases downward  →  flip y
-        display_pts = calc_ax.transData.transform(outline_verts)
-        img_pts = np.column_stack([
-            display_pts[:, 0],
-            h - display_pts[:, 1],
-        ])
-
-        # ---- 6. Inside-PCB mask ------------------------------------------
-        path = Path(img_pts)
-        ys, xs = np.mgrid[0:h, 0:w]
-        pts = np.column_stack([xs.ravel() + 0.5, ys.ravel() + 0.5])
-        pcb_mask = path.contains_points(pts).reshape(h, w)
-
-        return {
-            "rgb":      rgb,
-            "pcb_mask": pcb_mask,
-            "xmin": xmin, "xmax": xmax,
-            "ymin": ymin, "ymax": ymax,
-            "img_w": w,   "img_h": h,
-        }
+        return copper_utils.rasterize_layer(
+            self._selected_layer, self.profile, self.layers_data,
+            self.user_symbols, self.font
+        )
 
     # ------------------------------------------------------------------
     # Ratio calculation
@@ -1756,77 +1658,25 @@ class CopperRatioViewer:
 
     def _calculate_ratio(self) -> Optional[float]:
         """Copper fill ratio for the entire selected layer (0 – 1)."""
-        import numpy as np
-
-        data = self._rasterize_layer()
-        if data is None:
+        if self._selected_layer is None:
             return None
-
-        rgb        = data["rgb"]
-        inside_mask = data["pcb_mask"]
-        total_inside = int(inside_mask.sum())
-        if total_inside == 0:
-            return None
-
-        # "copper" = non-black AND not the red profile-outline colour
-        is_nonblack = np.any(rgb > 20, axis=2)
-        is_red = (
-            (rgb[:, :, 0] > 180) &
-            (rgb[:, :, 1] < 60)  &
-            (rgb[:, :, 2] < 60)
+        return copper_utils.calculate_copper_ratio(
+            self._selected_layer, self.profile, self.layers_data,
+            self.user_symbols, self.font
         )
-        is_copper    = is_nonblack & ~is_red
-        copper_inside = int((inside_mask & is_copper).sum())
-        return copper_inside / total_inside
 
     def _calculate_subsection_ratios(self):
         """Copper fill ratio for each cell of an n_rows × n_cols grid.
 
-        Returns an np.ndarray of shape (n_rows, n_cols) with values in
-        [0, 1].  Cells that contain no PCB area are set to np.nan.
-        Returns None if rasterization fails.
-
-        Grid orientation
-        ----------------
-        Row 0 is the *top* of the PCB (y = ymax), row n_rows-1 is the
-        bottom (y = ymin), matching standard image-coordinate order.
-        Column 0 is the *left* (x = xmin).
+        Delegates to copper_utils.calculate_subsection_ratios.
         """
-        import numpy as np
-
-        data = self._rasterize_layer()
-        if data is None:
+        if self._selected_layer is None:
             return None
-
-        rgb      = data["rgb"]
-        pcb_mask = data["pcb_mask"]
-        h, w     = data["img_h"], data["img_w"]
-
-        # Copper pixel classification (same thresholds as _calculate_ratio)
-        is_nonblack = np.any(rgb > 20, axis=2)
-        is_red = (
-            (rgb[:, :, 0] > 180) &
-            (rgb[:, :, 1] < 60)  &
-            (rgb[:, :, 2] < 60)
+        return copper_utils.calculate_subsection_ratios(
+            self._selected_layer, self.profile, self.layers_data,
+            self.user_symbols, self.font,
+            n_rows=self._n_rows, n_cols=self._n_cols
         )
-        is_copper = is_nonblack & ~is_red
-
-        ratios = np.full((self._n_rows, self._n_cols), np.nan)
-        for i in range(self._n_rows):
-            r0 = round(i       * h / self._n_rows)
-            r1 = round((i + 1) * h / self._n_rows)
-            for j in range(self._n_cols):
-                c0 = round(j       * w / self._n_cols)
-                c1 = round((j + 1) * w / self._n_cols)
-
-                cell_pcb = pcb_mask[r0:r1, c0:c1]
-                total    = int(cell_pcb.sum())
-                if total == 0:
-                    continue
-                copper = int((cell_pcb & is_copper[r0:r1, c0:c1]).sum())
-                ratios[i, j] = copper / total
-
-        return ratios
 
     # ------------------------------------------------------------------
     # Sub-section overlay (drawn on the interactive canvas)
@@ -1835,92 +1685,14 @@ class CopperRatioViewer:
     def _draw_subsection_overlay(self):
         """Draw a colour-coded grid heatmap on self.ax.
 
-        Each cell is filled with a RdYlGn colour proportional to its
-        copper ratio.  Cells with no PCB area are drawn as translucent
-        grey.  A colorbar legend is added to the figure.
+        Delegates to copper_utils.draw_subsection_overlay.
         """
-        import numpy as np
-        import matplotlib.cm as cm
-        import matplotlib.colors as mcolors
-        import matplotlib.patches as mpatches
-        from src.visualizer.symbol_renderer import contour_to_vertices
-
-        ratios = self._subsection_ratios
-        if ratios is None:
+        if self._subsection_ratios is None:
             return
-
-        # Re-derive bounding box from profile (fast, no rendering)
-        outline_verts = None
-        for contour in self.profile.surface.contours:
-            verts = contour_to_vertices(contour)
-            if contour.is_island and len(verts) >= 3:
-                outline_verts = verts
-                break
-        if outline_verts is None:
-            return
-
-        xmin = float(outline_verts[:, 0].min())
-        xmax = float(outline_verts[:, 0].max())
-        ymin = float(outline_verts[:, 1].min())
-        ymax = float(outline_verts[:, 1].max())
-        board_w = xmax - xmin
-        board_h = ymax - ymin
-        cell_w  = board_w / self._n_cols
-        cell_h  = board_h / self._n_rows
-
-        cmap = cm.RdYlGn
-        norm = mcolors.Normalize(vmin=0.0, vmax=1.0)
-
-        for i in range(self._n_rows):
-            # Row 0 in ratios array = top of board = ymax
-            y_bottom = ymax - (i + 1) * cell_h
-            for j in range(self._n_cols):
-                x_left = xmin + j * cell_w
-                ratio  = ratios[i, j]
-
-                if np.isnan(ratio):
-                    facecolor = "#aaaaaa"
-                    alpha     = 0.15
-                    label     = ""
-                else:
-                    facecolor = cmap(norm(ratio))
-                    alpha     = 0.55
-                    label     = f"{ratio * 100:.1f}%"
-
-                rect = mpatches.Rectangle(
-                    (x_left, y_bottom), cell_w, cell_h,
-                    facecolor=facecolor,
-                    edgecolor="white",
-                    linewidth=0.8,
-                    alpha=alpha,
-                    zorder=5,
-                )
-                self.ax.add_patch(rect)
-
-                if label:
-                    cx = x_left  + cell_w / 2
-                    cy = y_bottom + cell_h / 2
-                    # Pick text colour for readability over the cell fill
-                    r, g, b, _ = cmap(norm(ratio))
-                    lum = 0.2126 * r + 0.7152 * g + 0.0722 * b
-                    txt_color = "black" if lum > 0.40 else "white"
-                    self.ax.text(
-                        cx, cy, label,
-                        ha="center", va="center",
-                        fontsize=7, color=txt_color,
-                        fontweight="bold", zorder=6,
-                    )
-
-        # Colorbar
-        sm = cm.ScalarMappable(cmap=cmap, norm=norm)
-        sm.set_array([])
-        self._colorbar = self.fig.colorbar(
-            sm, ax=self.ax,
-            fraction=0.02, pad=0.02, shrink=0.6,
-            label="Copper Ratio",
+        self._colorbar = copper_utils.draw_subsection_overlay(
+            self.ax, self.fig, self._subsection_ratios, self.profile,
+            n_rows=self._n_rows, n_cols=self._n_cols
         )
-        self._colorbar.set_ticks([0, 0.25, 0.50, 0.75, 1.0])
-        self._colorbar.set_ticklabels(["0%", "25%", "50%", "75%", "100%"])
 
     # ------------------------------------------------------------------
     # Sub-section text-panel helpers
@@ -1979,3 +1751,240 @@ class CopperRatioViewer:
         self._subsection_text.config(state=tk.NORMAL)
         self._subsection_text.delete("1.0", tk.END)
         self._subsection_text.config(state=tk.DISABLED)
+
+
+# ===========================================================================
+# Copper Batch Calculator GUI
+# ===========================================================================
+
+
+class CopperCalculateViewer:
+    """Batch copper ratio calculator with GUI file/path selectors."""
+
+    def __init__(self, load_data_fn, cache_dir=None):
+        """Initialize the viewer.
+
+        Args:
+            load_data_fn: Callable(odb_path: str) -> dict with keys:
+                profile, layers_data, user_symbols, font, copper_data, matrix_layers_ordered
+            cache_dir: Path to cache directory (for reference)
+        """
+        from pathlib import Path
+        self._load_data_fn = load_data_fn
+        self._cache_dir = cache_dir or Path("cache")
+        self._root: Optional[tk.Tk] = None
+        self._status_text: Optional[tk.Text] = None
+        self._calc_btn: Optional[tk.Button] = None
+        self._odb_var: Optional[tk.StringVar] = None
+        self._excel_var: Optional[tk.StringVar] = None
+
+    def show(self):
+        """Launch the GUI window."""
+        import tkinter.filedialog as filedialog
+
+        self._root = tk.Tk()
+        self._root.title("Copper Ratio Batch Calculator")
+        self._root.geometry("650x400")
+        self._root.configure(bg=_BG)
+
+        # Create StringVars after root window exists
+        self._odb_var = tk.StringVar(value="")
+        self._excel_var = tk.StringVar(value="")
+
+        # ---- Main layout ----
+        main_frame = tk.Frame(self._root, bg=_BG)
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
+
+        # ODB++ file row
+        row1 = tk.Frame(main_frame, bg=_BG)
+        row1.pack(fill=tk.X, pady=(0, 6))
+
+        tk.Label(row1, text="ODB++ File:", bg=_BG, fg=_FG, font=_FONT).pack(
+            side=tk.LEFT, padx=(0, 6))
+        tk.Entry(row1, textvariable=self._odb_var, bg=_BG2, fg=_FG,
+                 font=_FONT, width=40).pack(side=tk.LEFT, padx=(0, 6), fill=tk.X, expand=True)
+        tk.Button(row1, text="Browse...", bg="#1a73e8", fg="#ffffff",
+                  activebackground="#1557b0", relief=tk.FLAT,
+                  command=self._browse_odb).pack(side=tk.LEFT)
+
+        # Excel output row
+        row2 = tk.Frame(main_frame, bg=_BG)
+        row2.pack(fill=tk.X, pady=(0, 6))
+
+        tk.Label(row2, text="Excel Output:", bg=_BG, fg=_FG, font=_FONT).pack(
+            side=tk.LEFT, padx=(0, 6))
+        tk.Entry(row2, textvariable=self._excel_var, bg=_BG2, fg=_FG,
+                 font=_FONT, width=40).pack(side=tk.LEFT, padx=(0, 6), fill=tk.X, expand=True)
+        tk.Button(row2, text="Save As...", bg="#1a73e8", fg="#ffffff",
+                  activebackground="#1557b0", relief=tk.FLAT,
+                  command=self._browse_excel).pack(side=tk.LEFT)
+
+        # Button row
+        row3 = tk.Frame(main_frame, bg=_BG)
+        row3.pack(fill=tk.X, pady=(0, 12))
+
+        self._calc_btn = tk.Button(
+            row3, text="Calculate", bg="#1a73e8", fg="#ffffff",
+            activebackground="#1557b0", activeforeground="#ffffff",
+            font=("Segoe UI", 11, "bold"), relief=tk.FLAT, cursor="hand2",
+            command=self._on_calculate)
+        self._calc_btn.pack(side=tk.LEFT, padx=6)
+
+        # Status section
+        _section_label(main_frame, "Status").pack(anchor="w", pady=(0, 4))
+
+        status_frame = tk.Frame(main_frame, bg=_BG2, highlightbackground="#cccccc",
+                                highlightthickness=1)
+        status_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 6))
+
+        scrollbar = tk.Scrollbar(status_frame, orient=tk.VERTICAL, bg=_BG,
+                                 troughcolor="#e0e0e0", relief=tk.FLAT)
+        self._status_text = tk.Text(
+            status_frame, height=12, bg=_BG2, fg=_FG, font=("Consolas", 9),
+            borderwidth=0, highlightthickness=0, yscrollcommand=scrollbar.set,
+            state=tk.DISABLED, wrap=tk.WORD
+        )
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self._status_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.config(command=self._status_text.yview)
+
+        self._root.mainloop()
+
+    def _browse_odb(self):
+        """Open file dialog for ODB++ file."""
+        import tkinter.filedialog as filedialog
+        path = filedialog.askopenfilename(
+            filetypes=[
+                ("ODB++ Archives", "*.tgz *.tar.gz *.zip"),
+                ("All files", "*.*")
+            ]
+        )
+        if path:
+            self._odb_var.set(path)
+
+    def _browse_excel(self):
+        """Open file dialog for Excel output."""
+        import tkinter.filedialog as filedialog
+        path = filedialog.asksaveasfilename(
+            defaultextension=".xlsx",
+            filetypes=[("Excel files", "*.xlsx")]
+        )
+        if path:
+            self._excel_var.set(path)
+
+    def _on_calculate(self):
+        """Start the calculation in a background thread."""
+        import threading
+
+        odb_path = self._odb_var.get().strip()
+        excel_path = self._excel_var.get().strip()
+
+        if not odb_path or not excel_path:
+            self._log("Error: ODB++ path and Excel output path are required.")
+            return
+
+        self._calc_btn.config(state=tk.DISABLED)
+        self._status_text.config(state=tk.NORMAL)
+        self._status_text.delete("1.0", tk.END)
+        self._status_text.config(state=tk.DISABLED)
+
+        t = threading.Thread(target=self._run_calculation,
+                             args=(odb_path, excel_path), daemon=True)
+        t.start()
+
+    def _run_calculation(self, odb_path: str, excel_path: str):
+        """Run the full calculation loop (background thread)."""
+        import numpy as np
+        from pathlib import Path
+        from src.copper_reporter import generate_copper_report
+
+        try:
+            self._log("Loading ODB++ data...")
+            data = self._load_data_fn(odb_path)
+
+            profile = data.get("profile")
+            layers_data = data.get("layers_data", {})
+            user_symbols = data.get("user_symbols", {})
+            font = data.get("font")
+            copper_data = data.get("copper_data", {})
+            all_matrix_layers = data.get("matrix_layers_ordered", [])
+
+            # Build ordered list of signal layers
+            signal_layers = [
+                name for name, (_, ml) in sorted(
+                    layers_data.items(), key=lambda x: x[1][1].row
+                )
+                if ml.type == "SIGNAL"
+            ]
+
+            self._log(f"Found {len(signal_layers)} signal layers.")
+
+            # Create images directory
+            excel_dir = Path(excel_path).parent
+            images_dir = excel_dir / "images"
+            images_dir.mkdir(parents=True, exist_ok=True)
+
+            layer_results = []
+            for i, layer_name in enumerate(signal_layers):
+                self._log(f"[{i + 1}/{len(signal_layers)}] Processing {layer_name}...")
+
+                self._log(f"  Calculating copper ratio...")
+                total_ratio = copper_utils.calculate_copper_ratio(
+                    layer_name, profile, layers_data, user_symbols, font
+                )
+
+                self._log(f"  Calculating sub-section ratios...")
+                sub_ratios = copper_utils.calculate_subsection_ratios(
+                    layer_name, profile, layers_data, user_symbols, font
+                )
+
+                self._log(f"  Saving image...")
+                safe_name = (
+                    layer_name
+                    .replace("/", "_").replace("\\", "_").replace(":", "_")
+                    .replace("[", "_").replace("]", "_").replace("*", "_").replace("?", "_")
+                )
+                img_path = images_dir / f"{safe_name}.png"
+                copper_utils.save_layer_image(
+                    layer_name, profile, layers_data, user_symbols, font,
+                    sub_ratios, img_path
+                )
+
+                _, ml = layers_data[layer_name]
+                thickness = copper_data.get(layer_name)
+
+                layer_results.append({
+                    "layer_name": layer_name,
+                    "total_ratio": total_ratio,
+                    "subsection_ratios": sub_ratios,
+                    "thickness_mm": thickness,
+                    "image_path": img_path.relative_to(excel_dir),
+                })
+
+            self._log("Generating Excel report...")
+            generate_copper_report(layer_results, copper_data, all_matrix_layers, excel_path)
+
+            self._log(f"Done! Report saved to: {excel_path}")
+            self._log("Window will close in 2 seconds...")
+
+            if self._root:
+                self._root.after(2000, self._root.destroy)
+
+        except Exception as e:
+            self._log(f"Error: {e}")
+            import traceback
+            self._log(traceback.format_exc())
+            if self._root:
+                self._root.after(0, lambda: self._calc_btn.config(state=tk.NORMAL))
+
+    def _log(self, message: str):
+        """Append a message to the status text widget (thread-safe)."""
+        def _update():
+            if self._status_text:
+                self._status_text.config(state=tk.NORMAL)
+                self._status_text.insert(tk.END, message + "\n")
+                self._status_text.see(tk.END)
+                self._status_text.config(state=tk.DISABLED)
+
+        if self._root:
+            self._root.after(0, _update)

@@ -1,13 +1,14 @@
 """ODB++ Processing System - CLI Entry Point.
 
 Usage:
-    python main.py cache         <odb_path>                         Parse and cache to JSON
-    python main.py view          <odb_path> [--layers L1 L2 ...]    Launch visualizer
-    python main.py view-comp     <odb_path>                         Launch component viewer
-    python main.py check         <odb_path> [--rules R1 R2 ...]     Run checklist
-    python main.py info          <odb_path>                         Print job summary
-    python main.py copper        <odb_path>                         Display layer thickness
-    python main.py copper-ratio  <odb_path>                         Launch copper ratio viewer
+    python main.py cache              <odb_path>                         Parse and cache to JSON
+    python main.py view               <odb_path> [--layers L1 L2 ...]    Launch visualizer
+    python main.py view-comp          <odb_path>                         Launch component viewer
+    python main.py check              <odb_path> [--rules R1 R2 ...]     Run checklist
+    python main.py info               <odb_path>                         Print job summary
+    python main.py copper             <odb_path>                         Display layer thickness
+    python main.py copper-ratio       <odb_path>                         Launch copper ratio viewer
+    python main.py copper-calculate                                       Launch copper ratio batch calculator
 """
 
 from __future__ import annotations
@@ -1023,6 +1024,39 @@ def cmd_copper(args):
     print(f"\n{len(copper_data)} layer(s) found.")
 
 
+def cmd_copper_calculate(args):
+    """Launch the copper ratio batch calculator GUI."""
+    import json
+    import matplotlib
+    matplotlib.use("TkAgg")
+
+    cache_dir = Path(getattr(args, "cache_dir", None) or "cache")
+
+    def _load_data(odb_path: str) -> dict:
+        """Load ODB++ data with copper and matrix layer info."""
+        cn = _ensure_cache(odb_path, cache_dir)
+        data = _load_from_cache(cache_dir, cn)
+
+        # Merge copper_data (signal + dielectric thicknesses)
+        copper_file = cache_dir / cn / "copper_data.json"
+        if copper_file.exists():
+            with open(copper_file, "r", encoding="utf-8") as f:
+                data["copper_data"] = json.load(f)
+        else:
+            data["copper_data"] = {}
+
+        # Provide ordered matrix layers for stackup-ordered output
+        raw = load_cache(cache_dir, cn)
+        ml_list = reconstruct_matrix_layers(raw.get("matrix_layers", []))
+        data["matrix_layers_ordered"] = sorted(ml_list, key=lambda x: x.row)
+
+        return data
+
+    from src.visualizer.viewer import CopperCalculateViewer
+    viewer = CopperCalculateViewer(load_data_fn=_load_data, cache_dir=cache_dir)
+    viewer.show()
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="ODB++ Processing System",
@@ -1073,6 +1107,10 @@ def main():
     p_copper_ratio.add_argument("odb_path", help="Path to ODB++ archive or directory")
     p_copper_ratio.add_argument("--cache-dir", default="cache", help="Cache directory")
 
+    # copper-calculate command
+    p_copper_calc = subparsers.add_parser("copper-calculate", help="Launch copper ratio batch calculator")
+    p_copper_calc.add_argument("--cache-dir", default="cache", help="Cache directory")
+
     args = parser.parse_args()
 
     if args.command == "info":
@@ -1091,6 +1129,8 @@ def main():
         cmd_copper(args)
     elif args.command == "copper-ratio":
         cmd_copper_ratio(args)
+    elif args.command == "copper-calculate":
+        cmd_copper_calculate(args)
     else:
         parser.print_help()
 
