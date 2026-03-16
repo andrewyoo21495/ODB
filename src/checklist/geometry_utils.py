@@ -22,7 +22,7 @@ from typing import Optional, Sequence
 
 import numpy as np
 
-from src.models import BBox, Component, Package, PinOutline
+from src.models import BBox, Component, EdaData, Package, PinOutline
 from src.visualizer.component_overlay import (
     transform_point,
     transform_pts,
@@ -561,3 +561,82 @@ def components_in_clearance_zone(
             results.append((comp, min_dist))
 
     return results
+
+
+# ---------------------------------------------------------------------------
+# 10. VIA-on-Pad Detection
+# ---------------------------------------------------------------------------
+
+def build_via_position_set(
+    eda_data: EdaData,
+    layers_data: dict,
+) -> set[tuple[float, float]]:
+    """Return deduplicated (x, y) board positions of all VIAs.
+
+    Resolves VIA-type subnet FID references to copper pad features and
+    extracts their coordinates.  Positions are rounded to 4 decimal places
+    (0.1 µm in mm) for deduplication.
+    """
+    from src.models import PadRecord
+
+    layer_name_map: dict[int, str] = {}
+    for idx, name in enumerate(eda_data.layer_names):
+        layer_name_map[idx] = name
+
+    positions: set[tuple[float, float]] = set()
+
+    for net in eda_data.nets:
+        for subnet in net.subnets:
+            if subnet.type != "VIA":
+                continue
+            for fid in subnet.feature_ids:
+                if fid.type != "C":
+                    continue
+                layer_name = layer_name_map.get(fid.layer_idx)
+                if layer_name is None:
+                    continue
+                ld = layers_data.get(layer_name)
+                if ld is None:
+                    continue
+                features = ld[0].features
+                if fid.feature_idx < 0 or fid.feature_idx >= len(features):
+                    continue
+                feat = features[fid.feature_idx]
+                if not isinstance(feat, PadRecord):
+                    continue
+                positions.add((round(feat.x, 4), round(feat.y, 4)))
+
+    return positions
+
+
+def count_vias_at_pad(
+    comp: Component,
+    pin_center_x: float,
+    pin_center_y: float,
+    via_positions: set[tuple[float, float]],
+    is_bottom: bool = False,
+    tolerance: float = 0.05,
+) -> int:
+    """Count VIAs located at a component pad position.
+
+    Transforms the pin centre from package-local coordinates to board
+    coordinates, then counts VIA positions within *tolerance* mm.
+
+    Args:
+        comp: The component owning the pad.
+        pin_center_x: Pin centre X in package-local coords.
+        pin_center_y: Pin centre Y in package-local coords.
+        via_positions: Set of (x, y) VIA board positions.
+        is_bottom: Whether the component is on the bottom layer.
+        tolerance: Maximum distance (mm) to consider a VIA on the pad.
+    """
+    bx, by = transform_point(pin_center_x, pin_center_y, comp,
+                              is_bottom=is_bottom)
+    count = 0
+    tol_sq = tolerance * tolerance
+    for vx, vy in via_positions:
+        dx = bx - vx
+        dy = by - vy
+        if dx * dx + dy * dy <= tol_sq:
+            count += 1
+    return count

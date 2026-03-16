@@ -158,3 +158,8 @@ def find_bothholes(components: Sequence[Component]) -> list[Component]:
 def find_shield_cans(components: Sequence[Component]) -> list[Component]:
     """Return Shield Can components: comp_name starts with 'SC'."""
     return [c for c in components if (c.comp_name or "").upper().startswith("SC")]
+
+
+def find_mics(components: Sequence[Component]) -> list[Component]:
+    """Return MIC components: comp_name starts with 'MIC'."""
+    return [c for c in components if (c.comp_name or "").startswith("MIC")]
