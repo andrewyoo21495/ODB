@@ -84,6 +84,23 @@ _SAMPLE_DATA: dict[str, list[dict[str, str]]] = {
         {"part_name": "2703-975166", "size": "2024"},
         {"part_name": "2703-213546", "size": "2354"},
     ],
+    "hall_ic": [
+        {"part_name": "1009-001313", "rank": "A"},
+        {"part_name": "1009-135465", "rank": "A"},
+        {"part_name": "1009-648135", "rank": "B"},
+        {"part_name": "1009-000321", "rank": "B"},
+        {"part_name": "1009-664583", "rank": "C"},
+        {"part_name": "1009-356488", "rank": "D"},
+        {"part_name": "1009-997677", "rank": "D"},
+        {"part_name": "1009-636358", "rank": "E"},
+    ],
+    "axis_sensors": [
+        {"part_name": "1209-031321", "rank": "A"},
+        {"part_name": "1209-000153", "rank": "A"},
+        {"part_name": "1209-789465", "rank": "B"},
+        {"part_name": "1209-977855", "rank": "B"},
+        {"part_name": "1209-553464", "rank": "C"},
+    ],
     "ap_memory": [
         {"part_name": "1105-003546", "rank": "A", "category": "DRAM"},
         {"part_name": "1105-946565", "rank": "A", "category": "MCP"},
