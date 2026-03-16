@@ -892,36 +892,6 @@ def cmd_view_comp(args):
     viewer.show()
 
 
-def cmd_view_via(args):
-    """Launch the component viewer with VIA overlay support."""
-    import matplotlib
-    matplotlib.use("TkAgg")
-
-    cache_dir = Path(getattr(args, "cache_dir", None) or "cache")
-    cache_name = _ensure_cache(args.odb_path, cache_dir)
-    data = _load_from_cache(cache_dir, cache_name)
-
-    if data.get("data_type") == "array":
-        print("The 'view-via' command is not available for Array-type ODB data "
-              "(Array structures do not contain component layers).")
-        return
-
-    from src.visualizer.viewer import ViaViewer
-
-    top_n = len(data["components_top"])
-    bot_n = len(data["components_bot"])
-    print(f"\nLaunching via viewer ({top_n} top, {bot_n} bot components)...")
-
-    viewer = ViaViewer(
-        profile=data.get("profile"),
-        components_top=data["components_top"],
-        components_bot=data["components_bot"],
-        eda_data=data.get("eda_data"),
-        layers_data=data.get("layers_data", {}),
-        user_symbols=data.get("user_symbols", {}),
-    )
-    viewer.show()
-
 
 def cmd_check(args):
     """Run the automated checklist."""
@@ -1114,11 +1084,6 @@ def main():
     p_view_comp.add_argument("odb_path", help="Path to ODB++ archive or directory")
     p_view_comp.add_argument("--cache-dir", default="cache", help="Cache directory")
 
-    # view-via command
-    p_view_via = subparsers.add_parser("view-via", help="Launch component viewer with VIA overlay")
-    p_view_via.add_argument("odb_path", help="Path to ODB++ archive or directory")
-    p_view_via.add_argument("--cache-dir", default="cache", help="Cache directory")
-
     # check command
     p_check = subparsers.add_parser("check", help="Run design checklist")
     p_check.add_argument("odb_path", help="Path to ODB++ archive or directory")
@@ -1150,8 +1115,6 @@ def main():
         cmd_view(args)
     elif args.command == "view-comp":
         cmd_view_comp(args)
-    elif args.command == "view-via":
-        cmd_view_via(args)
     elif args.command == "check":
         cmd_check(args)
     elif args.command == "copper":

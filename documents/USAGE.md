@@ -260,7 +260,7 @@ The left control panel contains all interaction controls (top → bottom); the r
 |---------|----------|---------|
 | **Layer Selection** | Top-left | RadioButtons: choose Top, Bottom, or Both |
 | **Component Selection** | Mid-left | Scrollable checkbox list of component reference designators |
-| **Display Options** | Lower-left | "Show Pins" and "Show Component Outline" checkboxes |
+| **Display Options** | Lower-left | "Show Pins", "Show Component Outline", and "Show Via" checkboxes |
 | **Update Visualization** | Lower-left | Button that applies current selections to the board canvas |
 | **Component Info** | Bottom-left | Metadata for the pin clicked on the board |
 | **Board canvas** | Right (main area) | PCB outline and selected component geometry |
@@ -272,7 +272,8 @@ The left control panel contains all interaction controls (top → bottom); the r
 3. **Set display options**:
    - **Show Pins** (default on) — renders the individual pad shapes for each selected component.
    - **Show Component Outline** — also draws the package-level courtyard/silkscreen outlines as dashed lines. Can be combined with Show Pins or used alone.
-4. **Click "Update Visualization"** — the board canvas redraws with only the selected components.
+   - **Show Via** — overlays SNT VIA pad features in dark grey, filtered to match the selected layer (Top/Bottom/Both). VIAs are drawn beneath component geometry.
+4. **Click "Update Visualization"** — the board canvas redraws with only the selected components and the chosen display options applied.
 5. **Click a pin** — the Component Info panel at the bottom-left shows that component's metadata.
 
 ### Color Coding
