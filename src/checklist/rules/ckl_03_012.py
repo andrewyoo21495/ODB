@@ -1,7 +1,8 @@
 """CKL-03-012: OSC components — PCB edge and BOTHHOLE clearance.
 
-Ensure Oscillator (OSC) components are placed at least 1mm away from
-the PCB edge and BOTHHOLE components.
+Ensure Oscillator (OSC) component pads are placed at least 1mm away from
+the PCB edge and BOTHHOLE components.  Distances are measured from the
+actual pad geometry of the OSC component (not from its outline or centre).
 """
 
 from __future__ import annotations
@@ -10,8 +11,8 @@ from src.checklist.component_classifier import find_bothholes, find_oscillators
 from src.checklist.engine import register_rule
 from src.checklist.geometry_utils import (
     build_board_polygon,
-    distance_to_outline,
-    edge_distance,
+    pad_distance_to_component,
+    pad_distance_to_outline,
 )
 from src.checklist.rule_base import ChecklistRule
 from src.models import RuleResult
@@ -50,16 +51,16 @@ class CKL03012(ChecklistRule):
             oscs = find_oscillators(comps)
 
             for osc in oscs:
-                # Distance to PCB outline
+                # Distance from OSC pads to PCB outline
                 if board_poly is not None:
-                    dist_pcb = distance_to_outline(osc, board_poly, packages)
+                    dist_pcb = pad_distance_to_outline(osc, board_poly, packages)
                 else:
                     dist_pcb = float("inf")
 
-                # Distance to nearest BOTHHOLE
+                # Distance from OSC pads to nearest BOTHHOLE
                 dist_bth = float("inf")
                 for bth in all_bothholes:
-                    d = edge_distance(osc, bth, packages)
+                    d = pad_distance_to_component(osc, bth, packages)
                     if d < dist_bth:
                         dist_bth = d
 

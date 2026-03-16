@@ -13,6 +13,7 @@ from src.checklist.geometry_utils import (
     find_overlapping_components,
     get_component_orientation,
     is_on_edge,
+    overlaps_component_outline,
 )
 from src.checklist.reference_loader import get_managed_part_names, get_part_size_map
 from src.checklist.rule_base import ChecklistRule
@@ -67,13 +68,17 @@ class CKL01005(ChecklistRule):
                     on_edge = is_on_edge(ind, ap, packages)
                     orientation = get_component_orientation(ind, packages)
                     edge_str = "TRUE" if on_edge else "FALSE"
+                    hits_outline = overlaps_component_outline(ind, ap, packages)
 
                     # PASS if NOT on edge AND Horizontal
-                    status = (
-                        "PASS"
-                        if (not on_edge and orientation == "Horizontal")
-                        else "FAIL"
-                    )
+                    # Also PASS if Vertical but does NOT overlap the
+                    # actual component outline of the AP/Memory
+                    if not on_edge and orientation == "Horizontal":
+                        status = "PASS"
+                    elif orientation == "Vertical" and not hits_outline:
+                        status = "PASS"
+                    else:
+                        status = "FAIL"
 
                     rows.append({
                         "comp": ap.comp_name,

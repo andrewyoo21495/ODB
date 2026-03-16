@@ -44,20 +44,52 @@ except ImportError:
 # 1. Component Orientation
 # ---------------------------------------------------------------------------
 
+def _classify_wh(w: float, h: float) -> str:
+    """Classify orientation from width/height in board coordinates.
+
+    Returns "Horizontal", "Vertical", "Square", or "Unknown".
+    """
+    if w <= 0 and h <= 0:
+        return "Unknown"
+
+    # Treat near-square as "Square" (within 5% tolerance)
+    if w > 0 and h > 0:
+        ratio = max(w, h) / min(w, h)
+        if ratio < 1.05:
+            return "Square"
+
+    if w >= h:
+        return "Horizontal"
+    return "Vertical"
+
+
 def get_component_orientation(comp: Component,
                               packages: list[Package]) -> str:
-    """Determine a component's board-level orientation from its package bbox.
+    """Determine a component's board-level orientation from its component outline.
+
+    The orientation is derived from the bounding box of the component's
+    **package-level outline** polygon in board coordinates (which already
+    accounts for rotation).  Falls back to the package bbox with rotation
+    if no outline geometry is available.
 
     Returns:
         "Horizontal" – major axis is roughly along the board X-axis
         "Vertical"   – major axis is roughly along the board Y-axis
         "Square"     – aspect ratio is near 1:1
-        "Unknown"    – no bbox data available
+        "Unknown"    – no geometry data available
     """
     if comp.pkg_ref < 0 or comp.pkg_ref >= len(packages):
         return "Unknown"
 
     pkg = packages[comp.pkg_ref]
+
+    # Primary: use the component outline polygon in board coordinates
+    outline_poly = get_component_outline(comp, pkg)
+    if outline_poly is not None:
+        minx, miny, maxx, maxy = outline_poly.bounds
+        return _classify_wh(maxx - minx, maxy - miny)
+
+    # Fallback: package bbox with rotation
     if pkg.bbox is None:
         return "Unknown"
 
@@ -183,6 +215,36 @@ def get_component_footprint(comp: Component, pkg: Package):
             return ShapelyPoint(tp_pts[0]).buffer(0.005)
 
     return None
+
+
+def get_component_outline(comp: Component, pkg: Package):
+    """Build a board-coordinate polygon from **package-level** outlines only.
+
+    Unlike :func:`get_component_footprint` (which includes pin/pad outlines),
+    this returns only the physical component body outline.  Returns a shapely
+    Polygon (convex hull of package outline points) or None.
+    """
+    if not _HAS_SHAPELY:
+        return None
+
+    pts: list[tuple[float, float]] = []
+    for outline in pkg.outlines:
+        local_verts = _outline_vertices(outline)
+        for lv in local_verts:
+            bx, by = transform_point(lv[0], lv[1], comp)
+            pts.append((bx, by))
+
+    if len(pts) >= 3:
+        return MultiPoint(pts).convex_hull
+    return None
+
+
+def _resolve_outline(comp: Component, packages: list[Package]):
+    """Look up the package and build the component outline polygon."""
+    if comp.pkg_ref < 0 or comp.pkg_ref >= len(packages):
+        return None
+    pkg = packages[comp.pkg_ref]
+    return get_component_outline(comp, pkg)
 
 
 def _resolve_footprint(comp: Component, packages: list[Package]):
@@ -313,6 +375,30 @@ def find_overlapping_components(
         if fp_comp.intersects(fp_cand):
             overlapping.append(cand)
     return overlapping
+
+
+def overlaps_component_outline(
+    comp: Component,
+    target: Component,
+    packages: list[Package],
+) -> bool:
+    """Return True if *comp*'s footprint overlaps *target*'s component outline.
+
+    Unlike :func:`find_overlapping_components` (which checks footprint vs
+    footprint), this checks *comp*'s full footprint against only the
+    package-level outline of *target* (the physical component body, excluding
+    pad geometry).  Returns False if the outline cannot be resolved.
+    """
+    if not _HAS_SHAPELY:
+        return False
+
+    fp_comp = _resolve_footprint(comp, packages)
+    outline_target = _resolve_outline(target, packages)
+
+    if fp_comp is None or outline_target is None:
+        return False
+
+    return fp_comp.intersects(outline_target)
 
 
 # ---------------------------------------------------------------------------
@@ -509,6 +595,52 @@ def distance_to_outline(comp: Component, board_poly,
 
     # Fallback: component centre
     return outline.distance(ShapelyPoint(comp.x, comp.y))
+
+
+def pad_distance_to_outline(comp: Component, board_poly,
+                            packages: list[Package] | None = None) -> float:
+    """Return the minimum distance from *comp*'s pad geometry to the board outline.
+
+    Uses actual pad polygons (via ``_get_pad_union``) rather than just pad
+    centre points.  Falls back to toeprint points, then component centre.
+    """
+    if not _HAS_SHAPELY or board_poly is None:
+        return float("inf")
+
+    outline = board_poly.boundary
+
+    if packages is not None:
+        pad_geom = _get_pad_union(comp, packages)
+        if pad_geom is not None:
+            return outline.distance(pad_geom)
+
+    # Fallback: toeprint centre points
+    if comp.toeprints:
+        return min(
+            outline.distance(ShapelyPoint(tp.x, tp.y))
+            for tp in comp.toeprints
+        )
+
+    return outline.distance(ShapelyPoint(comp.x, comp.y))
+
+
+def pad_distance_to_component(comp: Component, other: Component,
+                              packages: list[Package]) -> float:
+    """Return the minimum distance from *comp*'s pads to *other*'s footprint.
+
+    Measures from the actual pad polygons of *comp* to the footprint polygon
+    of *other*.  Falls back to ``edge_distance`` if geometry is unavailable.
+    """
+    if not _HAS_SHAPELY:
+        return center_distance(comp, other)
+
+    pad_geom = _get_pad_union(comp, packages)
+    fp_other = _resolve_footprint(other, packages)
+
+    if pad_geom is None or fp_other is None:
+        return float("inf")
+
+    return pad_geom.distance(fp_other)
 
 
 def components_in_clearance_zone(
