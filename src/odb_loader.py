@@ -42,6 +42,7 @@ class OdbJob:
     """Handle to a discovered ODB++ product model."""
     root_dir: Path
     job_name: str = ""
+    data_type: str = "unit"  # "unit" or "array"
 
     # Top-level entity paths
     matrix_path: Optional[Path] = None
@@ -88,6 +89,27 @@ def load(path: str | Path) -> OdbJob:
         raise ValueError(f"Invalid ODB++ path: {path}")
 
 
+def _find_odb_root(base: Path) -> Path:
+    """Find the ODB++ root directory containing a 'steps' folder.
+
+    Searches up to two levels deep to handle both UNIT (steps may be nested
+    one extra directory level) and ARRAY (steps immediately at the root)
+    archive structures.
+    """
+    if (base / "steps").is_dir():
+        return base
+    subdirs = [p for p in base.iterdir() if p.is_dir()]
+    if len(subdirs) == 1:
+        candidate = subdirs[0]
+        if (candidate / "steps").is_dir():
+            return candidate
+        # Try one more level (UNIT: archive → product/ → job/ → steps/)
+        subdirs2 = [p for p in candidate.iterdir() if p.is_dir()]
+        if len(subdirs2) == 1 and (subdirs2[0] / "steps").is_dir():
+            return subdirs2[0]
+    return base
+
+
 def _load_from_archive(archive_path: Path) -> OdbJob:
     """Extract a .tgz archive and discover its structure."""
     temp_dir = tempfile.mkdtemp(prefix="odb_")
@@ -95,12 +117,7 @@ def _load_from_archive(archive_path: Path) -> OdbJob:
     with tarfile.open(archive_path, "r:gz") as tar:
         tar.extractall(temp_dir)
 
-    # Find the product model root (first directory in the archive)
-    extracted = list(Path(temp_dir).iterdir())
-    if len(extracted) == 1 and extracted[0].is_dir():
-        root = extracted[0]
-    else:
-        root = Path(temp_dir)
+    root = _find_odb_root(Path(temp_dir))
 
     job = _discover_structure(root)
     job._temp_dir = temp_dir
@@ -146,6 +163,10 @@ def _discover_structure(root: Path) -> OdbJob:
             if step_dir.is_dir():
                 step = _discover_step(step_dir)
                 job.steps[step.name] = step
+
+    # Detect data type: "array" if a step specifically named "array" exists
+    if "array" in job.steps:
+        job.data_type = "array"
 
     # User-defined symbols
     symbols_dir = root / "symbols"

@@ -252,6 +252,19 @@ def _calibrate_eda_to_components(components_top: list, components_bot: list,
     print(f"  Units: EDA package geometry rescaled {direction} to match component coordinates (ratio={ratio:.3f})")
 
 
+def _select_step(job):
+    """Return (step_name, step_paths) for the relevant step.
+
+    For array-type data, selects the step named 'array'.
+    For unit-type data, selects the first (and only) step.
+    """
+    if job.data_type == "array" and "array" in job.steps:
+        name = "array"
+    else:
+        name = list(job.steps.keys())[0]
+    return name, job.steps[name]
+
+
 def cmd_info(args):
     """Print job summary information."""
     job = odb_loader.load(args.odb_path)
@@ -259,6 +272,7 @@ def cmd_info(args):
     print(f"{'='*60}")
     print(f"ODB++ Job: {job.job_name}")
     print(f"Root: {job.root_dir}")
+    print(f"Data Type: {job.data_type.upper()}")
     print(f"{'='*60}")
 
     # Parse misc/info
@@ -334,6 +348,8 @@ def cmd_cache(args):
     print(f"Cache directory: {cache_dir / cache_name}")
 
     data = {}
+    data["data_type"] = job.data_type
+    print(f"Data type: {job.data_type}")
 
     # Parse misc/info
     if job.misc_info_path:
@@ -359,78 +375,78 @@ def cmd_cache(args):
         data["font"] = font
         print(f"  Parsed: fonts/standard ({len(font.characters)} characters)")
 
-    # Parse each step
-    for step_name, step_paths in job.steps.items():
-        print(f"\n  Step: {step_name}")
+    # Parse the relevant step (unit: first step; array: step named "array")
+    step_name, step_paths = _select_step(job)
+    print(f"\n  Step: {step_name}")
 
-        # Step header
-        if step_paths.stephdr:
-            from src.parsers.stephdr_parser import parse_stephdr
-            header = parse_stephdr(step_paths.stephdr)
-            data["step_header"] = header
-            print(f"    Parsed: stephdr (units={header.units})")
+    # Step header
+    if step_paths.stephdr:
+        from src.parsers.stephdr_parser import parse_stephdr
+        header = parse_stephdr(step_paths.stephdr)
+        data["step_header"] = header
+        print(f"    Parsed: stephdr (units={header.units})")
 
-        # Profile
-        if step_paths.profile:
-            from src.parsers.profile_parser import parse_profile
-            profile = parse_profile(step_paths.profile)
-            data["profile"] = profile
-            print(f"    Parsed: profile")
+    # Profile
+    if step_paths.profile:
+        from src.parsers.profile_parser import parse_profile
+        profile = parse_profile(step_paths.profile)
+        data["profile"] = profile
+        print(f"    Parsed: profile")
 
-        # EDA data
-        if step_paths.eda_data:
-            from src.parsers.eda_parser import parse_eda_data
-            eda = parse_eda_data(step_paths.eda_data)
-            data["eda_data"] = eda
-            print(f"    Parsed: eda/data ({len(eda.nets)} nets, {len(eda.packages)} packages)")
+    # EDA data (unit only; array has no eda/ folder)
+    if step_paths.eda_data:
+        from src.parsers.eda_parser import parse_eda_data
+        eda = parse_eda_data(step_paths.eda_data)
+        data["eda_data"] = eda
+        print(f"    Parsed: eda/data ({len(eda.nets)} nets, {len(eda.packages)} packages)")
 
-        # Netlist
-        if step_paths.netlist_cadnet:
-            from src.parsers.netlist_parser import parse_netlist
-            netlist = parse_netlist(step_paths.netlist_cadnet)
-            data["netlist"] = netlist
-            print(f"    Parsed: netlist ({len(netlist.net_names)} nets)")
+    # Netlist (unit only; array has no netlists/ folder)
+    if step_paths.netlist_cadnet:
+        from src.parsers.netlist_parser import parse_netlist
+        netlist = parse_netlist(step_paths.netlist_cadnet)
+        data["netlist"] = netlist
+        print(f"    Parsed: netlist ({len(netlist.net_names)} nets)")
 
-        # Components and layer features
-        from src.parsers.component_parser import parse_components
-        from src.parsers.feature_parser import parse_features
+    # Components and layer features
+    from src.parsers.component_parser import parse_components
+    from src.parsers.feature_parser import parse_features
 
-        copper_data: dict[str, float] = {}
+    copper_data: dict[str, float] = {}
 
-        for layer_name, layer_paths in step_paths.layers.items():
-            # Components
-            if layer_paths.components:
-                components, comp_units = parse_components(layer_paths.components)
-                key = "components_top" if "top" in layer_name else "components_bot"
-                data[key] = components
-                # Store component units so they survive caching
-                data[f"{key}_units"] = comp_units
-                print(f"    Parsed: {layer_name}/components ({len(components)} components, units={comp_units})")
+    for layer_name, layer_paths in step_paths.layers.items():
+        # Components (unit only; array has no comp_+_* layers)
+        if layer_paths.components:
+            components, comp_units = parse_components(layer_paths.components)
+            key = "components_top" if "top" in layer_name else "components_bot"
+            data[key] = components
+            # Store component units so they survive caching
+            data[f"{key}_units"] = comp_units
+            print(f"    Parsed: {layer_name}/components ({len(components)} components, units={comp_units})")
 
-            # Features
-            if layer_paths.features:
-                try:
-                    features = parse_features(layer_paths.features)
-                    data[f"layer_features:{layer_name}"] = features
-                    print(f"    Parsed: {layer_name}/features ({len(features.features)} features)")
-                except Exception as e:
-                    print(f"    Warning: Failed to parse {layer_name}/features: {e}")
+        # Features
+        if layer_paths.features:
+            try:
+                features = parse_features(layer_paths.features)
+                data[f"layer_features:{layer_name}"] = features
+                print(f"    Parsed: {layer_name}/features ({len(features.features)} features)")
+            except Exception as e:
+                print(f"    Warning: Failed to parse {layer_name}/features: {e}")
 
-            # Thickness (Signal and Dielectric layers only)
-            layer_type = layer_type_map.get(layer_name, "")
-            if layer_paths.attrlist:
-                if layer_type == "SIGNAL":
-                    cw = _parse_attrlist_value(layer_paths.attrlist, ".copper_weight")
-                    if cw is not None:
-                        copper_data[layer_name] = cw / 1000.0
-                elif layer_type == "DIELECTRIC":
-                    dt = _parse_attrlist_value(layer_paths.attrlist, ".layer_dielectric")
-                    if dt is not None:
-                        copper_data[layer_name] = dt
+        # Thickness (Signal and Dielectric layers only)
+        layer_type = layer_type_map.get(layer_name, "")
+        if layer_paths.attrlist:
+            if layer_type == "SIGNAL":
+                cw = _parse_attrlist_value(layer_paths.attrlist, ".copper_weight")
+                if cw is not None:
+                    copper_data[layer_name] = cw / 1000.0
+            elif layer_type == "DIELECTRIC":
+                dt = _parse_attrlist_value(layer_paths.attrlist, ".layer_dielectric")
+                if dt is not None:
+                    copper_data[layer_name] = dt
 
-        if copper_data:
-            data["copper_data"] = copper_data
-            print(f"    Extracted copper weight for {len(copper_data)} layers")
+    if copper_data:
+        data["copper_data"] = copper_data
+        print(f"    Extracted copper weight for {len(copper_data)} layers")
 
     # Parse user-defined symbols
     if job.symbols:
@@ -553,8 +569,7 @@ def _parse_for_view(odb_path: str, layer_names: list[str] = None) -> dict:
     steps, matrix_layers = parse_matrix(job.matrix_path)
     layer_lookup = {l.name: l for l in matrix_layers}
 
-    step_name = list(job.steps.keys())[0]
-    step = job.steps[step_name]
+    step_name, step = _select_step(job)
 
     profile = parse_profile(step.profile) if step.profile else None
     font = parse_font(job.font_path) if job.font_path else None
@@ -695,6 +710,7 @@ def _load_from_cache(cache_dir: Path, cache_name: str) -> dict:
 
     result: dict = {
         "job": None,
+        "data_type": raw.get("data_type", "unit"),
         "components_top": [],
         "components_bot": [],
         "layers_data": {},
@@ -794,8 +810,7 @@ def _parse_for_comp_view(odb_path: str) -> dict:
     from src.parsers.component_parser import parse_components
     from src.parsers.eda_parser import parse_eda_data
 
-    step_name = list(job.steps.keys())[0]
-    step = job.steps[step_name]
+    _, step = _select_step(job)
 
     profile  = parse_profile(step.profile)  if step.profile  else None
     eda_data = parse_eda_data(step.eda_data) if step.eda_data else None
@@ -855,6 +870,11 @@ def cmd_view_comp(args):
     cache_name = _ensure_cache(args.odb_path, cache_dir)
     data = _load_from_cache(cache_dir, cache_name)
 
+    if data.get("data_type") == "array":
+        print("The 'view-comp' command is not available for Array-type ODB data "
+              "(Array structures do not contain component layers).")
+        return
+
     from src.visualizer.viewer import ComponentViewer
 
     top_n = len(data["components_top"])
@@ -880,6 +900,11 @@ def cmd_view_via(args):
     cache_dir = Path(getattr(args, "cache_dir", None) or "cache")
     cache_name = _ensure_cache(args.odb_path, cache_dir)
     data = _load_from_cache(cache_dir, cache_name)
+
+    if data.get("data_type") == "array":
+        print("The 'view-via' command is not available for Array-type ODB data "
+              "(Array structures do not contain component layers).")
+        return
 
     from src.visualizer.viewer import ViaViewer
 

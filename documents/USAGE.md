@@ -44,6 +44,7 @@ python main.py <command> <odb_path> [options]
 | `view` | Launch the interactive PCB layer visualizer — loads from cache (auto-builds if missing) |
 | `view-comp` | Launch the component-focused viewer — loads from cache (auto-builds if missing) |
 | `check` | Run the automated design checklist — loads from cache (auto-builds if missing) |
+| `copper-calculate` | Launch the copper ratio batch calculator GUI — processes all signal layers and exports to Excel |
 
 ### Recommended Workflow
 
@@ -345,7 +346,67 @@ Rule tabs are automatically sorted so that they appear in numerical order (e.g. 
 
 ---
 
-## 6. Writing Custom Checklist Rules
+## 6. Copper Ratio Batch Calculator (`copper-calculate`)
+
+The copper ratio batch calculator processes all signal layers in an ODB++ file, computes full-layer and 5×5 sub-section copper ratios, saves PNG visualizations for each layer, and exports the results to a structured Excel file.
+
+Unlike `view` and `check`, this command takes no ODB++ path argument — file selection is done through the GUI.
+
+```bash
+python main.py copper-calculate
+```
+
+### GUI Layout
+
+When launched, a small window appears with the following controls:
+
+| Control | Description |
+|---------|-------------|
+| **ODB++ File** | Path to the input `.tgz`, `.tar.gz`, or `.zip` archive. Click **Browse…** to select. |
+| **Excel Output** | Path for the generated `.xlsx` report. Click **Save As…** to choose the destination. |
+| **Calculate** | Starts batch processing. The button disables itself while running. |
+| **Status area** | Scrollable log showing per-layer progress messages. Displays "Done!" on completion. |
+
+### Processing Steps
+
+When **Calculate** is clicked the tool:
+
+1. Loads ODB++ data from the JSON cache (auto-builds if missing, same cache as `view`/`check`)
+2. Iterates over all signal layers in stackup order
+3. For each signal layer:
+   - Renders the layer off-screen at 200 DPI to a pixel image
+   - Computes the **total copper ratio** (copper pixels ÷ PCB-area pixels)
+   - Computes a **5×5 sub-section grid** of copper ratios across the board
+   - Saves a PNG visualization with the colour-coded heatmap overlay to `images/<layer_name>.png` next to the Excel file
+4. Generates the Excel report
+
+### Excel Report Structure
+
+| Sheet | Content |
+|-------|---------|
+| **Summary** | **Table A** — one row per signal layer: Layer Name and Total Copper (%). **Table B** — all layers from the stackup in row order with Name, Type, and Thickness (mm). |
+| **\<layer_name\>** | One sheet per signal layer. Contains a header block (layer name, copper ratio, thickness), the 5×5 sub-section grid with conditional colour fills, and the embedded PNG visualization. |
+
+Sub-section grid colour coding (applied to each cell of the 5×5 table):
+
+| Fill colour | Copper ratio |
+|-------------|-------------|
+| Green | > 50% |
+| Yellow | 30 – 50% |
+| Red | < 30% |
+| Grey | No PCB area in that cell |
+
+### Cache Behaviour
+
+The calculator uses the same cache directory as other commands (default: `cache/`). If a cache already exists for the selected ODB++ file it is loaded directly — no re-parsing. To override the cache directory, pass `--cache-dir`:
+
+```bash
+python main.py copper-calculate --cache-dir my_cache
+```
+
+---
+
+## 7. Writing Custom Checklist Rules
 
 New rules are added by creating a Python file under `src/checklist/rules/` and using the `@register_rule` decorator.
 
@@ -485,3 +546,9 @@ The first matching rule wins. `properties` values are read from the component's 
    ```bash
    python main.py check data/my_design.tgz --output reports/design_review.xlsx
    ```
+
+7. **Calculate copper ratios** for all signal layers and export to Excel:
+   ```bash
+   python main.py copper-calculate
+   ```
+   Select the ODB++ file and an Excel output path in the GUI, then click **Calculate**. PNG images and the Excel report are written automatically.
