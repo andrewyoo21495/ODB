@@ -220,7 +220,7 @@
 
 <div class="stats-bar">
   <div class="stat">
-    <div class="stat-value">12</div>
+    <div class="stat-value">14</div>
     <div class="stat-label">Total Rules</div>
   </div>
   <div class="stat">
@@ -232,7 +232,7 @@
     <div class="stat-label">Reference CSVs</div>
   </div>
   <div class="stat">
-    <div class="stat-value">12</div>
+    <div class="stat-value">14</div>
     <div class="stat-label">Rules</div>
   </div>
 </div>
@@ -552,7 +552,7 @@
   </div>
 
   <!-- ================================================================== -->
-  <div class="section-title">Checklist Series 03 &mdash; PCB Outline Clearance</div>
+  <div class="section-title">Checklist Series 03 &mdash; OSC / MIC / Component Placement &amp; Clearance</div>
 
   <!-- CKL-03-001 -->
   <div class="rule-card">
@@ -615,6 +615,37 @@
     </div>
   </div>
 
+  <!-- CKL-03-013 -->
+  <div class="rule-card">
+    <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
+      <span class="rule-id">CKL-03-013</span>
+      <span class="rule-desc">Each MIC pad must have at least one VIA</span>
+      <span class="badge badge-placement">Placement</span>
+      <span class="toggle-icon">&#9654;</span>
+    </div>
+    <div class="rule-body">
+      <h4>Inspection Process</h4>
+      <ol>
+        <li>Search for MIC components (comp_name starts with <code style="display:inline;padding:2px 6px;">MIC</code>) on Top and Bottom layers.</li>
+        <li>For each MIC component, iterate over all pads defined in the package.</li>
+        <li>Transform each pad centre from package-local coordinates to board coordinates.</li>
+        <li>Count the number of VIAs whose board position falls within 0.05mm of the pad centre.</li>
+        <li>Report one row per pad with the VIA count and pass/fail result.</li>
+      </ol>
+      <h4>Output Columns</h4>
+      <table class="col-table">
+        <tr><th>Column</th><th>Description</th></tr>
+        <tr><td class="col-name">comp</td><td>Name of the MIC component</td></tr>
+        <tr><td class="col-name">cmp_layer</td><td>Layer where the MIC component is placed (Top or Bottom)</td></tr>
+        <tr><td class="col-name">pad</td><td>Name / number of the specific pad</td></tr>
+        <tr><td class="col-name">via</td><td>Number of VIAs located at that pad position</td></tr>
+        <tr><td class="col-name">status</td><td>PASS or FAIL</td></tr>
+      </table>
+      <h4>Pass/Fail Criteria</h4>
+      <div class="pass-fail-note fail-note"><strong>FAIL</strong> if the VIA count for a pad is 0. <strong>PASS</strong> if 1 or more VIAs are present.</div>
+    </div>
+  </div>
+
   <!-- CKL-03-015 -->
   <div class="rule-card">
     <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
@@ -642,6 +673,36 @@
       </table>
       <h4>Pass/Fail Criteria</h4>
       <div class="pass-fail-note"><strong>PASS</strong> if distance &ge; 0.65mm. Otherwise <strong>FAIL</strong>.</div>
+    </div>
+  </div>
+
+  <!-- CKL-03-016 -->
+  <div class="rule-card">
+    <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
+      <span class="rule-id">CKL-03-016</span>
+      <span class="rule-desc">Interposers, Shield Cans, SIM Sockets, and Connectors must not overlap the opposite side of OSC components</span>
+      <span class="badge badge-placement">Placement</span>
+      <span class="toggle-icon">&#9654;</span>
+    </div>
+    <div class="rule-body">
+      <h4>Inspection Process</h4>
+      <ol>
+        <li>Search for Oscillator (OSC) components on the Top and Bottom layers.</li>
+        <li>For each OSC, collect all Interposers (INP), Shield Cans (SC), SIM Sockets (SIM), and Connector components on the opposite side.</li>
+        <li>Check if any of those components overlap the OSC footprint.</li>
+        <li>Report one row per overlapping component; OSCs with no overlap are recorded as PASS.</li>
+      </ol>
+      <h4>Output Columns</h4>
+      <table class="col-table">
+        <tr><th>Column</th><th>Description</th></tr>
+        <tr><td class="col-name">comp</td><td>Name of the OSC component</td></tr>
+        <tr><td class="col-name">cmp_layer</td><td>Layer where the OSC is placed (Top or Bottom)</td></tr>
+        <tr><td class="col-name">overlapping_cmp</td><td>Name of the overlapping component on the opposite side (INP, SC, SIM, or Connector), or &ldquo;&ndash;&rdquo; if none</td></tr>
+        <tr><td class="col-name">part_name</td><td>Part name of the overlapping component, or &ldquo;&ndash;&rdquo; if none</td></tr>
+        <tr><td class="col-name">status</td><td>PASS or FAIL</td></tr>
+      </table>
+      <h4>Pass/Fail Criteria</h4>
+      <div class="pass-fail-note fail-note"><strong>FAIL</strong> if any INP, SC, SIM, or Connector overlaps the opposite side of an OSC component.</div>
     </div>
   </div>
 
@@ -688,8 +749,8 @@
     </ol>
     <p style="margin-top: 14px"><strong>Key utilities available:</strong></p>
     <ul style="padding-left: 22px; font-size: 0.93rem; margin-top: 6px;">
-      <li><code style="display:inline; padding:2px 6px;">component_classifier.py</code> &mdash; find_ics(), find_connectors(), find_capacitors(), find_inductors(), find_simsockets(), find_interposers(), find_shield_cans(), find_oscillators(), find_bothholes()</li>
-      <li><code style="display:inline; padding:2px 6px;">geometry_utils.py</code> &mdash; find_overlapping_components(), is_on_edge(), edge_distance(), distance_to_outline(), get_component_orientation(), filter_by_size(), build_board_polygon(), components_in_clearance_zone()</li>
+      <li><code style="display:inline; padding:2px 6px;">component_classifier.py</code> &mdash; find_ics(), find_connectors(), find_capacitors(), find_inductors(), find_simsockets(), find_interposers(), find_shield_cans(), find_oscillators(), find_bothholes(), find_mics()</li>
+      <li><code style="display:inline; padding:2px 6px;">geometry_utils.py</code> &mdash; find_overlapping_components(), is_on_edge(), edge_distance(), distance_to_outline(), get_component_orientation(), filter_by_size(), build_board_polygon(), components_in_clearance_zone(), build_via_position_set(), count_vias_at_pad()</li>
       <li><code style="display:inline; padding:2px 6px;">reference_loader.py</code> &mdash; load_reference_csv(), get_managed_part_names(), get_part_size_map(), get_part_category_map() (auto-generates sample CSVs if missing)</li>
     </ul>
   </div>
