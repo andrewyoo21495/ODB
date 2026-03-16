@@ -323,11 +323,9 @@ def _draw_pin_from_fid(ax: Axes, comp: Component,
 
     Returns True if a patch was drawn.
     """
-    # Position must come from the toeprint (components file), not the layer.
     if tp is None:
         return False
 
-    px, py = tp.x, tp.y
     # Bottom-layer pad rotations are stored relative to the component's
     # bottom-side view; negate for top-view rendering.
     is_bottom = (comp_side == "B")
@@ -346,6 +344,8 @@ def _draw_pin_from_fid(ax: Axes, comp: Component,
             pad = rpf.pad
             sym = rpf.symbol
             pad_rot = -pad.rotation if is_bottom else pad.rotation
+
+            px, py = pad.x, pad.y
 
             if sym.name in user_symbols:
                 patches = user_symbol_to_patches(
