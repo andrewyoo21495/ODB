@@ -214,7 +214,88 @@ def resolve_fid_features(
 
 
 # ---------------------------------------------------------------------------
-# VIA subnet FID resolution
+# VIA detection via .pad_usage attribute  (preferred)
+# ---------------------------------------------------------------------------
+
+def _find_top_bottom_signal_layers(
+    layers_data: dict[str, tuple[LayerFeatures, MatrixLayer]],
+) -> tuple[Optional[str], Optional[str]]:
+    """Return (top_signal_name, bottom_signal_name) from the matrix stackup.
+
+    The signal layer with the lowest row number is the top; the one with the
+    highest row number is the bottom.  Returns ``(None, None)`` if fewer than
+    two signal layers exist.
+    """
+    signal_layers: list[tuple[int, str]] = [
+        (ml.row, name)
+        for name, (_lf, ml) in layers_data.items()
+        if ml.type == "SIGNAL"
+    ]
+    if len(signal_layers) < 2:
+        return None, None
+    signal_layers.sort()
+    return signal_layers[0][1], signal_layers[-1][1]
+
+
+def collect_via_pads_by_attribute(
+    layers_data: dict[str, tuple[LayerFeatures, MatrixLayer]],
+) -> list[ResolvedPadFeature]:
+    """Collect VIA pads from the top and bottom signal layers using ``.pad_usage``.
+
+    In ODB++ feature files each pad record carries a ``.pad_usage`` attribute
+    whose *raw* numeric value indicates the pad type:
+
+      * **0** — toeprint (standard component pad)
+      * **1** — via
+
+    The feature parser resolves the raw value through the ``&N`` text table,
+    so the stored attribute is a text string.  To match raw value 1 we look
+    up ``attr_texts[1]`` for the layer's text table and compare.
+
+    Only the outermost signal layers (lowest and highest matrix row) are
+    scanned, since via-on-pad verification targets component pads on these
+    outer layers.
+    """
+    top_name, bot_name = _find_top_bottom_signal_layers(layers_data)
+    if top_name is None:
+        return []
+
+    target_names = {top_name, bot_name}
+    result: list[ResolvedPadFeature] = []
+
+    for layer_name in target_names:
+        lf, _ml = layers_data[layer_name]
+        sym_lookup = {s.index: s for s in lf.symbols}
+
+        # The resolved text for raw value 1 (via) in this layer's text table
+        via_text = lf.attr_texts.get(1)
+
+        for feat in lf.features:
+            if not isinstance(feat, PadRecord):
+                continue
+
+            pu = feat.attributes.get(".pad_usage")
+            if pu is None:
+                continue
+
+            # Match raw value 1: resolved to via_text, or stored as "1"
+            # when the text table has no entry for index 1
+            if pu != via_text and pu != "1":
+                continue
+
+            sym = sym_lookup.get(feat.symbol_idx)
+            if sym is None:
+                continue
+
+            result.append(ResolvedPadFeature(
+                pad=feat, symbol=sym, layer_name=layer_name, units=lf.units,
+            ))
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# VIA subnet FID resolution  (fallback when .pad_usage is unavailable)
 # ---------------------------------------------------------------------------
 
 def build_via_fid_list(

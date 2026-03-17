@@ -558,23 +558,28 @@ class ComponentViewer:
                     fid_map, eda_data.layer_names, layers_data,
                 )
 
-        # Resolve VIA features
+        # Resolve VIA features — prefer .pad_usage attribute, fall back to
+        # EDA subnet FID resolution when the attribute is not present.
         self._via_features: list = []
-        if eda_data and eda_data.layer_names and layers_data:
-            from src.visualizer.fid_lookup import resolve_via_features
-            self._via_features = resolve_via_features(eda_data, layers_data)
+        if layers_data:
+            from src.visualizer.fid_lookup import (
+                collect_via_pads_by_attribute,
+                _find_top_bottom_signal_layers,
+            )
+            self._via_features = collect_via_pads_by_attribute(layers_data)
+            if not self._via_features and eda_data and eda_data.layer_names:
+                from src.visualizer.fid_lookup import resolve_via_features
+                self._via_features = resolve_via_features(eda_data, layers_data)
 
         # Identify top/bottom signal layer names for filtering vias by layer
         self._via_layer_top: set[str] = set()
         self._via_layer_bot: set[str] = set()
-        if eda_data and eda_data.layer_names and layers_data:
-            from src.visualizer.fid_lookup import identify_signal_layers
-            matrix_map = {n: ml for n, (_, ml) in layers_data.items()}
-            sig = identify_signal_layers(eda_data.layer_names, matrix_map)
-            if "sigt" in sig:
-                self._via_layer_top.add(sig["sigt"])
-            if "sigb" in sig:
-                self._via_layer_bot.add(sig["sigb"])
+        if layers_data:
+            top_sig, bot_sig = _find_top_bottom_signal_layers(layers_data)
+            if top_sig:
+                self._via_layer_top.add(top_sig)
+            if bot_sig:
+                self._via_layer_bot.add(bot_sig)
 
         self._selected_comp:     Optional[Component] = None
         self._selected_pin_name: str               = ""

@@ -699,16 +699,49 @@ def components_in_clearance_zone(
 # 10. VIA-on-Pad Detection
 # ---------------------------------------------------------------------------
 
-def build_via_position_set(
+def _build_via_positions_by_attribute(
+    layers_data: dict,
+) -> set[tuple[float, float]]:
+    """Return VIA (x, y) positions using the ``.pad_usage`` feature attribute.
+
+    Scans only the top and bottom signal layers.  A pad whose ``.pad_usage``
+    raw value is 1 is considered a via (raw value 0 = toeprint).
+    """
+    from src.models import PadRecord
+    from src.visualizer.fid_lookup import _find_top_bottom_signal_layers
+
+    top_name, bot_name = _find_top_bottom_signal_layers(layers_data)
+    if top_name is None:
+        return set()
+
+    target_names = {top_name, bot_name}
+    positions: set[tuple[float, float]] = set()
+
+    for layer_name in target_names:
+        ld = layers_data.get(layer_name)
+        if ld is None:
+            continue
+        lf = ld[0]
+        via_text = lf.attr_texts.get(1)
+
+        for feat in lf.features:
+            if not isinstance(feat, PadRecord):
+                continue
+            pu = feat.attributes.get(".pad_usage")
+            if pu is None:
+                continue
+            if pu != via_text and pu != "1":
+                continue
+            positions.add((round(feat.x, 4), round(feat.y, 4)))
+
+    return positions
+
+
+def _build_via_positions_by_subnet(
     eda_data: EdaData,
     layers_data: dict,
 ) -> set[tuple[float, float]]:
-    """Return deduplicated (x, y) board positions of all VIAs.
-
-    Resolves VIA-type subnet FID references to copper pad features and
-    extracts their coordinates.  Positions are rounded to 4 decimal places
-    (0.1 µm in mm) for deduplication.
-    """
+    """Return VIA (x, y) positions via EDA subnet FID resolution (fallback)."""
     from src.models import PadRecord
 
     layer_name_map: dict[int, str] = {}
@@ -738,6 +771,25 @@ def build_via_position_set(
                     continue
                 positions.add((round(feat.x, 4), round(feat.y, 4)))
 
+    return positions
+
+
+def build_via_position_set(
+    eda_data: EdaData,
+    layers_data: dict,
+) -> set[tuple[float, float]]:
+    """Return deduplicated (x, y) board positions of all VIAs.
+
+    Prefers the ``.pad_usage`` feature attribute on the top/bottom signal
+    layers (raw value 1 = via).  Falls back to EDA subnet FID resolution
+    when the attribute yields no results.
+
+    Positions are rounded to 4 decimal places (0.1 µm in mm) for
+    deduplication.
+    """
+    positions = _build_via_positions_by_attribute(layers_data)
+    if not positions:
+        positions = _build_via_positions_by_subnet(eda_data, layers_data)
     return positions
 
 
