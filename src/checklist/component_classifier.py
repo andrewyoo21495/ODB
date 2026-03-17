@@ -163,3 +163,40 @@ def find_shield_cans(components: Sequence[Component]) -> list[Component]:
 def find_mics(components: Sequence[Component]) -> list[Component]:
     """Return MIC components: comp_name starts with 'MIC'."""
     return [c for c in components if (c.comp_name or "").startswith("MIC")]
+
+
+def find_rf_components(components: Sequence[Component]) -> list[Component]:
+    """Return RF Receptacle components: comp_name starts with 'RF'."""
+    return [c for c in components if (c.comp_name or "").startswith("RF")]
+
+
+def find_filters(
+    components: Sequence[Component],
+    packages: list | None = None,
+    *,
+    pin_count: int | None = None,
+) -> list[Component]:
+    """Return Filter components: comp_name starts with 'F'.
+
+    Parameters
+    ----------
+    packages
+        EDA package list – required when *pin_count* is specified so that the
+        number of pins can be looked up from the package definition.
+    pin_count
+        If given, only filters with exactly this many pins are returned.
+    """
+    result: list[Component] = []
+    for c in components:
+        name = c.comp_name or ""
+        if not name.startswith("F"):
+            continue
+        # Exclude names that start with common non-filter prefixes
+        if any(name.startswith(p) for p in ("FB", "FPC")):
+            continue
+        if pin_count is not None and packages is not None:
+            pkg = packages[c.pkg_ref] if c.pkg_ref < len(packages) else None
+            if pkg is None or len(pkg.pins) != pin_count:
+                continue
+        result.append(c)
+    return result

@@ -12,6 +12,7 @@ from src.checklist.engine import register_rule
 from src.checklist.geometry_utils import (
     find_overlapping_components,
     get_component_orientation,
+    is_on_edge,
 )
 from src.checklist.reference_loader import get_managed_part_names
 from src.checklist.rule_base import ChecklistRule
@@ -37,7 +38,7 @@ class CKL02002(ChecklistRule):
 
         columns = [
             "comp", "cmp_layer", "overlapping_cap", "part_name",
-            "hori/verti", "status",
+            "edge", "hori/verti", "status",
         ]
         rows: list[dict] = []
 
@@ -59,13 +60,20 @@ class CKL02002(ChecklistRule):
                     conn, opp_managed_caps, packages
                 )
                 for cap in overlaps:
+                    on_edge = is_on_edge(cap, conn, packages)
                     orientation = get_component_orientation(cap, packages)
-                    status = "PASS" if orientation == "Horizontal" else "FAIL"
+                    edge_str = "TRUE" if on_edge else "FALSE"
+                    status = (
+                        "PASS"
+                        if (not on_edge and orientation == "Horizontal")
+                        else "FAIL"
+                    )
                     rows.append({
                         "comp": conn.comp_name,
                         "cmp_layer": conn_layer,
                         "overlapping_cap": cap.comp_name,
                         "part_name": cap.part_name or "",
+                        "edge": edge_str,
                         "hori/verti": orientation,
                         "status": status,
                     })
