@@ -127,42 +127,67 @@ def _draw_pad(ax: Axes, pad: PadRecord, sym_lookup: dict[int, SymbolRef],
 
 
 def _draw_line(ax: Axes, line: LineRecord, sym_lookup: dict[int, SymbolRef],
-               units: str, color: str = "blue", alpha: float = 0.7):
-    """Draw a line feature as a filled polygon with data-coordinate width.
+               units: str, color: str = "blue", alpha: float = 0.7,
+               n_cap: int = 16):
+    """Draw a line feature as a swept stadium polygon with rounded end-caps.
 
-    The line width comes from the referenced symbol (e.g., r10.827 → diameter
-    10.827 mils → 0.010827 inches).  Rendering as a polygon ensures the trace
-    width is correct regardless of zoom level.
+    A circle of *radius* (= half the aperture width) is swept along the line
+    to produce a smooth contour with semicircular caps at each endpoint.
+    This is equivalent to applying a Minkowski sum of the line segment with a
+    circle — the correct ODB++ rendering for round-aperture lines.
+
+    Args:
+        n_cap: Number of interpolated points per semicircle end-cap.
+               Higher values give smoother caps at the cost of more vertices.
     """
     sym_ref = sym_lookup.get(line.symbol_idx)
-    width = 0.001  # Default thin line
+    width = 0.001
     if sym_ref:
         width = get_line_width_for_symbol(sym_ref.name, units, sym_ref.unit_override)
     if width <= 0:
         width = 0.001
 
+    radius = width / 2
     dx = line.xe - line.xs
     dy = line.ye - line.ys
     length = math.sqrt(dx * dx + dy * dy)
 
     if length < 1e-10:
-        # Zero-length line → draw as a dot (circle)
-        ax.add_patch(Circle((line.xs, line.ys), width / 2,
+        # Zero-length line → filled circle
+        ax.add_patch(Circle((line.xs, line.ys), radius,
                             color=color, alpha=alpha, edgecolor="none"))
         return
 
-    # Perpendicular offset for half-width
-    hw = width / 2
-    nx = -dy / length * hw
-    ny = dx / length * hw
+    # Unit left-perpendicular normal scaled to radius
+    nx = -dy / length * radius
+    ny =  dx / length * radius
 
-    verts = [
-        (line.xs + nx, line.ys + ny),
-        (line.xe + nx, line.ye + ny),
-        (line.xe - nx, line.ye - ny),
-        (line.xs - nx, line.ys - ny),
-    ]
-    ax.add_patch(Polygon(verts, closed=True, color=color, alpha=alpha,
+    # Direction angle (used for the semicircle end-caps)
+    angle = math.atan2(dy, dx)
+
+    pts: list[tuple[float, float]] = []
+
+    # 1. Left side: start-left → end-left
+    pts.append((line.xs + nx, line.ys + ny))
+    pts.append((line.xe + nx, line.ye + ny))
+
+    # 2. End cap: semicircle sweeping clockwise from end-left to end-right
+    for k in range(1, n_cap):
+        theta = (angle + math.pi / 2) - k * math.pi / n_cap
+        pts.append((line.xe + radius * math.cos(theta),
+                    line.ye + radius * math.sin(theta)))
+
+    # 3. Right side: end-right → start-right
+    pts.append((line.xe - nx, line.ye - ny))
+    pts.append((line.xs - nx, line.ys - ny))
+
+    # 4. Start cap: semicircle sweeping clockwise from start-right to start-left
+    for k in range(1, n_cap):
+        theta = (angle - math.pi / 2) - k * math.pi / n_cap
+        pts.append((line.xs + radius * math.cos(theta),
+                    line.ys + radius * math.sin(theta)))
+
+    ax.add_patch(Polygon(pts, closed=True, color=color, alpha=alpha,
                          edgecolor="none"))
 
 
