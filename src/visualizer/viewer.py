@@ -788,10 +788,6 @@ class ComponentViewer:
         if self.profile and self.profile.surface:
             _draw_profile(self.ax, self.profile)
 
-        # Draw vias underneath components when enabled
-        if self._show_vias:
-            self._draw_vias()
-
         packages = self.eda_data.packages if self.eda_data else None
         if comps and (show_pins or show_outline):
             top_set   = {c.comp_name for c in self.components_top}
@@ -844,6 +840,10 @@ class ComponentViewer:
                             user_symbols=self.user_symbols,
                             fid_resolved=self._fid_resolved,
                             comp_side="B" if is_bot else "T")
+
+        # Draw vias on top of all component/selection graphics
+        if self._show_vias:
+            self._draw_vias()
 
         self._apply_axis_labels()
         self.canvas.draw()
