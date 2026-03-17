@@ -103,14 +103,14 @@ def draw_components(ax: Axes, components: list[Component],
     pad_units: str = "INCH"
     line_features: list = []
     if comp_layer_features is not None:
-        from src.models import ArcRecord, LineRecord, PadRecord
+        from src.models import LineRecord, PadRecord
         pad_units = comp_layer_features.units
         pad_sym_lookup = {s.index: s for s in comp_layer_features.symbols}
         for feat in comp_layer_features.features:
             if isinstance(feat, PadRecord):
                 key = (round(feat.x, 4), round(feat.y, 4))
                 _all_pad_by_pos[key] = feat
-            elif isinstance(feat, (LineRecord, ArcRecord)):
+            elif isinstance(feat, LineRecord):
                 line_features.append(feat)
 
     for comp_idx, comp in enumerate(components):
@@ -381,8 +381,7 @@ def _draw_sc_lines(ax: Axes, comp: Component,
 
     Returns True if at least one line was drawn.
     """
-    from src.models import ArcRecord, LineRecord
-    from src.visualizer.symbol_renderer import _arc_to_points
+    from src.models import LineRecord
 
     toep_set: set[tuple[float, float]] = {
         (round(tp.x, 4), round(tp.y, 4)) for tp in comp.toeprints
@@ -394,7 +393,7 @@ def _draw_sc_lines(ax: Axes, comp: Component,
     drew = False
 
     for feat in line_features:
-        if not isinstance(feat, (LineRecord, ArcRecord)):
+        if not isinstance(feat, LineRecord):
             continue
         s = (round(feat.xs, 4), round(feat.ys, 4))
         e = (round(feat.xe, 4), round(feat.ye, 4))
@@ -408,68 +407,38 @@ def _draw_sc_lines(ax: Axes, comp: Component,
         if width <= 0:
             width = 0.001
 
-        if isinstance(feat, LineRecord):
-            radius = width / 2
-            dx = feat.xe - feat.xs
-            dy = feat.ye - feat.ys
-            length = math.sqrt(dx * dx + dy * dy)
+        radius = width / 2
+        dx = feat.xe - feat.xs
+        dy = feat.ye - feat.ys
+        length = math.sqrt(dx * dx + dy * dy)
 
-            if length < 1e-10:
-                ax.add_patch(Circle((feat.xs, feat.ys), radius,
-                                    color=color, alpha=alpha, edgecolor="none"))
-                drew = True
-                continue
-
-            nx = -dy / length * radius
-            ny =  dx / length * radius
-            angle = math.atan2(dy, dx)
-
-            pts: list[tuple[float, float]] = []
-            pts.append((feat.xs + nx, feat.ys + ny))
-            pts.append((feat.xe + nx, feat.ye + ny))
-            for k in range(1, n_cap):
-                theta = (angle + math.pi / 2) - k * math.pi / n_cap
-                pts.append((feat.xe + radius * math.cos(theta),
-                            feat.ye + radius * math.sin(theta)))
-            pts.append((feat.xe - nx, feat.ye - ny))
-            pts.append((feat.xs - nx, feat.ys - ny))
-            for k in range(1, n_cap):
-                theta = (angle - math.pi / 2) - k * math.pi / n_cap
-                pts.append((feat.xs + radius * math.cos(theta),
-                            feat.ys + radius * math.sin(theta)))
-
-            ax.add_patch(Polygon(pts, closed=True, color=color,
-                                 alpha=alpha, edgecolor="none"))
+        if length < 1e-10:
+            ax.add_patch(Circle((feat.xs, feat.ys), radius,
+                                color=color, alpha=alpha, edgecolor="none"))
             drew = True
+            continue
 
-        else:  # ArcRecord — thick arc polygon via offset normals
-            hw = width / 2
-            arc_pts = _arc_to_points(feat.xs, feat.ys, feat.xe, feat.ye,
-                                     feat.xc, feat.yc, feat.clockwise, 32)
-            if len(arc_pts) < 2:
-                continue
-            pts_np = np.array(arc_pts)
-            n = len(pts_np)
-            outer = np.empty((n, 2))
-            inner = np.empty((n, 2))
-            for i in range(n):
-                if i == 0:
-                    ddx, ddy = pts_np[1] - pts_np[0]
-                elif i == n - 1:
-                    ddx, ddy = pts_np[-1] - pts_np[-2]
-                else:
-                    ddx, ddy = pts_np[i + 1] - pts_np[i - 1]
-                seg_len = math.sqrt(ddx * ddx + ddy * ddy)
-                if seg_len < 1e-12:
-                    nnx, nny = 0.0, 0.0
-                else:
-                    nnx, nny = -ddy / seg_len * hw, ddx / seg_len * hw
-                outer[i] = pts_np[i, 0] + nnx, pts_np[i, 1] + nny
-                inner[i] = pts_np[i, 0] - nnx, pts_np[i, 1] - nny
-            verts = np.concatenate([outer, inner[::-1]])
-            ax.add_patch(Polygon(verts, closed=True, color=color,
-                                 alpha=alpha, edgecolor="none"))
-            drew = True
+        nx = -dy / length * radius
+        ny =  dx / length * radius
+        angle = math.atan2(dy, dx)
+
+        pts: list[tuple[float, float]] = []
+        pts.append((feat.xs + nx, feat.ys + ny))
+        pts.append((feat.xe + nx, feat.ye + ny))
+        for k in range(1, n_cap):
+            theta = (angle + math.pi / 2) - k * math.pi / n_cap
+            pts.append((feat.xe + radius * math.cos(theta),
+                        feat.ye + radius * math.sin(theta)))
+        pts.append((feat.xe - nx, feat.ye - ny))
+        pts.append((feat.xs - nx, feat.ys - ny))
+        for k in range(1, n_cap):
+            theta = (angle - math.pi / 2) - k * math.pi / n_cap
+            pts.append((feat.xs + radius * math.cos(theta),
+                        feat.ys + radius * math.sin(theta)))
+
+        ax.add_patch(Polygon(pts, closed=True, color=color,
+                             alpha=alpha, edgecolor="none"))
+        drew = True
 
     return drew
 
