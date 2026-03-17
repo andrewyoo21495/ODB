@@ -52,7 +52,8 @@ from matplotlib.patches import Circle, Polygon, Rectangle
 
 from src.models import BBox, Component, LayerFeatures, Package, PinOutline, UserSymbol
 from src.visualizer.symbol_renderer import (
-    contour_to_vertices, symbol_to_patch, user_symbol_to_patches,
+    contour_to_vertices, get_line_width_for_symbol, symbol_to_patch,
+    user_symbol_to_patches,
 )
 
 
@@ -100,14 +101,17 @@ def draw_components(ax: Axes, components: list[Component],
     _all_pad_by_pos: dict[tuple[float, float], object] = {}
     pad_sym_lookup: dict[int, object] = {}
     pad_units: str = "INCH"
+    line_features: list = []
     if comp_layer_features is not None:
-        from src.models import PadRecord
+        from src.models import LineRecord, PadRecord
         pad_units = comp_layer_features.units
         pad_sym_lookup = {s.index: s for s in comp_layer_features.symbols}
         for feat in comp_layer_features.features:
             if isinstance(feat, PadRecord):
                 key = (round(feat.x, 4), round(feat.y, 4))
                 _all_pad_by_pos[key] = feat
+            elif isinstance(feat, LineRecord):
+                line_features.append(feat)
 
     for comp_idx, comp in enumerate(components):
         pkg = pkg_lookup.get(comp.pkg_ref)
@@ -132,6 +136,7 @@ def draw_components(ax: Axes, components: list[Component],
                                         fid_resolved=fid_resolved,
                                         comp_side=comp_side,
                                         comp_idx=comp_idx,
+                                        line_features=line_features,
                                         is_bottom=is_bottom)
 
         if not drew:
@@ -169,6 +174,7 @@ def _draw_component_geometry(ax: Axes, comp: Component,
                               fid_resolved: dict = None,
                               comp_side: str = "T",
                               comp_idx: int = 0,
+                              line_features: list = None,
                               is_bottom: bool = False) -> bool:
     """Render pin pads and/or package outlines for one component.
 
@@ -192,13 +198,16 @@ def _draw_component_geometry(ax: Axes, comp: Component,
 
     # -- Pin-level pad shapes ------------------------------------------------
     if draw_pads:
-        # Shield cans: their outline is rendered by the layer renderer as
-        # swept line features on comp_+_top / comp_+_bot.  Mark as drawn so
-        # individual pin-pad shapes and the bounding-box fallback are both
-        # suppressed — nothing extra needs to be drawn here.
-        sc_drawn = _is_shield_can(comp)
-        if sc_drawn:
-            drew_any = True
+        # Shield cans: draw their outline by sweeping each comp-layer line
+        # that belongs to this component.  Suppresses individual pin-pad
+        # shapes; if no lines are found the outer fallback draws a bbox.
+        sc_drawn = False
+        if _is_shield_can(comp) and line_features:
+            sc_drawn = _draw_sc_lines(ax, comp, line_features,
+                                      pad_sym_lookup, pad_units,
+                                      color, alpha)
+            if sc_drawn:
+                drew_any = True
 
         # Build a quick lookup from pin index → toeprint board position
         toep_by_pin: dict[int, object] = {}
@@ -358,6 +367,80 @@ def _draw_pin_from_fid(ax: Axes, comp: Component,
 def _is_shield_can(comp: Component) -> bool:
     """Return True when *comp* looks like a shield-can (ref-des starts with SC)."""
     return comp.comp_name.upper().startswith("SC")
+
+
+def _draw_sc_lines(ax: Axes, comp: Component,
+                   line_features: list, sym_lookup: dict,
+                   units: str, color: str, alpha: float) -> bool:
+    """Draw a shield-can outline from comp-layer LineRecord features.
+
+    Filters lines where either endpoint falls on one of the component's
+    toeprint positions, then renders each as a stadium polygon (rectangle
+    body + semicircular end-caps) matching the aperture width — identical
+    geometry to ``_draw_line`` in the layer renderer.
+
+    Returns True if at least one line was drawn.
+    """
+    from src.models import LineRecord
+
+    toep_set: set[tuple[float, float]] = {
+        (round(tp.x, 4), round(tp.y, 4)) for tp in comp.toeprints
+    }
+    if not toep_set:
+        return False
+
+    n_cap = 16
+    drew = False
+
+    for feat in line_features:
+        if not isinstance(feat, LineRecord):
+            continue
+        s = (round(feat.xs, 4), round(feat.ys, 4))
+        e = (round(feat.xe, 4), round(feat.ye, 4))
+        if s not in toep_set and e not in toep_set:
+            continue
+
+        sym_ref = sym_lookup.get(feat.symbol_idx)
+        width = get_line_width_for_symbol(
+            sym_ref.name, units, sym_ref.unit_override
+        ) if sym_ref else 0.0
+        if width <= 0:
+            width = 0.001
+
+        radius = width / 2
+        dx = feat.xe - feat.xs
+        dy = feat.ye - feat.ys
+        length = math.sqrt(dx * dx + dy * dy)
+
+        if length < 1e-10:
+            ax.add_patch(Circle((feat.xs, feat.ys), radius,
+                                color=color, alpha=alpha, edgecolor="none"))
+            drew = True
+            continue
+
+        nx = -dy / length * radius
+        ny =  dx / length * radius
+        angle = math.atan2(dy, dx)
+
+        pts: list[tuple[float, float]] = []
+        pts.append((feat.xs + nx, feat.ys + ny))
+        pts.append((feat.xe + nx, feat.ye + ny))
+        for k in range(1, n_cap):
+            theta = (angle + math.pi / 2) - k * math.pi / n_cap
+            pts.append((feat.xe + radius * math.cos(theta),
+                        feat.ye + radius * math.sin(theta)))
+        pts.append((feat.xe - nx, feat.ye - ny))
+        pts.append((feat.xs - nx, feat.ys - ny))
+        for k in range(1, n_cap):
+            theta = (angle - math.pi / 2) - k * math.pi / n_cap
+            pts.append((feat.xs + radius * math.cos(theta),
+                        feat.ys + radius * math.sin(theta)))
+
+        ax.add_patch(Polygon(pts, closed=True, color=color,
+                             alpha=alpha, edgecolor="none"))
+        drew = True
+
+    return drew
 
 
 # ---------------------------------------------------------------------------
