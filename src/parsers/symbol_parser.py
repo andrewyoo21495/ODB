@@ -18,6 +18,7 @@ def parse_user_symbol(name: str, path: Path) -> UserSymbol:
     return UserSymbol(
         name=name,
         units=layer_features.units,
+        symbols=layer_features.symbols,
         features=layer_features.features,
     )
 

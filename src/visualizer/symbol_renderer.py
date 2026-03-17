@@ -41,7 +41,7 @@ def symbol_to_patch(symbol_name: str, x: float, y: float,
         matplotlib patch or None if symbol cannot be rendered
     """
     sym = resolve_symbol(symbol_name)
-    scale = _get_scale_factor(units, unit_override)
+    scale = get_scale_factor(units, unit_override)
 
     if sym.type == "round":
         d = sym.params["diameter"] * scale
@@ -311,7 +311,7 @@ def get_line_width_for_symbol(symbol_name: str, units: str = "INCH",
                               unit_override: str = None) -> float:
     """Get the line width for a symbol used as a line/arc aperture."""
     sym = resolve_symbol(symbol_name)
-    scale = _get_scale_factor(units, unit_override)
+    scale = get_scale_factor(units, unit_override)
 
     if sym.type == "round":
         return sym.params.get("diameter", 0) * scale
@@ -413,7 +413,7 @@ def user_symbol_to_patches(symbol: UserSymbol, x: float, y: float,
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _get_scale_factor(units: str, unit_override: str = None) -> float:
+def get_scale_factor(units: str, unit_override: str = None) -> float:
     """Get scale factor to convert symbol dimensions to mm (board coordinate units).
 
     All layer coordinates are normalised to MM, so this function always returns
