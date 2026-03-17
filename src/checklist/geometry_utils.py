@@ -800,22 +800,29 @@ def count_vias_at_pad(
     via_positions: set[tuple[float, float]],
     is_bottom: bool = False,
     tolerance: float = 0.05,
+    toeprint: "Toeprint | None" = None,
 ) -> int:
     """Count VIAs located at a component pad position.
 
-    Transforms the pin centre from package-local coordinates to board
-    coordinates, then counts VIA positions within *tolerance* mm.
+    When a *toeprint* is provided its board coordinates are used directly
+    (same coordinate source as the VIA positions extracted from layer
+    features).  Otherwise falls back to transforming the EDA pin centre
+    from package-local coordinates to board coordinates.
 
     Args:
         comp: The component owning the pad.
-        pin_center_x: Pin centre X in package-local coords.
-        pin_center_y: Pin centre Y in package-local coords.
+        pin_center_x: Pin centre X in package-local coords (fallback).
+        pin_center_y: Pin centre Y in package-local coords (fallback).
         via_positions: Set of (x, y) VIA board positions.
         is_bottom: Whether the component is on the bottom layer.
         tolerance: Maximum distance (mm) to consider a VIA on the pad.
+        toeprint: Optional toeprint with board-space (x, y) for the pad.
     """
-    bx, by = transform_point(pin_center_x, pin_center_y, comp,
-                              is_bottom=is_bottom)
+    if toeprint is not None:
+        bx, by = toeprint.x, toeprint.y
+    else:
+        bx, by = transform_point(pin_center_x, pin_center_y, comp,
+                                  is_bottom=is_bottom)
     count = 0
     tol_sq = tolerance * tolerance
     for vx, vy in via_positions:

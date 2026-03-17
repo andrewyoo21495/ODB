@@ -45,10 +45,16 @@ class CKL03013(ChecklistRule):
                     continue
                 pkg = packages[mic.pkg_ref]
 
-                for pin in pkg.pins:
+                toep_by_pin: dict[int, object] = {}
+                for tp in mic.toeprints:
+                    toep_by_pin[tp.pin_num] = tp
+
+                for pin_idx, pin in enumerate(pkg.pins):
+                    tp = toep_by_pin.get(pin_idx) or toep_by_pin.get(pin_idx + 1)
                     via_count = count_vias_at_pad(
                         mic, pin.center.x, pin.center.y,
                         via_positions, is_bottom=is_bottom,
+                        toeprint=tp,
                     )
                     rows.append({
                         "comp": mic.comp_name,
