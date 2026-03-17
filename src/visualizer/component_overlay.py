@@ -45,7 +45,6 @@ only the component boundary outlines as a separate pass.
 from __future__ import annotations
 
 import math
-from typing import NamedTuple
 
 import numpy as np
 from matplotlib.axes import Axes
@@ -54,17 +53,9 @@ from matplotlib.path import Path as MplPath
 
 from src.models import BBox, Component, LayerFeatures, Package, PinOutline, UserSymbol
 from src.visualizer.symbol_renderer import (
-    contour_to_vertices, get_line_width_for_symbol, get_scale_factor,
-    symbol_to_patch, user_symbol_to_patches,
+    contour_to_vertices, get_line_width_for_symbol, symbol_to_patch,
+    user_symbol_to_patches,
 )
-
-
-class _SCLine(NamedTuple):
-    """Lightweight line record used for synthetic SC outline segments."""
-    xs: float
-    ys: float
-    xe: float
-    ye: float
 
 
 def draw_components(ax: Axes, components: list[Component],
@@ -210,13 +201,10 @@ def _draw_component_geometry(ax: Axes, comp: Component,
     if draw_pads:
         # Shield-can shortcut: sweep a circle along the polyline outline
         sc_drawn = False
-        if _is_shield_can(comp) and (line_features or pad_by_pos):
+        if _is_shield_can(comp) and line_features:
             sc_drawn = _draw_shield_can(ax, comp, line_features,
                                         pad_sym_lookup, pad_units,
-                                        color, alpha,
-                                        pad_by_pos=pad_by_pos,
-                                        user_symbols=user_symbols,
-                                        is_bottom=is_bottom)
+                                        color, alpha)
             if sc_drawn:
                 drew_any = True
 
@@ -393,71 +381,6 @@ def _is_shield_can(comp: Component) -> bool:
     return comp.comp_name.upper().startswith("SC")
 
 
-def _extract_lines_from_user_symbol(
-    user_sym: UserSymbol,
-    pad,            # PadRecord from comp_layer_features
-    is_bottom: bool,
-) -> list[tuple]:
-    """Extract line geometry from a user symbol placed by a pad record.
-
-    Transforms every ``LineRecord`` in *user_sym* from symbol-local coordinates
-    to board-space mm using the pad's placement (rotation, mirror, position).
-
-    Transform pipeline for each symbol-local point (lx, ly):
-      1. Scale from symbol units (mils or microns) → mm.
-      2. Mirror X when ``pad.mirror`` is True (ODB++ X-axis flip convention).
-      3. Rotate by ``pad.rotation`` (negated for bottom-layer pads because a
-         bottom-view flip reverses the apparent rotation direction).
-      4. Translate by ``(pad.x, pad.y)`` which are already in board-mm.
-
-    Returns a list of ``(_SCLine, width_mm)`` pairs.
-    """
-    from src.models import LineRecord
-
-    scale = get_scale_factor(user_sym.units)
-    sym_lookup = {s.index: s for s in user_sym.symbols}
-    rot = -pad.rotation if is_bottom else pad.rotation
-    angle = math.radians(rot)
-    cos_a = math.cos(angle)
-    sin_a = math.sin(angle)
-
-    result: list[tuple] = []
-    for feat in user_sym.features:
-        if not isinstance(feat, LineRecord):
-            continue
-
-        # Step 1 – scale to mm
-        xs = feat.xs * scale
-        ys = feat.ys * scale
-        xe = feat.xe * scale
-        ye = feat.ye * scale
-
-        # Step 2 – mirror X in symbol space
-        if pad.mirror:
-            xs = -xs
-            xe = -xe
-
-        # Step 3 – rotate
-        xs_r = xs * cos_a - ys * sin_a
-        ys_r = xs * sin_a + ys * cos_a
-        xe_r = xe * cos_a - ye * sin_a
-        ye_r = xe * sin_a + ye * cos_a
-
-        # Step 4 – translate to pad board position
-        sc_line = _SCLine(xs_r + pad.x, ys_r + pad.y,
-                          xe_r + pad.x, ye_r + pad.y)
-
-        # Aperture width from the user symbol's own symbol table
-        sym_ref = sym_lookup.get(feat.symbol_idx)
-        width = (get_line_width_for_symbol(sym_ref.name, user_sym.units,
-                                           sym_ref.unit_override)
-                 if sym_ref is not None else 0.0)
-
-        result.append((sc_line, width))
-
-    return result
-
-
 def _sweep_outline(
     points: list[tuple[float, float]],
     radius: float,
@@ -618,124 +541,41 @@ def _chain_line_segments(lines) -> list[list[tuple[float, float]]]:
     return polylines
 
 
-def _render_sweep(ax: Axes, outer: np.ndarray, inner: np.ndarray | None,
-                  color: str, alpha: float) -> bool:
-    """Draw one swept polyline result (outer boundary, optional inner hole).
-
-    *inner* is non-None only for closed polylines, where it forms a ring.
-    Returns True (always draws something given valid input).
-    """
-    if inner is not None:
-        # Closed polyline → ring rendered as a compound Path with a hole
-        n_out = len(outer)
-        n_in = len(inner)
-        verts: list[list[float]] = []
-        codes: list[int] = []
-
-        verts.extend(outer.tolist())
-        verts.append(outer[0].tolist())
-        codes.append(MplPath.MOVETO)
-        codes.extend([MplPath.LINETO] * (n_out - 1))
-        codes.append(MplPath.CLOSEPOLY)
-
-        inner_rev = inner[::-1]   # reverse winding for the hole
-        verts.extend(inner_rev.tolist())
-        verts.append(inner_rev[0].tolist())
-        codes.append(MplPath.MOVETO)
-        codes.extend([MplPath.LINETO] * (n_in - 1))
-        codes.append(MplPath.CLOSEPOLY)
-
-        ax.add_patch(PathPatch(MplPath(verts, codes),
-                               facecolor=color, edgecolor="none", alpha=alpha))
-    else:
-        # Open polyline → single filled polygon with semicircle end-caps
-        ax.add_patch(Polygon(outer, closed=True,
-                             facecolor=color, edgecolor="none", alpha=alpha))
-    return True
-
-
 def _draw_shield_can(ax: Axes, comp: Component,
                      line_features: list, sym_lookup: dict,
-                     units: str, color: str, alpha: float,
-                     pad_by_pos: dict = None,
-                     user_symbols: dict = None,
-                     is_bottom: bool = False) -> bool:
+                     units: str, color: str, alpha: float) -> bool:
     """Render a shield-can component as a swept polyline outline.
 
-    Two-stage extraction with fallback:
-
-    **Stage 1 – user symbol path (primary)**
-      Pads in *pad_by_pos* that reference a user-defined symbol are looked up
-      in *user_symbols*.  Each matching ``UserSymbol`` may contain ``LineRecord``
-      features that define the SC outline in symbol-local coordinates.
-      ``_extract_lines_from_user_symbol`` scales and transforms those lines to
-      board-space mm.  This handles the common ODB++ pattern where the shield
-      can outline is stored entirely inside a user symbol.
-
-    **Stage 2 – comp-layer line fallback (relaxed matching)**
-      Collects ``LineRecord`` features from *line_features* where *either*
-      endpoint matches a toeprint position (previously both were required,
-      which was too strict for outlines with intermediate vertices).
+    Collects ``LineRecord`` features whose endpoints match the component's
+    toeprint positions, chains them into polylines, and draws each as a
+    swept circular outline.
 
     Returns True if at least one outline was drawn.
     """
-    from src.models import LineRecord, PadRecord
+    from src.models import LineRecord
 
-    toep_set: set[tuple[float, float]] = {
-        (round(tp.x, 4), round(tp.y, 4)) for tp in comp.toeprints
-    }
+    # Build set of toeprint positions for this component
+    toep_set: set[tuple[float, float]] = set()
+    for tp in comp.toeprints:
+        toep_set.add((round(tp.x, 4), round(tp.y, 4)))
+
     if not toep_set:
         return False
 
-    # ------------------------------------------------------------------
-    # Stage 1: user symbol path
-    # ------------------------------------------------------------------
-    if pad_by_pos and user_symbols:
-        sc_lines: list[_SCLine] = []
-        sc_width: float = 0.0
-
-        for pad in pad_by_pos.values():
-            if not isinstance(pad, PadRecord):
-                continue
-            sym_ref = sym_lookup.get(pad.symbol_idx)
-            if sym_ref is None:
-                continue
-            user_sym = user_symbols.get(sym_ref.name)
-            if user_sym is None:
-                continue
-            for sc_line, width in _extract_lines_from_user_symbol(
-                    user_sym, pad, is_bottom):
-                sc_lines.append(sc_line)
-                if width > sc_width:
-                    sc_width = width
-
-        if sc_lines and sc_width > 0:
-            radius = sc_width / 2
-            polylines = _chain_line_segments(sc_lines)
-            drew = False
-            for chain in polylines:
-                result = _sweep_outline(chain, radius)
-                if result is not None:
-                    drew = _render_sweep(ax, result[0], result[1],
-                                        color, alpha) or drew
-            if drew:
-                return True
-
-    # ------------------------------------------------------------------
-    # Stage 2: comp-layer line fallback (relaxed endpoint matching)
-    # ------------------------------------------------------------------
+    # Filter lines whose both endpoints match toeprint positions
     matching: list[LineRecord] = []
     for feat in line_features:
         if not isinstance(feat, LineRecord):
             continue
         s = (round(feat.xs, 4), round(feat.ys, 4))
         e = (round(feat.xe, 4), round(feat.ye, 4))
-        if s in toep_set or e in toep_set:   # relaxed: either endpoint suffices
+        if s in toep_set and e in toep_set:
             matching.append(feat)
 
     if not matching:
         return False
 
+    # Get sweep radius from the line symbol
     sym_ref = sym_lookup.get(matching[0].symbol_idx)
     if sym_ref is None:
         return False
@@ -744,12 +584,51 @@ def _draw_shield_can(ax: Axes, comp: Component,
     if radius <= 0:
         return False
 
+    # Chain segments and sweep
     polylines = _chain_line_segments(matching)
     drew = False
+
     for chain in polylines:
         result = _sweep_outline(chain, radius)
-        if result is not None:
-            drew = _render_sweep(ax, result[0], result[1], color, alpha) or drew
+        if result is None:
+            continue
+
+        outer, inner = result
+        if inner is not None:
+            # Closed polyline → ring with hole
+            n_out = len(outer)
+            n_in = len(inner)
+
+            verts: list[list[float]] = []
+            codes: list[int] = []
+
+            # Outer boundary
+            verts.extend(outer.tolist())
+            verts.append(outer[0].tolist())
+            codes.append(MplPath.MOVETO)
+            codes.extend([MplPath.LINETO] * (n_out - 1))
+            codes.append(MplPath.CLOSEPOLY)
+
+            # Inner boundary (reversed winding for hole)
+            inner_rev = inner[::-1]
+            verts.extend(inner_rev.tolist())
+            verts.append(inner_rev[0].tolist())
+            codes.append(MplPath.MOVETO)
+            codes.extend([MplPath.LINETO] * (n_in - 1))
+            codes.append(MplPath.CLOSEPOLY)
+
+            path = MplPath(verts, codes)
+            patch = PathPatch(path, facecolor=color, edgecolor="none",
+                              alpha=alpha)
+            ax.add_patch(patch)
+            drew = True
+        else:
+            # Open polyline → single polygon with caps
+            patch = Polygon(outer, closed=True, facecolor=color,
+                            edgecolor="none", alpha=alpha)
+            ax.add_patch(patch)
+            drew = True
+
     return drew
 
 

@@ -237,7 +237,6 @@ class UserSymbol:
     """User-defined symbol loaded from symbols/ directory."""
     name: str
     units: str = "INCH"
-    symbols: list = field(default_factory=list)   # SymbolRef entries from the symbol table
     features: list = field(default_factory=list)  # List of feature records
 
 
