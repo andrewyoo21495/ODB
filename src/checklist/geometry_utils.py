@@ -699,6 +699,58 @@ def components_in_clearance_zone(
 # 10. VIA-on-Pad Detection
 # ---------------------------------------------------------------------------
 
+def _build_via_positions_by_drill(
+    layers_data: dict,
+) -> set[tuple[float, float]]:
+    """Return VIA (x, y) positions from drill layers.
+
+    Drill layers are the most authoritative source of via positions because
+    every via requires a physical drill hole.  Drill layers whose matrix
+    ``start_name`` / ``end_name`` span the top or bottom signal layer are
+    selected, and all PadRecord positions within them are collected.
+
+    When ``start_name`` / ``end_name`` are not available the function falls
+    back to including pads from **all** DRILL-type layers.
+    """
+    from src.models import PadRecord
+    from src.visualizer.fid_lookup import _find_top_bottom_signal_layers
+
+    top_name, bot_name = _find_top_bottom_signal_layers(layers_data)
+
+    # Collect DRILL layers and determine which surface(s) they reach.
+    drill_layers: list[str] = []
+    for layer_name, (lf, ml) in layers_data.items():
+        if ml.type != "DRILL":
+            continue
+        start = ml.start_name.lower() if ml.start_name else ""
+        end = ml.end_name.lower() if ml.end_name else ""
+
+        if not start and not end:
+            # No span metadata — include unconditionally (safe fallback).
+            drill_layers.append(layer_name)
+            continue
+
+        # Include if the drill span touches a surface signal layer.
+        if top_name and (top_name.lower() in start or top_name.lower() in end):
+            drill_layers.append(layer_name)
+        elif bot_name and (bot_name.lower() in start or bot_name.lower() in end):
+            drill_layers.append(layer_name)
+
+    if not drill_layers:
+        return set()
+
+    positions: set[tuple[float, float]] = set()
+    for layer_name in drill_layers:
+        ld = layers_data.get(layer_name)
+        if ld is None:
+            continue
+        for feat in ld[0].features:
+            if isinstance(feat, PadRecord):
+                positions.add((round(feat.x, 4), round(feat.y, 4)))
+
+    return positions
+
+
 def _build_via_positions_by_attribute(
     layers_data: dict,
 ) -> set[tuple[float, float]]:
@@ -780,17 +832,78 @@ def build_via_position_set(
 ) -> set[tuple[float, float]]:
     """Return deduplicated (x, y) board positions of all VIAs.
 
-    Prefers the ``.pad_usage`` feature attribute on the top/bottom signal
-    layers (raw value 1 = via).  Falls back to EDA subnet FID resolution
-    when the attribute yields no results.
+    Collects via positions from multiple independent sources and returns
+    their union to maximise coverage:
+
+      1. **Drill layers** — the most authoritative source; every via has a
+         physical drill hole.  Only drill layers whose span touches a
+         surface signal layer are included.
+      2. **``.pad_usage`` attribute** — via pads on the top/bottom signal
+         layers identified by the ``.pad_usage`` feature attribute.
+      3. **EDA VIA subnet FIDs** — used as a last-resort fallback when
+         neither drill nor attribute data yields any results.
 
     Positions are rounded to 4 decimal places (0.1 µm in mm) for
     deduplication.
     """
-    positions = _build_via_positions_by_attribute(layers_data)
+    positions: set[tuple[float, float]] = set()
+
+    # Source 1: Drill layers (most reliable).
+    positions.update(_build_via_positions_by_drill(layers_data))
+
+    # Source 2: .pad_usage attribute on surface signal layers.
+    positions.update(_build_via_positions_by_attribute(layers_data))
+
+    # Source 3: EDA subnet FID resolution (fallback when above yield nothing).
     if not positions:
         positions = _build_via_positions_by_subnet(eda_data, layers_data)
+
     return positions
+
+
+def build_toeprint_lookup(
+    comp: Component,
+    pkg: Package,
+) -> dict[int, "Toeprint"]:
+    """Build a reliable mapping from package pin index to toeprint.
+
+    Resolution strategy (most reliable first):
+
+      1. **Name match** — match ``toeprint.name`` to ``pin.name``.  This is
+         the most robust method because pin names are stable identifiers.
+      2. **Direct index** — use ``toeprint.pin_num`` as the pin index.
+
+    Returns a dict mapping pin index (0-based, matching
+    ``enumerate(pkg.pins)``) to the corresponding :class:`Toeprint`.
+    """
+    from src.models import Toeprint  # noqa: F811
+
+    result: dict[int, Toeprint] = {}
+
+    # Strategy 1: match toeprint.name to pin.name
+    tp_by_name: dict[str, Toeprint] = {}
+    for tp in comp.toeprints:
+        if tp.name:
+            tp_by_name[tp.name] = tp
+
+    if tp_by_name:
+        for pin_idx, pin in enumerate(pkg.pins):
+            tp = tp_by_name.get(pin.name)
+            if tp is not None:
+                result[pin_idx] = tp
+
+    # Strategy 2: fill remaining pins using pin_num == pin_idx
+    if len(result) < len(pkg.pins):
+        tp_by_num: dict[int, Toeprint] = {}
+        for tp in comp.toeprints:
+            tp_by_num[tp.pin_num] = tp
+        for pin_idx in range(len(pkg.pins)):
+            if pin_idx not in result:
+                tp = tp_by_num.get(pin_idx)
+                if tp is not None:
+                    result[pin_idx] = tp
+
+    return result
 
 
 def count_vias_at_pad(

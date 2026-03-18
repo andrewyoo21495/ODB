@@ -7,7 +7,11 @@ every pad must have at least one VIA.  A pad with zero VIAs is flagged FAIL.
 from __future__ import annotations
 
 from src.checklist.engine import register_rule
-from src.checklist.geometry_utils import build_via_position_set, count_vias_at_pad
+from src.checklist.geometry_utils import (
+    build_toeprint_lookup,
+    build_via_position_set,
+    count_vias_at_pad,
+)
 from src.checklist.reference_loader import get_managed_part_names
 from src.checklist.rule_base import ChecklistRule
 from src.models import RuleResult
@@ -49,12 +53,10 @@ class CKL03004(ChecklistRule):
                     continue
                 pkg = packages[comp.pkg_ref]
 
-                toep_by_pin: dict[int, object] = {}
-                for tp in comp.toeprints:
-                    toep_by_pin[tp.pin_num] = tp
+                toep_by_pin = build_toeprint_lookup(comp, pkg)
 
                 for pin_idx, pin in enumerate(pkg.pins):
-                    tp = toep_by_pin.get(pin_idx) or toep_by_pin.get(pin_idx + 1)
+                    tp = toep_by_pin.get(pin_idx)
                     via_count = count_vias_at_pad(
                         comp, pin.center.x, pin.center.y,
                         via_positions, is_bottom=is_bottom,
