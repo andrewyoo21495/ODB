@@ -192,18 +192,8 @@ def _draw_line(ax: Axes, line: LineRecord, sym_lookup: dict[int, SymbolRef],
 
 
 def _draw_arc(ax: Axes, arc: ArcRecord, sym_lookup: dict[int, SymbolRef],
-              units: str, color: str = "blue", alpha: float = 0.7,
-              n_cap: int = 16):
-    """Draw an arc feature as a filled polygon with data-coordinate width.
-
-    Uses radial normals from the arc centre to offset the centreline into
-    outer and inner curves, then adds semicircular end-caps.  Full circles
-    (start == end) are rendered as a compound annulus path so there is no
-    visible seam.
-
-    Args:
-        n_cap: Number of interpolated points per semicircle end-cap.
-    """
+              units: str, color: str = "blue", alpha: float = 0.7):
+    """Draw an arc feature as a filled polygon with data-coordinate width."""
     sym_ref = sym_lookup.get(arc.symbol_idx)
     width = 0.001
     if sym_ref:
@@ -211,112 +201,39 @@ def _draw_arc(ax: Axes, arc: ArcRecord, sym_lookup: dict[int, SymbolRef],
     if width <= 0:
         width = 0.001
 
-    hw = width / 2
-    is_full_circle = (abs(arc.xs - arc.xe) < 1e-10 and
-                      abs(arc.ys - arc.ye) < 1e-10)
-
     from src.visualizer.symbol_renderer import _arc_to_points
-
-    # --- Full circle: render as an annulus via compound Path ---------------
-    if is_full_circle:
-        r = math.sqrt((arc.xs - arc.xc) ** 2 + (arc.ys - arc.yc) ** 2)
-        if r < 1e-10:
-            ax.add_patch(Circle((arc.xs, arc.ys), hw,
-                                color=color, alpha=alpha, edgecolor="none"))
-            return
-        r_outer = r + hw
-        r_inner = max(r - hw, 0)
-        if r_inner < 1e-10:
-            # Width larger than diameter → filled circle
-            ax.add_patch(Circle((arc.xc, arc.yc), r_outer,
-                                color=color, alpha=alpha, edgecolor="none"))
-            return
-        # Build compound path: outer circle CW + inner circle CCW
-        n_circle = 64
-        theta = np.linspace(0, 2 * np.pi, n_circle + 1)  # closed
-        ox = arc.xc + r_outer * np.cos(theta)
-        oy = arc.yc + r_outer * np.sin(theta)
-        ix = arc.xc + r_inner * np.cos(theta[::-1])
-        iy = arc.yc + r_inner * np.sin(theta[::-1])
-        all_verts = (list(zip(ox, oy)) + list(zip(ix, iy)))
-        all_codes = ([MplPath.MOVETO] + [MplPath.LINETO] * (n_circle - 1) +
-                     [MplPath.CLOSEPOLY] +
-                     [MplPath.MOVETO] + [MplPath.LINETO] * (n_circle - 1) +
-                     [MplPath.CLOSEPOLY])
-        path = MplPath(all_verts, all_codes)
-        ax.add_patch(PathPatch(path, facecolor=color, alpha=alpha,
-                               edgecolor="none"))
-        return
-
-    # --- Non-degenerate arc -----------------------------------------------
     points = _arc_to_points(
         arc.xs, arc.ys, arc.xe, arc.ye,
-        arc.xc, arc.yc, arc.clockwise, 64,
+        arc.xc, arc.yc, arc.clockwise, 32,
     )
 
     if len(points) < 2:
-        ax.add_patch(Circle((arc.xs, arc.ys), hw,
-                            color=color, alpha=alpha, edgecolor="none"))
         return
 
+    # Build a thick arc as a filled polygon by offsetting the polyline
+    hw = width / 2
     pts = np.array(points)
     n = len(pts)
-    cx, cy = arc.xc, arc.yc
 
-    # Radial outward normals from arc centre (more accurate than tangent-
-    # based finite differences for true circular arcs).
+    # Compute normals at each point using adjacent segments
     outer = np.empty((n, 2))
     inner = np.empty((n, 2))
     for i in range(n):
-        rx = pts[i, 0] - cx
-        ry = pts[i, 1] - cy
-        r_len = math.sqrt(rx * rx + ry * ry)
-        if r_len < 1e-12:
-            # Degenerate: fall back to tangent-based normal
-            if i == 0:
-                dx, dy = pts[1] - pts[0]
-            elif i == n - 1:
-                dx, dy = pts[-1] - pts[-2]
-            else:
-                dx, dy = pts[i + 1] - pts[i - 1]
-            t_len = math.sqrt(dx * dx + dy * dy)
-            if t_len < 1e-12:
-                nx, ny = 0.0, 0.0
-            else:
-                nx, ny = -dy / t_len, dx / t_len
+        if i == 0:
+            dx, dy = pts[1] - pts[0]
+        elif i == n - 1:
+            dx, dy = pts[-1] - pts[-2]
         else:
-            nx, ny = rx / r_len, ry / r_len
-        outer[i] = pts[i, 0] + nx * hw, pts[i, 1] + ny * hw
-        inner[i] = pts[i, 0] - nx * hw, pts[i, 1] - ny * hw
+            dx, dy = pts[i + 1] - pts[i - 1]
+        seg_len = math.sqrt(dx * dx + dy * dy)
+        if seg_len < 1e-12:
+            nx, ny = 0.0, 0.0
+        else:
+            nx, ny = -dy / seg_len * hw, dx / seg_len * hw
+        outer[i] = pts[i, 0] + nx, pts[i, 1] + ny
+        inner[i] = pts[i, 0] - nx, pts[i, 1] - ny
 
-    # Assemble polygon: outer forward → end cap → inner reversed → start cap
-    #
-    # Cap sweep direction depends on CW/CCW so the semicircle bulges
-    # away from the arc body (in the "forward" tangent direction at
-    # the endpoint, or "backward" at the start point).
-    cap_sign = -1.0 if arc.clockwise else 1.0
-
-    verts: list[tuple[float, float]] = []
-    verts.extend(outer.tolist())
-
-    # End cap (semicircle at the last point)
-    ex, ey = float(pts[-1, 0]), float(pts[-1, 1])
-    end_radial = math.atan2(ey - cy, ex - cx)
-    for k in range(1, n_cap):
-        theta = end_radial + cap_sign * math.pi * k / n_cap
-        verts.append((ex + hw * math.cos(theta),
-                      ey + hw * math.sin(theta)))
-
-    verts.extend(inner[::-1].tolist())
-
-    # Start cap (semicircle at the first point)
-    sx, sy = float(pts[0, 0]), float(pts[0, 1])
-    start_radial = math.atan2(sy - cy, sx - cx)
-    for k in range(1, n_cap):
-        theta = (start_radial + math.pi) + cap_sign * math.pi * k / n_cap
-        verts.append((sx + hw * math.cos(theta),
-                      sy + hw * math.sin(theta)))
-
+    verts = np.concatenate([outer, inner[::-1]])
     ax.add_patch(Polygon(verts, closed=True, color=color, alpha=alpha,
                          edgecolor="none"))
 
