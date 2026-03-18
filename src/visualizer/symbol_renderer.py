@@ -325,7 +325,7 @@ def get_line_width_for_symbol(symbol_name: str, units: str = "INCH",
         return max(sym.width, sym.height) * scale if sym.width > 0 else 0.001
 
 
-def contour_to_vertices(contour: Contour, num_arc_points: int = 16) -> np.ndarray:
+def contour_to_vertices(contour: Contour, num_arc_points: int = 32) -> np.ndarray:
     """Convert a Contour (with line and arc segments) to a vertex array.
 
     Arc segments are approximated with straight line segments.
@@ -472,11 +472,19 @@ def _rotate_points(points: np.ndarray, cx: float, cy: float,
 
 def _arc_to_points(xs: float, ys: float, xe: float, ye: float,
                    xc: float, yc: float, clockwise: bool,
-                   num_points: int = 16) -> list[tuple[float, float]]:
-    """Convert an arc to a list of points for polyline approximation."""
-    radius = math.sqrt((xs - xc) ** 2 + (ys - yc) ** 2)
+                   num_points: int = 32) -> list[tuple[float, float]]:
+    """Convert an arc to a list of points for polyline approximation.
+
+    Uses the average of the start and end radii so the interpolated points
+    smoothly bridge any small numerical mismatch between the two.  The first
+    and last points are snapped to the exact start/end coordinates.
+    """
+    r_start = math.sqrt((xs - xc) ** 2 + (ys - yc) ** 2)
+    r_end = math.sqrt((xe - xc) ** 2 + (ye - yc) ** 2)
+    radius = (r_start + r_end) / 2
+
     if radius < 1e-10:
-        return [(xe, ye)]
+        return [(xs, ys), (xe, ye)]
 
     start_angle = math.atan2(ys - yc, xs - xc)
     end_angle = math.atan2(ye - yc, xe - xc)
@@ -496,6 +504,7 @@ def _arc_to_points(xs: float, ys: float, xe: float, ye: float,
 
     angles = np.linspace(start_angle, end_angle, num_points)
     points = [(xc + radius * math.cos(a), yc + radius * math.sin(a)) for a in angles]
+    points[0] = (xs, ys)
     points[-1] = (xe, ye)
 
     return points
