@@ -325,7 +325,7 @@ def get_line_width_for_symbol(symbol_name: str, units: str = "INCH",
         return max(sym.width, sym.height) * scale if sym.width > 0 else 0.001
 
 
-def contour_to_vertices(contour: Contour, num_arc_points: int = 32) -> np.ndarray:
+def contour_to_vertices(contour: Contour, num_arc_points: int = 16) -> np.ndarray:
     """Convert a Contour (with line and arc segments) to a vertex array.
 
     Arc segments are approximated with straight line segments.
@@ -473,21 +473,10 @@ def _rotate_points(points: np.ndarray, cx: float, cy: float,
 def _arc_to_points(xs: float, ys: float, xe: float, ye: float,
                    xc: float, yc: float, clockwise: bool,
                    num_points: int = 16) -> list[tuple[float, float]]:
-    """Convert an arc to a list of points for polyline approximation.
-
-    Uses the average of the start-to-centre and end-to-centre distances
-    as the arc radius so that small data-precision discrepancies do not
-    distort the curve.  The first and last generated points are forced to
-    the exact start / end coordinates for continuity with adjacent
-    segments.
-    """
-    r_start = math.sqrt((xs - xc) ** 2 + (ys - yc) ** 2)
-    r_end = math.sqrt((xe - xc) ** 2 + (ye - yc) ** 2)
-    radius = (r_start + r_end) / 2
-
+    """Convert an arc to a list of points for polyline approximation."""
+    radius = math.sqrt((xs - xc) ** 2 + (ys - yc) ** 2)
     if radius < 1e-10:
-        # Degenerate arc — centre coincides with endpoints.
-        return [(xs, ys), (xe, ye)]
+        return [(xe, ye)]
 
     start_angle = math.atan2(ys - yc, xs - xc)
     end_angle = math.atan2(ye - yc, xe - xc)
@@ -499,7 +488,6 @@ def _arc_to_points(xs: float, ys: float, xe: float, ye: float,
         if end_angle <= start_angle:
             end_angle += 2 * math.pi
 
-    # Full-circle case: start and end points coincide.
     if abs(xs - xe) < 1e-10 and abs(ys - ye) < 1e-10:
         if clockwise:
             end_angle = start_angle - 2 * math.pi
@@ -508,8 +496,6 @@ def _arc_to_points(xs: float, ys: float, xe: float, ye: float,
 
     angles = np.linspace(start_angle, end_angle, num_points)
     points = [(xc + radius * math.cos(a), yc + radius * math.sin(a)) for a in angles]
-    # Force exact start and end for geometric continuity.
-    points[0] = (xs, ys)
     points[-1] = (xe, ye)
 
     return points
