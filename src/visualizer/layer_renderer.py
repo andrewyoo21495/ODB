@@ -192,14 +192,30 @@ def _draw_line(ax: Axes, line: LineRecord, sym_lookup: dict[int, SymbolRef],
 
 
 def _draw_arc(ax: Axes, arc: ArcRecord, sym_lookup: dict[int, SymbolRef],
-              units: str, color: str = "blue", alpha: float = 0.7):
-    """Draw an arc feature as a filled polygon with data-coordinate width."""
+              units: str, color: str = "blue", alpha: float = 0.7,
+              n_cap: int = 16):
+    """Draw an arc feature as a filled polygon with rounded end-caps.
+
+    A circle of *hw* (= half the aperture width) is swept along the arc
+    curve to produce a smooth contour with semicircular caps at each
+    endpoint — the correct ODB++ rendering for round-aperture arcs.
+
+    Normals are computed from the radial direction (point → arc centre)
+    rather than from polyline tangent differences, which avoids degenerate
+    zero-length tangents and ensures correct offset even for very shallow
+    or very tight arcs.
+
+    Args:
+        n_cap: Number of interpolated points per semicircle end-cap.
+    """
     sym_ref = sym_lookup.get(arc.symbol_idx)
     width = 0.001
     if sym_ref:
         width = get_line_width_for_symbol(sym_ref.name, units, sym_ref.unit_override)
     if width <= 0:
         width = 0.001
+
+    hw = width / 2
 
     from src.visualizer.symbol_renderer import _arc_to_points
     points = _arc_to_points(
@@ -208,32 +224,82 @@ def _draw_arc(ax: Axes, arc: ArcRecord, sym_lookup: dict[int, SymbolRef],
     )
 
     if len(points) < 2:
+        # Degenerate arc (zero radius) → draw a filled circle at the endpoint
+        ax.add_patch(Circle((arc.xe, arc.ye), hw,
+                            color=color, alpha=alpha, edgecolor="none"))
         return
 
-    # Build a thick arc as a filled polygon by offsetting the polyline
-    hw = width / 2
     pts = np.array(points)
     n = len(pts)
+    cx, cy = arc.xc, arc.yc
 
-    # Compute normals at each point using adjacent segments
+    # --- Compute outward radial normals from the arc centre ----------------
+    # For each point on the arc polyline the outward unit normal is simply
+    # (point - centre) / |point - centre|.  This is exact for circular arcs
+    # and avoids the degenerate-tangent problems of finite-difference normals.
     outer = np.empty((n, 2))
     inner = np.empty((n, 2))
     for i in range(n):
-        if i == 0:
-            dx, dy = pts[1] - pts[0]
-        elif i == n - 1:
-            dx, dy = pts[-1] - pts[-2]
+        rx = pts[i, 0] - cx
+        ry = pts[i, 1] - cy
+        r_len = math.sqrt(rx * rx + ry * ry)
+        if r_len < 1e-12:
+            # Point coincides with centre – fall back to tangent-based normal
+            if i == 0:
+                dx, dy = pts[1] - pts[0]
+            elif i == n - 1:
+                dx, dy = pts[-1] - pts[-2]
+            else:
+                dx, dy = pts[i + 1] - pts[i - 1]
+            t_len = math.sqrt(dx * dx + dy * dy)
+            if t_len < 1e-12:
+                nx, ny = 0.0, 0.0
+            else:
+                nx, ny = -dy / t_len, dx / t_len
         else:
-            dx, dy = pts[i + 1] - pts[i - 1]
-        seg_len = math.sqrt(dx * dx + dy * dy)
-        if seg_len < 1e-12:
-            nx, ny = 0.0, 0.0
-        else:
-            nx, ny = -dy / seg_len * hw, dx / seg_len * hw
-        outer[i] = pts[i, 0] + nx, pts[i, 1] + ny
-        inner[i] = pts[i, 0] - nx, pts[i, 1] - ny
+            nx, ny = rx / r_len, ry / r_len
+        outer[i] = pts[i, 0] + nx * hw, pts[i, 1] + ny * hw
+        inner[i] = pts[i, 0] - nx * hw, pts[i, 1] - ny * hw
 
-    verts = np.concatenate([outer, inner[::-1]])
+    # --- Build the closed polygon: outer → end cap → inner → start cap -----
+    verts: list[tuple[float, float]] = []
+
+    # 1. Outer contour (from start to end, away from centre)
+    verts.extend(outer.tolist())
+
+    # 2. End cap: semicircle at the arc endpoint.
+    #    Use the radial direction so the cap starts exactly at outer[-1]
+    #    and ends exactly at inner[-1], with no gap.
+    ex, ey = pts[-1]
+    end_radial = math.atan2(ey - cy, ex - cx)
+    for k in range(1, n_cap):
+        # Sweep from outward radial to inward radial, going around the
+        # outside of the endpoint (in the tangential / travel direction).
+        # For CW arcs the tangent points at radial - π/2, so sweep CW.
+        # For CCW arcs the tangent points at radial + π/2, so sweep CCW.
+        if arc.clockwise:
+            theta = end_radial - k * math.pi / n_cap
+        else:
+            theta = end_radial + k * math.pi / n_cap
+        verts.append((ex + hw * math.cos(theta), ey + hw * math.sin(theta)))
+
+    # 3. Inner contour (from end to start, reversed — towards centre)
+    verts.extend(inner[::-1].tolist())
+
+    # 4. Start cap: semicircle at the arc start point.
+    sx, sy = pts[0]
+    start_radial = math.atan2(sy - cy, sx - cx)
+    for k in range(1, n_cap):
+        # Sweep from inward radial to outward radial, going around the
+        # outside of the start point (opposite to travel direction).
+        # CW travel → outside is CCW from inner to outer (decrease angle).
+        # CCW travel → outside is CW from inner to outer (increase angle).
+        if arc.clockwise:
+            theta = (start_radial + math.pi) - k * math.pi / n_cap
+        else:
+            theta = (start_radial + math.pi) + k * math.pi / n_cap
+        verts.append((sx + hw * math.cos(theta), sy + hw * math.sin(theta)))
+
     ax.add_patch(Polygon(verts, closed=True, color=color, alpha=alpha,
                          edgecolor="none"))
 
