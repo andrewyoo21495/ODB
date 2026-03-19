@@ -485,6 +485,7 @@ class Component:
     toeprints: list[Toeprint] = field(default_factory=list)
     bom_data: Optional[BomData] = None
     id: Optional[int] = None
+    comp_index: int = -1
 
 
 # --- Netlist ---

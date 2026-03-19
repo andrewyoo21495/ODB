@@ -71,6 +71,7 @@ def parse_components(path: Path) -> tuple[list[Component], str]:
                 components.append(current_comp)
 
             current_comp = _parse_cmp_record(stripped, attr_names, attr_texts)
+            current_comp.comp_index = len(components)
             current_bom = None
             in_bom_section = False
 

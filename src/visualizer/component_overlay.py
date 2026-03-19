@@ -113,7 +113,7 @@ def draw_components(ax: Axes, components: list[Component],
             elif isinstance(feat, LineRecord):
                 line_features.append(feat)
 
-    for comp_idx, comp in enumerate(components):
+    for comp in components:
         pkg = pkg_lookup.get(comp.pkg_ref)
 
         # Build a component-specific pad lookup restricted to this component's
@@ -135,7 +135,7 @@ def draw_components(ax: Axes, components: list[Component],
                                         user_symbols=user_symbols or {},
                                         fid_resolved=fid_resolved,
                                         comp_side=comp_side,
-                                        comp_idx=comp_idx,
+                                        comp_idx=comp.comp_index,
                                         line_features=line_features,
                                         is_bottom=is_bottom)
 
