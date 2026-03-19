@@ -427,7 +427,10 @@ def reconstruct_eda_data(data: dict) -> EdaData:
 
 def reconstruct_components(data: list) -> list:
     """Reconstruct a list of Component objects from cached JSON data."""
-    return [_reconstruct_single_component(d) for d in (data or [])]
+    comps = [_reconstruct_single_component(d) for d in (data or [])]
+    for idx, comp in enumerate(comps):
+        comp.comp_index = idx
+    return comps
 
 
 def _reconstruct_single_component(data: dict) -> Component:
