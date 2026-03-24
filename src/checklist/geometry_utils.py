@@ -863,19 +863,207 @@ def build_toeprint_lookup(
     return result
 
 
+def lookup_resolved_pads_for_pin(
+    fid_resolved: dict,
+    comp: Component,
+    is_bottom: bool,
+    pin_idx: int,
+    signal_layer_name: str | None = None,
+) -> "list | None":
+    """Look up FID-resolved pad features for a specific pin.
+
+    Searches *fid_resolved* using both 0-based and 1-based pin numbering
+    conventions.  Optionally filters to only features on *signal_layer_name*
+    so that containment testing uses the correct copper layer.
+
+    Returns a list of :class:`ResolvedPadFeature` or ``None`` if nothing found.
+    """
+    side = "B" if is_bottom else "T"
+    comp_idx = comp.comp_index
+
+    for pnum in (pin_idx, pin_idx + 1):
+        key = (side, comp_idx, pnum)
+        pad_features = fid_resolved.get(key)
+        if not pad_features:
+            continue
+        if signal_layer_name is not None:
+            filtered = [rpf for rpf in pad_features
+                        if rpf.layer_name == signal_layer_name]
+            if filtered:
+                return filtered
+        else:
+            return pad_features
+
+    return None
+
+
+def _symbol_to_polygon(
+    symbol_name: str,
+    x: float, y: float,
+    rotation: float = 0.0,
+    mirror: bool = False,
+    units: str = "INCH",
+    unit_override: str = None,
+    resize_factor: float = None,
+    num_circle_pts: int = 32,
+) -> np.ndarray | None:
+    """Convert a standard symbol to board-coordinate polygon vertices.
+
+    Mirrors the logic of :func:`symbol_to_patch` in the visualiser but
+    returns an (N, 2) array of polygon vertices instead of a matplotlib
+    patch, suitable for point-in-polygon containment testing.
+
+    Returns ``None`` for unsupported or degenerate symbols.
+    """
+    from src.parsers.symbol_resolver import resolve_symbol
+    from src.visualizer.symbol_renderer import (
+        _get_scale_factor, _mirror_points, _rotate_points,
+    )
+
+    sym = resolve_symbol(symbol_name)
+    scale = _get_scale_factor(units, unit_override)
+    if resize_factor is not None and resize_factor != 0.0:
+        scale *= resize_factor
+
+    if sym.type == "round":
+        d = sym.params["diameter"] * scale
+        r = d / 2
+        angles = np.linspace(0, 2 * np.pi, num_circle_pts, endpoint=False)
+        return np.column_stack([x + r * np.cos(angles),
+                                y + r * np.sin(angles)])
+
+    if sym.type == "square":
+        s = sym.params["side"] * scale
+        corners = np.array([
+            [x - s/2, y - s/2], [x + s/2, y - s/2],
+            [x + s/2, y + s/2], [x - s/2, y + s/2],
+        ])
+        if mirror:
+            corners = _mirror_points(corners, x)
+        if rotation:
+            corners = _rotate_points(corners, x, y, rotation)
+        return corners
+
+    if sym.type in ("rect", "rect_round", "rect_chamfer"):
+        w = sym.params["width"] * scale
+        h = sym.params["height"] * scale
+        corners = np.array([
+            [x - w/2, y - h/2], [x + w/2, y - h/2],
+            [x + w/2, y + h/2], [x - w/2, y + h/2],
+        ])
+        if mirror:
+            corners = _mirror_points(corners, x)
+        if rotation:
+            corners = _rotate_points(corners, x, y, rotation)
+        return corners
+
+    if sym.type == "oval":
+        w = sym.params["width"] * scale
+        h = sym.params["height"] * scale
+        r = min(w, h) / 2
+        # Approximate oval as a rounded rectangle
+        if w >= h:
+            hw, hh = w/2, h/2
+        else:
+            hw, hh = w/2, h/2
+        angles = np.linspace(0, 2 * np.pi, num_circle_pts, endpoint=False)
+        pts = np.column_stack([x + hw * np.cos(angles),
+                               y + hh * np.sin(angles)])
+        if mirror:
+            pts = _mirror_points(pts, x)
+        if rotation:
+            pts = _rotate_points(pts, x, y, rotation)
+        return pts
+
+    if sym.type == "diamond":
+        w = sym.params["width"] * scale / 2
+        h = sym.params["height"] * scale / 2
+        verts = np.array([
+            [x, y + h], [x + w, y], [x, y - h], [x - w, y],
+        ])
+        if mirror:
+            verts = _mirror_points(verts, x)
+        if rotation:
+            verts = _rotate_points(verts, x, y, rotation)
+        return verts
+
+    if sym.type == "octagon":
+        w = sym.params["width"] * scale
+        h = sym.params["height"] * scale
+        cs = sym.params["corner_size"] * scale
+        from src.visualizer.symbol_renderer import _octagon_vertices
+        verts = _octagon_vertices(x, y, w, h, cs)
+        if mirror:
+            verts = _mirror_points(verts, x)
+        if rotation:
+            verts = _rotate_points(verts, x, y, rotation)
+        return verts
+
+    if sym.type == "user_defined":
+        return None
+
+    # Donut types, ellipse, etc. — approximate as outer bounding circle/rect
+    if sym.type in ("donut_r",):
+        od = sym.params["outer_diameter"] * scale
+        r = od / 2
+        angles = np.linspace(0, 2 * np.pi, num_circle_pts, endpoint=False)
+        return np.column_stack([x + r * np.cos(angles),
+                                y + r * np.sin(angles)])
+
+    if sym.type in ("donut_s", "donut_s_round", "donut_sr"):
+        od = sym.params["outer_size"] * scale
+        s = od / 2
+        corners = np.array([
+            [x - s, y - s], [x + s, y - s],
+            [x + s, y + s], [x - s, y + s],
+        ])
+        if mirror:
+            corners = _mirror_points(corners, x)
+        if rotation:
+            corners = _rotate_points(corners, x, y, rotation)
+        return corners
+
+    if sym.type in ("donut_rc", "donut_rc_round", "donut_o"):
+        ow = sym.params["outer_width"] * scale
+        oh = sym.params["outer_height"] * scale
+        corners = np.array([
+            [x - ow/2, y - oh/2], [x + ow/2, y - oh/2],
+            [x + ow/2, y + oh/2], [x - ow/2, y + oh/2],
+        ])
+        if mirror:
+            corners = _mirror_points(corners, x)
+        if rotation:
+            corners = _rotate_points(corners, x, y, rotation)
+        return corners
+
+    if sym.type == "ellipse":
+        w = sym.params["width"] * scale
+        h = sym.params["height"] * scale
+        angles = np.linspace(0, 2 * np.pi, num_circle_pts, endpoint=False)
+        pts = np.column_stack([x + w/2 * np.cos(angles),
+                               y + h/2 * np.sin(angles)])
+        if mirror:
+            pts = _mirror_points(pts, x)
+        if rotation:
+            pts = _rotate_points(pts, x, y, rotation)
+        return pts
+
+    return None
+
+
 def _get_pad_polygon_board(
     pin: Pin,
     comp: Component,
     is_bottom: bool = False,
     num_circle_pts: int = 32,
 ) -> np.ndarray | None:
-    """Return the pad outline as board-coordinate vertices (N, 2) array.
+    """Return the EDA pin outline as board-coordinate vertices (fallback).
 
-    Converts the first :class:`PinOutline` of *pin* into an (N, 2) array
-    of board-space vertices suitable for point-in-polygon testing.
+    Used only when no FID-resolved or spatially-matched copper pad feature
+    is available.  Converts the first :class:`PinOutline` of *pin* into
+    an (N, 2) array of board-space vertices.
 
-    Returns ``None`` if the pin has no outlines or the outline is
-    degenerate.
+    Returns ``None`` if the pin has no outlines or the outline is degenerate.
     """
     if not pin.outlines:
         return None
@@ -884,7 +1072,6 @@ def _get_pad_polygon_board(
     p = ol.params
 
     if ol.type in ("CR", "CT"):
-        # Circle: generate vertices around the circumference.
         xc = p.get("xc", 0.0)
         yc = p.get("yc", 0.0)
         r = p.get("radius", 0.0)
@@ -948,6 +1135,31 @@ def _point_in_polygon(px: float, py: float, verts: np.ndarray) -> bool:
     return inside
 
 
+def _resolved_pad_polygon(
+    rpf: "ResolvedPadFeature",
+    is_bottom: bool = False,
+) -> "np.ndarray | None":
+    """Convert a FID-resolved pad feature to board-coordinate polygon vertices.
+
+    Uses :func:`_symbol_to_polygon` with the pad record's board-space
+    position, rotation, mirror, and the symbol's name / units.
+
+    For bottom-layer pads the rotation is negated to match board-space
+    orientation (ODB++ stores bottom-layer rotations in mirrored view).
+    """
+    pad = rpf.pad
+    sym = rpf.symbol
+    pad_rot = -pad.rotation if is_bottom else pad.rotation
+    return _symbol_to_polygon(
+        sym.name, pad.x, pad.y,
+        rotation=pad_rot,
+        mirror=pad.mirror,
+        units=rpf.units,
+        unit_override=sym.unit_override,
+        resize_factor=pad.resize_factor,
+    )
+
+
 def count_vias_at_pad(
     comp: Component,
     pin_center_x: float,
@@ -957,16 +1169,18 @@ def count_vias_at_pad(
     tolerance: float = 0.05,
     toeprint: "Toeprint | None" = None,
     pin: "Pin | None" = None,
+    resolved_pads: "list | None" = None,
 ) -> int:
     """Count VIAs that fall within a pad's geometric boundary.
 
-    When *pin* is provided its outline geometry is used: the pad shape is
-    transformed to board coordinates and each VIA is tested for
-    containment inside the polygon.  A fast bounding-box pre-filter
-    avoids the full polygon test for distant VIAs.
+    Resolution priority (highest to lowest):
 
-    When *pin* has no usable outline the function falls back to a simple
-    centre-distance check using *tolerance*.
+      1. **FID-resolved pad** — when *resolved_pads* is provided, each
+         :class:`ResolvedPadFeature` is converted to a polygon via
+         :func:`_symbol_to_polygon` and vias are tested for containment.
+      2. **EDA pin outline** — when *pin* is provided, its outline is
+         transformed to board coordinates via :func:`_get_pad_polygon_board`.
+      3. **Centre-distance fallback** — simple radius check using *tolerance*.
 
     Args:
         comp: The component owning the pad.
@@ -977,14 +1191,33 @@ def count_vias_at_pad(
         tolerance: Distance fallback (mm) when no pad outline is available.
         toeprint: Optional toeprint with board-space (x, y) for the pad.
         pin: Optional Pin with outline geometry for precise containment.
+        resolved_pads: Optional list of ResolvedPadFeature for this pin.
     """
-    # Try geometry-based containment when pin outline is available.
+    # Priority 1: FID-resolved pad geometry (actual copper features).
+    if resolved_pads:
+        count = 0
+        for rpf in resolved_pads:
+            poly = _resolved_pad_polygon(rpf, is_bottom=is_bottom)
+            if poly is None:
+                continue
+            xmin, ymin = poly.min(axis=0)
+            xmax, ymax = poly.max(axis=0)
+            for vx, vy in via_positions:
+                if vx < xmin or vx > xmax or vy < ymin or vy > ymax:
+                    continue
+                if _point_in_polygon(vx, vy, poly):
+                    count += 1
+            if count > 0:
+                return count
+        # If all resolved pads gave user_defined symbols (poly=None),
+        # fall through to pin outline.
+
+    # Priority 2: EDA pin outline geometry.
     poly = None
     if pin is not None:
         poly = _get_pad_polygon_board(pin, comp, is_bottom=is_bottom)
 
     if poly is not None:
-        # Bounding-box pre-filter for performance.
         xmin, ymin = poly.min(axis=0)
         xmax, ymax = poly.max(axis=0)
         count = 0
@@ -995,7 +1228,7 @@ def count_vias_at_pad(
                 count += 1
         return count
 
-    # Fallback: simple centre-distance check.
+    # Priority 3: simple centre-distance check.
     if toeprint is not None:
         bx, by = toeprint.x, toeprint.y
     else:

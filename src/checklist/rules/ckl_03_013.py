@@ -12,9 +12,15 @@ from src.checklist.geometry_utils import (
     build_toeprint_lookup,
     build_via_position_set,
     count_vias_at_pad,
+    lookup_resolved_pads_for_pin,
 )
 from src.checklist.rule_base import ChecklistRule
 from src.models import RuleResult
+from src.visualizer.fid_lookup import (
+    build_fid_map,
+    resolve_fid_features,
+    _find_top_bottom_signal_layers,
+)
 
 
 @register_rule
@@ -37,6 +43,16 @@ class CKL03013(ChecklistRule):
             via_top = build_via_position_set(eda, layers_data, is_bottom=False)
             via_bot = build_via_position_set(eda, layers_data, is_bottom=True)
 
+        # Build FID-resolved pad lookup for actual copper pad geometry
+        fid_resolved: dict = {}
+        top_sig_name, bot_sig_name = None, None
+        if eda and layers_data:
+            fid_map = build_fid_map(eda)
+            fid_resolved = resolve_fid_features(
+                fid_map, eda.layer_names, layers_data)
+            top_sig_name, bot_sig_name = _find_top_bottom_signal_layers(
+                layers_data)
+
         columns = ["comp", "cmp_layer", "pad", "via", "status"]
         rows: list[dict] = []
 
@@ -45,6 +61,7 @@ class CKL03013(ChecklistRule):
             (components_bot, "Bottom", True),
         ]:
             via_positions = via_bot if is_bottom else via_top
+            sig_name = bot_sig_name if is_bottom else top_sig_name
             mics = find_mics(comps)
 
             for mic in mics:
@@ -56,10 +73,15 @@ class CKL03013(ChecklistRule):
 
                 for pin_idx, pin in enumerate(pkg.pins):
                     tp = toep_by_pin.get(pin_idx)
+                    rpads = lookup_resolved_pads_for_pin(
+                        fid_resolved, mic, is_bottom,
+                        pin_idx, signal_layer_name=sig_name,
+                    )
                     via_count = count_vias_at_pad(
                         mic, pin.center.x, pin.center.y,
                         via_positions, is_bottom=is_bottom,
                         toeprint=tp, pin=pin,
+                        resolved_pads=rpads,
                     )
                     rows.append({
                         "comp": mic.comp_name,
