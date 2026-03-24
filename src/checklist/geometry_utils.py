@@ -22,7 +22,7 @@ from typing import Optional, Sequence
 
 import numpy as np
 
-from src.models import BBox, Component, EdaData, Package, PinOutline
+from src.models import BBox, Component, EdaData, Package, Pin, PinOutline
 from src.visualizer.component_overlay import (
     transform_point,
     transform_pts,
@@ -699,92 +699,34 @@ def components_in_clearance_zone(
 # 10. VIA-on-Pad Detection
 # ---------------------------------------------------------------------------
 
-def _build_via_positions_by_drill(
-    layers_data: dict,
-) -> set[tuple[float, float]]:
-    """Return VIA (x, y) positions from drill layers.
-
-    Drill layers are the most authoritative source of via positions because
-    every via requires a physical drill hole.  Drill layers whose matrix
-    ``start_name`` / ``end_name`` span the top or bottom signal layer are
-    selected, and all PadRecord positions within them are collected.
-
-    When ``start_name`` / ``end_name`` are not available the function falls
-    back to including pads from **all** DRILL-type layers.
-    """
-    from src.models import PadRecord
-    from src.visualizer.fid_lookup import _find_top_bottom_signal_layers
-
-    top_name, bot_name = _find_top_bottom_signal_layers(layers_data)
-
-    # Collect DRILL layers and determine which surface(s) they reach.
-    drill_layers: list[str] = []
-    for layer_name, (lf, ml) in layers_data.items():
-        if ml.type != "DRILL":
-            continue
-        start = ml.start_name.lower() if ml.start_name else ""
-        end = ml.end_name.lower() if ml.end_name else ""
-
-        if not start and not end:
-            # No span metadata — include unconditionally (safe fallback).
-            drill_layers.append(layer_name)
-            continue
-
-        # Include if the drill span touches a surface signal layer.
-        if top_name and (top_name.lower() in start or top_name.lower() in end):
-            drill_layers.append(layer_name)
-        elif bot_name and (bot_name.lower() in start or bot_name.lower() in end):
-            drill_layers.append(layer_name)
-
-    if not drill_layers:
-        return set()
-
-    positions: set[tuple[float, float]] = set()
-    for layer_name in drill_layers:
-        ld = layers_data.get(layer_name)
-        if ld is None:
-            continue
-        for feat in ld[0].features:
-            if isinstance(feat, PadRecord):
-                positions.add((round(feat.x, 4), round(feat.y, 4)))
-
-    return positions
-
-
 def _build_via_positions_by_attribute(
     layers_data: dict,
+    signal_layer_name: str,
 ) -> set[tuple[float, float]]:
-    """Return VIA (x, y) positions using the ``.pad_usage`` feature attribute.
+    """Return VIA (x, y) positions on *signal_layer_name* using ``.pad_usage``.
 
-    Scans only the top and bottom signal layers.  A pad whose ``.pad_usage``
-    raw value is 1 is considered a via (raw value 0 = toeprint).
+    A pad whose ``.pad_usage`` raw value is 1 is a via (0 = toeprint).
+    Only pads on the specified signal layer are returned.
     """
     from src.models import PadRecord
-    from src.visualizer.fid_lookup import _find_top_bottom_signal_layers
 
-    top_name, bot_name = _find_top_bottom_signal_layers(layers_data)
-    if top_name is None:
+    ld = layers_data.get(signal_layer_name)
+    if ld is None:
         return set()
 
-    target_names = {top_name, bot_name}
+    lf = ld[0]
+    via_text = lf.attr_texts.get(1)
     positions: set[tuple[float, float]] = set()
 
-    for layer_name in target_names:
-        ld = layers_data.get(layer_name)
-        if ld is None:
+    for feat in lf.features:
+        if not isinstance(feat, PadRecord):
             continue
-        lf = ld[0]
-        via_text = lf.attr_texts.get(1)
-
-        for feat in lf.features:
-            if not isinstance(feat, PadRecord):
-                continue
-            pu = feat.attributes.get(".pad_usage")
-            if pu is None:
-                continue
-            if pu != via_text and pu != "1":
-                continue
-            positions.add((round(feat.x, 4), round(feat.y, 4)))
+        pu = feat.attributes.get(".pad_usage")
+        if pu is None:
+            continue
+        if pu != via_text and pu != "1":
+            continue
+        positions.add((round(feat.x, 4), round(feat.y, 4)))
 
     return positions
 
@@ -792,10 +734,16 @@ def _build_via_positions_by_attribute(
 def _build_via_positions_by_subnet(
     eda_data: EdaData,
     layers_data: dict,
+    signal_layer_name: str,
 ) -> set[tuple[float, float]]:
-    """Return VIA (x, y) positions via EDA subnet FID resolution (fallback)."""
+    """Return VIA (x, y) positions on *signal_layer_name* via EDA subnet FIDs.
+
+    Only FID references that resolve to a feature on the specified signal
+    layer are included.
+    """
     from src.models import PadRecord
 
+    # Map EDA layer indices to layer names.
     layer_name_map: dict[int, str] = {}
     for idx, name in enumerate(eda_data.layer_names):
         layer_name_map[idx] = name
@@ -810,7 +758,7 @@ def _build_via_positions_by_subnet(
                 if fid.type != "C":
                     continue
                 layer_name = layer_name_map.get(fid.layer_idx)
-                if layer_name is None:
+                if layer_name != signal_layer_name:
                     continue
                 ld = layers_data.get(layer_name)
                 if ld is None:
@@ -829,34 +777,43 @@ def _build_via_positions_by_subnet(
 def build_via_position_set(
     eda_data: EdaData,
     layers_data: dict,
+    is_bottom: bool = False,
 ) -> set[tuple[float, float]]:
-    """Return deduplicated (x, y) board positions of all VIAs.
+    """Return deduplicated (x, y) board positions of VIAs on one surface.
 
-    Collects via positions from multiple independent sources and returns
-    their union to maximise coverage:
+    Collects via positions for either the **top** or **bottom** signal
+    layer from two independent sources and returns their union:
 
-      1. **Drill layers** — the most authoritative source; every via has a
-         physical drill hole.  Only drill layers whose span touches a
-         surface signal layer are included.
-      2. **``.pad_usage`` attribute** — via pads on the top/bottom signal
-         layers identified by the ``.pad_usage`` feature attribute.
-      3. **EDA VIA subnet FIDs** — used as a last-resort fallback when
-         neither drill nor attribute data yields any results.
+      1. **``.pad_usage`` attribute** — via pads on the target signal layer
+         identified by the ``.pad_usage`` feature attribute (most reliable).
+      2. **EDA VIA subnet FIDs** — resolves via positions from EDA net
+         connectivity data, filtered to the target signal layer.
 
-    Positions are rounded to 4 decimal places (0.1 µm in mm) for
-    deduplication.
+    Both sources are always unioned to avoid false negatives.  Positions
+    are rounded to 4 decimal places (0.1 µm in mm) for deduplication.
+
+    Args:
+        eda_data: Parsed EDA connectivity data.
+        layers_data: Dict mapping layer names to (LayerFeatures, MatrixLayer).
+        is_bottom: When True, collect vias for the bottom signal layer;
+                   otherwise for the top signal layer.
     """
+    from src.visualizer.fid_lookup import _find_top_bottom_signal_layers
+
+    top_name, bot_name = _find_top_bottom_signal_layers(layers_data)
+    target_name = bot_name if is_bottom else top_name
+    if target_name is None:
+        return set()
+
     positions: set[tuple[float, float]] = set()
 
-    # Source 1: Drill layers (most reliable).
-    positions.update(_build_via_positions_by_drill(layers_data))
+    # Source 1: .pad_usage attribute on the target signal layer.
+    positions.update(
+        _build_via_positions_by_attribute(layers_data, target_name))
 
-    # Source 2: .pad_usage attribute on surface signal layers.
-    positions.update(_build_via_positions_by_attribute(layers_data))
-
-    # Source 3: EDA subnet FID resolution (fallback when above yield nothing).
-    if not positions:
-        positions = _build_via_positions_by_subnet(eda_data, layers_data)
+    # Source 2: EDA subnet FID resolution on the target signal layer.
+    positions.update(
+        _build_via_positions_by_subnet(eda_data, layers_data, target_name))
 
     return positions
 
@@ -906,6 +863,91 @@ def build_toeprint_lookup(
     return result
 
 
+def _get_pad_polygon_board(
+    pin: Pin,
+    comp: Component,
+    is_bottom: bool = False,
+    num_circle_pts: int = 32,
+) -> np.ndarray | None:
+    """Return the pad outline as board-coordinate vertices (N, 2) array.
+
+    Converts the first :class:`PinOutline` of *pin* into an (N, 2) array
+    of board-space vertices suitable for point-in-polygon testing.
+
+    Returns ``None`` if the pin has no outlines or the outline is
+    degenerate.
+    """
+    if not pin.outlines:
+        return None
+
+    ol = pin.outlines[0]
+    p = ol.params
+
+    if ol.type in ("CR", "CT"):
+        # Circle: generate vertices around the circumference.
+        xc = p.get("xc", 0.0)
+        yc = p.get("yc", 0.0)
+        r = p.get("radius", 0.0)
+        if r <= 0:
+            return None
+        angles = np.linspace(0, 2 * np.pi, num_circle_pts, endpoint=False)
+        local_pts = np.column_stack([
+            xc + r * np.cos(angles),
+            yc + r * np.sin(angles),
+        ])
+    elif ol.type == "RC":
+        llx = p.get("llx", 0.0)
+        lly = p.get("lly", 0.0)
+        w = p.get("width", 0.0)
+        h = p.get("height", 0.0)
+        if w <= 0 or h <= 0:
+            return None
+        local_pts = np.array([
+            [llx,     lly],
+            [llx + w, lly],
+            [llx + w, lly + h],
+            [llx,     lly + h],
+        ])
+    elif ol.type == "SQ":
+        xc = p.get("xc", 0.0)
+        yc = p.get("yc", 0.0)
+        hs = p.get("half_side", 0.0)
+        if hs <= 0:
+            return None
+        local_pts = np.array([
+            [xc - hs, yc - hs],
+            [xc + hs, yc - hs],
+            [xc + hs, yc + hs],
+            [xc - hs, yc + hs],
+        ])
+    elif ol.type == "CONTOUR" and ol.contour is not None:
+        local_pts = contour_to_vertices(ol.contour)
+        if len(local_pts) < 3:
+            return None
+    else:
+        return None
+
+    return transform_pts(local_pts, comp, is_bottom=is_bottom)
+
+
+def _point_in_polygon(px: float, py: float, verts: np.ndarray) -> bool:
+    """Ray-casting point-in-polygon test.
+
+    *verts* is an (N, 2) array of polygon vertices (closed automatically).
+    """
+    n = len(verts)
+    inside = False
+    j = n - 1
+    for i in range(n):
+        xi, yi = verts[i]
+        xj, yj = verts[j]
+        if ((yi > py) != (yj > py)) and \
+           (px < (xj - xi) * (py - yi) / (yj - yi) + xi):
+            inside = not inside
+        j = i
+    return inside
+
+
 def count_vias_at_pad(
     comp: Component,
     pin_center_x: float,
@@ -914,13 +956,17 @@ def count_vias_at_pad(
     is_bottom: bool = False,
     tolerance: float = 0.05,
     toeprint: "Toeprint | None" = None,
+    pin: "Pin | None" = None,
 ) -> int:
-    """Count VIAs located at a component pad position.
+    """Count VIAs that fall within a pad's geometric boundary.
 
-    When a *toeprint* is provided its board coordinates are used directly
-    (same coordinate source as the VIA positions extracted from layer
-    features).  Otherwise falls back to transforming the EDA pin centre
-    from package-local coordinates to board coordinates.
+    When *pin* is provided its outline geometry is used: the pad shape is
+    transformed to board coordinates and each VIA is tested for
+    containment inside the polygon.  A fast bounding-box pre-filter
+    avoids the full polygon test for distant VIAs.
+
+    When *pin* has no usable outline the function falls back to a simple
+    centre-distance check using *tolerance*.
 
     Args:
         comp: The component owning the pad.
@@ -928,9 +974,28 @@ def count_vias_at_pad(
         pin_center_y: Pin centre Y in package-local coords (fallback).
         via_positions: Set of (x, y) VIA board positions.
         is_bottom: Whether the component is on the bottom layer.
-        tolerance: Maximum distance (mm) to consider a VIA on the pad.
+        tolerance: Distance fallback (mm) when no pad outline is available.
         toeprint: Optional toeprint with board-space (x, y) for the pad.
+        pin: Optional Pin with outline geometry for precise containment.
     """
+    # Try geometry-based containment when pin outline is available.
+    poly = None
+    if pin is not None:
+        poly = _get_pad_polygon_board(pin, comp, is_bottom=is_bottom)
+
+    if poly is not None:
+        # Bounding-box pre-filter for performance.
+        xmin, ymin = poly.min(axis=0)
+        xmax, ymax = poly.max(axis=0)
+        count = 0
+        for vx, vy in via_positions:
+            if vx < xmin or vx > xmax or vy < ymin or vy > ymax:
+                continue
+            if _point_in_polygon(vx, vy, poly):
+                count += 1
+        return count
+
+    # Fallback: simple centre-distance check.
     if toeprint is not None:
         bx, by = toeprint.x, toeprint.y
     else:

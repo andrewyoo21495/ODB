@@ -30,10 +30,12 @@ class CKL03013(ChecklistRule):
         layers_data = job_data.get("layers_data", {})
         packages = eda.packages if eda else []
 
-        # Build VIA position set once
-        via_positions: set[tuple[float, float]] = set()
+        # Build VIA position sets per layer
+        via_top: set[tuple[float, float]] = set()
+        via_bot: set[tuple[float, float]] = set()
         if eda and layers_data:
-            via_positions = build_via_position_set(eda, layers_data)
+            via_top = build_via_position_set(eda, layers_data, is_bottom=False)
+            via_bot = build_via_position_set(eda, layers_data, is_bottom=True)
 
         columns = ["comp", "cmp_layer", "pad", "via", "status"]
         rows: list[dict] = []
@@ -42,6 +44,7 @@ class CKL03013(ChecklistRule):
             (components_top, "Top", False),
             (components_bot, "Bottom", True),
         ]:
+            via_positions = via_bot if is_bottom else via_top
             mics = find_mics(comps)
 
             for mic in mics:
@@ -56,7 +59,7 @@ class CKL03013(ChecklistRule):
                     via_count = count_vias_at_pad(
                         mic, pin.center.x, pin.center.y,
                         via_positions, is_bottom=is_bottom,
-                        toeprint=tp,
+                        toeprint=tp, pin=pin,
                     )
                     rows.append({
                         "comp": mic.comp_name,

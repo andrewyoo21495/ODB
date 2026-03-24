@@ -34,10 +34,12 @@ class CKL03004(ChecklistRule):
 
         hall_parts = get_managed_part_names("hall_ic")
 
-        # Build VIA position set once
-        via_positions: set[tuple[float, float]] = set()
+        # Build VIA position sets per layer
+        via_top: set[tuple[float, float]] = set()
+        via_bot: set[tuple[float, float]] = set()
         if eda and layers_data:
-            via_positions = build_via_position_set(eda, layers_data)
+            via_top = build_via_position_set(eda, layers_data, is_bottom=False)
+            via_bot = build_via_position_set(eda, layers_data, is_bottom=True)
 
         columns = ["comp", "cmp_layer", "pad", "via", "status"]
         rows: list[dict] = []
@@ -46,6 +48,7 @@ class CKL03004(ChecklistRule):
             (components_top, "Top", False),
             (components_bot, "Bottom", True),
         ]:
+            via_positions = via_bot if is_bottom else via_top
             hall_ics = [c for c in comps if (c.part_name or "") in hall_parts]
 
             for comp in hall_ics:
@@ -60,7 +63,7 @@ class CKL03004(ChecklistRule):
                     via_count = count_vias_at_pad(
                         comp, pin.center.x, pin.center.y,
                         via_positions, is_bottom=is_bottom,
-                        toeprint=tp,
+                        toeprint=tp, pin=pin,
                     )
                     rows.append({
                         "comp": comp.comp_name,
