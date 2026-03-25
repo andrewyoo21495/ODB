@@ -31,7 +31,8 @@ from src.visualizer.symbol_renderer import contour_to_vertices
 
 try:
     from shapely.geometry import (
-        MultiPoint, Point as ShapelyPoint, Polygon as ShapelyPolygon,
+        MultiPoint, MultiPolygon as ShapelyMultiPolygon,
+        Point as ShapelyPoint, Polygon as ShapelyPolygon,
         LineString,
     )
     from shapely.ops import unary_union
@@ -1242,3 +1243,82 @@ def count_vias_at_pad(
         if dx * dx + dy * dy <= tol_sq:
             count += 1
     return count
+
+
+# ---------------------------------------------------------------------------
+# 14. Bending-Vulnerable Area Detection
+# ---------------------------------------------------------------------------
+
+def find_bending_vulnerable_areas(
+    board_polygon,
+    width_threshold: float = 8.0,
+    protrusion_depth: float = 2.0,
+) -> list:
+    """Identify bending-vulnerable areas on the PCB.
+
+    A bending-vulnerable area is a thin protruding region of the board where:
+    - the local width is ≤ *width_threshold* mm, **and**
+    - the protrusion extends ≥ *protrusion_depth* mm from the main body.
+
+    Uses morphological opening (erosion + dilation) to separate thin
+    protrusions from the bulk board shape.
+
+    Parameters
+    ----------
+    board_polygon : shapely Polygon
+        The PCB outline polygon (in mm).
+    width_threshold : float
+        Maximum width (mm) to be considered narrow.  Default 8.0.
+    protrusion_depth : float
+        Minimum protrusion depth (mm) to qualify.  Default 2.0.
+
+    Returns
+    -------
+    list[shapely Polygon]
+        Polygons representing each bending-vulnerable region.
+        Empty list if none are found or shapely is unavailable.
+    """
+    if not _HAS_SHAPELY or board_polygon is None:
+        return []
+
+    half_w = width_threshold / 2.0
+
+    # Step 1 – morphological opening: removes features narrower than the
+    #          width threshold while preserving the main body shape.
+    eroded = board_polygon.buffer(-half_w)
+    if eroded.is_empty:
+        # The entire board is narrower than the threshold.
+        return [board_polygon]
+
+    opened = eroded.buffer(half_w)
+
+    # Step 2 – the difference is the set of thin protruding regions.
+    protrusions = board_polygon.difference(opened)
+    if protrusions.is_empty:
+        return []
+
+    # Decompose into individual polygons.
+    if isinstance(protrusions, ShapelyMultiPolygon):
+        parts = list(protrusions.geoms)
+    elif isinstance(protrusions, ShapelyPolygon):
+        parts = [protrusions]
+    else:
+        # GeometryCollection or unexpected type – extract polygons.
+        parts = [g for g in protrusions.geoms
+                 if isinstance(g, ShapelyPolygon)]
+
+    # Step 3 – filter by protrusion depth.
+    #   For each candidate polygon, measure the maximum distance from its
+    #   boundary points to the opened (main body) polygon.  Only keep
+    #   regions that protrude at least *protrusion_depth*.
+    vulnerable: list = []
+    for part in parts:
+        max_dist = 0.0
+        for coord in part.exterior.coords:
+            d = ShapelyPoint(coord).distance(opened)
+            if d > max_dist:
+                max_dist = d
+        if max_dist >= protrusion_depth:
+            vulnerable.append(part)
+
+    return vulnerable
