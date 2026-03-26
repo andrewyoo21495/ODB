@@ -483,6 +483,85 @@ def find_pad_overlapping_components(
 
 
 # ---------------------------------------------------------------------------
+# 7b. Empty-Centre Pad Layout Detection
+# ---------------------------------------------------------------------------
+
+def has_empty_center(comp: Component, packages: list[Package]) -> bool:
+    """Return True if the IC's internal pad grid has no pads in the interior.
+
+    Algorithm:
+      1. Collect all pin centre positions (package-local coordinates).
+      2. Detect the grid pitch from the median spacing in X and Y.
+      3. Shrink the bounding box inward by ``2 * pitch`` on each side.
+      4. If **zero** pins fall inside this interior box → empty centre.
+
+    Returns False when the package has fewer than 9 pins (too few to form
+    a meaningful interior) or when pitch cannot be determined.
+    """
+    if comp.pkg_ref < 0 or comp.pkg_ref >= len(packages):
+        return False
+
+    pkg = packages[comp.pkg_ref]
+    if len(pkg.pins) < 9:
+        return False
+
+    # Gather pin centres in package-local coordinates
+    xs = [pin.center.x for pin in pkg.pins]
+    ys = [pin.center.y for pin in pkg.pins]
+
+    # Detect grid pitch (median of unique sorted spacings)
+    pitch_x = _median_spacing(xs)
+    pitch_y = _median_spacing(ys)
+    if pitch_x <= 0 or pitch_y <= 0:
+        return False
+
+    # Bounding box of all pin positions
+    min_x, max_x = min(xs), max(xs)
+    min_y, max_y = min(ys), max(ys)
+
+    # Interior region: shrink by 2 * pitch on each side
+    # Use a small tolerance (half pitch) to handle floating-point drift
+    # at grid boundaries.
+    eps = 0.25 * min(pitch_x, pitch_y)
+    margin_x = 2.0 * pitch_x - eps
+    margin_y = 2.0 * pitch_y - eps
+    inner_min_x = min_x + margin_x
+    inner_max_x = max_x - margin_x
+    inner_min_y = min_y + margin_y
+    inner_max_y = max_y - margin_y
+
+    # If the interior region is degenerate, no meaningful void
+    if inner_min_x >= inner_max_x or inner_min_y >= inner_max_y:
+        return False
+
+    # Count pins inside the interior region
+    for px, py in zip(xs, ys):
+        if inner_min_x <= px <= inner_max_x and inner_min_y <= py <= inner_max_y:
+            return False  # found a pad in the interior → not empty
+
+    return True
+
+
+def _median_spacing(values: list[float]) -> float:
+    """Return the median gap between consecutive sorted unique values."""
+    unique = sorted(set(values))
+    if len(unique) < 2:
+        return 0.0
+    gaps = [unique[i + 1] - unique[i] for i in range(len(unique) - 1)]
+    gaps.sort()
+    return gaps[len(gaps) // 2]
+
+
+def find_empty_center_ics(
+    components: Sequence[Component],
+    packages: list[Package],
+) -> list[Component]:
+    """Return IC components whose pad layout has an empty interior."""
+    from src.checklist.component_classifier import find_ics
+    return [c for c in find_ics(components) if has_empty_center(c, packages)]
+
+
+# ---------------------------------------------------------------------------
 # 8. Component Size Utilities
 # ---------------------------------------------------------------------------
 

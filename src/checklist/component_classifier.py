@@ -12,7 +12,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Sequence
 
-from src.models import Component
+from src.models import Component, Package
 
 
 class ComponentCategory(str, Enum):
@@ -168,6 +168,49 @@ def find_mics(components: Sequence[Component]) -> list[Component]:
 def find_rf_components(components: Sequence[Component]) -> list[Component]:
     """Return RF Receptacle components: comp_name starts with 'RF'."""
     return [c for c in components if (c.comp_name or "").startswith("RF")]
+
+
+# ---------------------------------------------------------------------------
+# BGA detection
+# ---------------------------------------------------------------------------
+
+def is_bga_type(comp: Component, packages: list[Package]) -> bool:
+    """Return True if *comp* has circular (BGA-style) pads.
+
+    Inspects the EDA package pin outlines.  If >50% of pins that have
+    outline data use a circular shape (``CR`` or ``CT``), the component
+    is classified as BGA.  Returns False when no outline data is available.
+    """
+    if comp.pkg_ref < 0 or comp.pkg_ref >= len(packages):
+        return False
+
+    pkg = packages[comp.pkg_ref]
+    if not pkg.pins:
+        return False
+
+    circular = 0
+    non_circular = 0
+    for pin in pkg.pins:
+        for outline in pin.outlines:
+            if outline.type in ("CR", "CT"):
+                circular += 1
+            elif outline.type in ("RC", "SQ", "CONTOUR"):
+                non_circular += 1
+            break  # only consider the first outline per pin
+
+    total = circular + non_circular
+    if total == 0:
+        return False
+
+    return circular / total > 0.5
+
+
+def find_bga_ics(
+    components: Sequence[Component],
+    packages: list[Package],
+) -> list[Component]:
+    """Return IC components that are BGA type (circular pads)."""
+    return [c for c in find_ics(components) if is_bga_type(c, packages)]
 
 
 def find_filters(
