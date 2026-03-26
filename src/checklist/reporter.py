@@ -112,8 +112,8 @@ def _create_summary_sheet(wb: Workbook, results: list[RuleResult], job_name: str
         cell.border = _THIN_BORDER
         cell.alignment = Alignment(horizontal="center")
 
-    # Data rows
-    for row_idx, result in enumerate(results, 8):
+    # Data rows (sorted by rule ID for consistent ordering)
+    for row_idx, result in enumerate(sorted(results, key=_rule_sort_key), 8):
         ws.cell(row=row_idx, column=1, value=result.rule_id).border = _THIN_BORDER
         ws.cell(row=row_idx, column=2, value=result.category).border = _THIN_BORDER
         ws.cell(row=row_idx, column=3, value=result.description).border = _THIN_BORDER
