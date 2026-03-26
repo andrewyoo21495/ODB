@@ -35,6 +35,7 @@ from src.checklist.geometry_utils import (
 from src.models import Component, Package
 
 _CLEARANCE_MM = 0.65
+_EXCLUDED_PREFIXES = ("ANT", "CN", "TP")
 
 
 # ---------------------------------------------------------------------------
@@ -276,7 +277,10 @@ def main():
             comps, board_poly, inset_poly, packages,
         )
 
-        fail_list = [(c, d) for c, d in violations if d < _CLEARANCE_MM]
+        fail_list = [
+            (c, d) for c, d in violations
+            if d < _CLEARANCE_MM and not c.comp_name.startswith(_EXCLUDED_PREFIXES)
+        ]
         print(f"  Violations (pad in clearance zone): {len(fail_list)}")
         for comp, dist in fail_list:
             print(f"    {comp.comp_name:15s}  part={comp.part_name or '?':20s}  "

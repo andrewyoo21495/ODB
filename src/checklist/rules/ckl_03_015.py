@@ -23,6 +23,7 @@ from src.models import RuleResult
 
 
 _CLEARANCE_MM = 0.65
+_EXCLUDED_PREFIXES = ("ANT", "CN", "TP")
 
 
 @register_rule
@@ -72,6 +73,8 @@ class CKL03015(ChecklistRule):
                 comps, board_poly, inset_poly, packages
             )
             for comp, dist in violations:
+                if comp.comp_name.startswith(_EXCLUDED_PREFIXES):
+                    continue
                 status = "PASS" if dist >= _CLEARANCE_MM else "FAIL"
                 rows.append({
                     "comp": comp.comp_name,
