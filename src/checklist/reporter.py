@@ -213,6 +213,14 @@ def _create_rule_sheet(wb: Workbook, result: RuleResult):
 
     if isinstance(columns, list) and isinstance(rows, list):
         _write_tabular_details(ws, columns, rows, start_row=7)
+
+        # Optional second table (e.g. signal-layer results for CKL-03-015)
+        sig_columns = result.details.get("signal_columns")
+        sig_rows = result.details.get("signal_rows")
+        if isinstance(sig_columns, list) and isinstance(sig_rows, list) and sig_rows:
+            gap_row = 7 + len(rows) + 2  # +1 header, +1 blank
+            _write_tabular_details(ws, sig_columns, sig_rows, start_row=gap_row)
+
         _auto_fit_columns(ws)
         return
 

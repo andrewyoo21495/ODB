@@ -775,6 +775,220 @@ def components_in_clearance_zone(
     return results
 
 
+def components_with_pads_in_clearance_zone(
+    components: Sequence[Component],
+    board_poly,
+    inset_poly,
+    packages: list[Package] | None = None,
+) -> list[tuple[Component, float]]:
+    """Return components whose **pad geometry** intersects the clearance zone.
+
+    Unlike :func:`components_in_clearance_zone` (which tests toeprint centre
+    points), this function builds the actual pad polygons via
+    ``_get_pad_union`` and checks whether any pad intersects the area between
+    the board outline and the inset boundary.  Component outline overlap is
+    acceptable — only pad-level intrusion is flagged.
+
+    Returns ``[(component, min_pad_distance_to_outline), ...]``.
+    """
+    if not _HAS_SHAPELY or board_poly is None or inset_poly is None:
+        return []
+
+    outline = board_poly.boundary
+    clearance_zone = board_poly.difference(inset_poly)
+    if clearance_zone.is_empty:
+        return []
+
+    results: list[tuple[Component, float]] = []
+
+    for comp in components:
+        pad_geom = None
+        if packages is not None:
+            pad_geom = _get_pad_union(comp, packages)
+
+        if pad_geom is None:
+            # Fallback: toeprint centre points (same as original logic)
+            if comp.toeprints:
+                for tp in comp.toeprints:
+                    pt = ShapelyPoint(tp.x, tp.y)
+                    if clearance_zone.contains(pt) or not board_poly.contains(pt):
+                        results.append((comp, outline.distance(pt)))
+                        break
+            else:
+                pt = ShapelyPoint(comp.x, comp.y)
+                if clearance_zone.contains(pt) or not board_poly.contains(pt):
+                    results.append((comp, outline.distance(pt)))
+            continue
+
+        # Check if any pad geometry intersects the clearance zone or
+        # extends outside the board.
+        pad_in_zone = pad_geom.intersects(clearance_zone)
+        pad_outside = not board_poly.contains(pad_geom)
+
+        if pad_in_zone or pad_outside:
+            dist = outline.distance(pad_geom)
+            results.append((comp, dist))
+
+    return results
+
+
+def signal_features_in_clearance_zone(
+    layers_data: dict,
+    board_poly,
+    inset_poly,
+    eda_data: EdaData | None = None,
+) -> list[dict]:
+    """Return signal-layer features whose geometry enters the clearance zone.
+
+    Iterates over every SIGNAL layer in *layers_data* and checks each copper
+    feature (pad / line / arc) against the clearance zone (area between the
+    board outline and the inset boundary).
+
+    When *eda_data* is provided the function resolves the originating **net
+    name** for each violating feature via the EDA subnet → feature-id mapping.
+
+    Returns a list of dicts::
+
+        {"layer_name": str, "net_name": str, "feature_type": str,
+         "distance": str, "status": str}
+    """
+    from src.models import ArcRecord, LineRecord, PadRecord
+    from src.parsers.symbol_resolver import resolve_symbol
+    from src.visualizer.fid_lookup import build_layer_name_map
+
+    if not _HAS_SHAPELY or board_poly is None or inset_poly is None:
+        return []
+
+    outline = board_poly.boundary
+    clearance_zone = board_poly.difference(inset_poly)
+    if clearance_zone.is_empty:
+        return []
+
+    # --- build reverse map: (layer_name, feature_index) -> net_name --------
+    net_lookup: dict[tuple[str, int], str] = {}
+    if eda_data is not None:
+        layer_name_map = build_layer_name_map(eda_data.layer_names)
+        for net in eda_data.nets:
+            for subnet in net.subnets:
+                for fid in subnet.feature_ids:
+                    if fid.type != "C":
+                        continue
+                    lname = layer_name_map.get(fid.layer_idx)
+                    if lname is not None:
+                        net_lookup[(lname, fid.feature_idx)] = net.name
+
+    # --- collect signal layers ---------------------------------------------
+    signal_layers: list[tuple[str, object, object]] = []
+    for name, (lf, ml) in layers_data.items():
+        if ml.type == "SIGNAL":
+            signal_layers.append((name, lf, ml))
+
+    results: list[dict] = []
+    # Track which nets have already been reported per layer to avoid
+    # flooding the output with thousands of individual feature hits.
+    seen: set[tuple[str, str]] = set()
+
+    for layer_name, lf, _ml in signal_layers:
+        sym_lookup = {s.index: s for s in lf.symbols}
+
+        for feat_idx, feat in enumerate(lf.features):
+            geom = _feature_to_geometry(feat, sym_lookup)
+            if geom is None:
+                continue
+
+            in_zone = geom.intersects(clearance_zone)
+            outside = not board_poly.contains(geom)
+            if not (in_zone or outside):
+                continue
+
+            net_name = net_lookup.get((layer_name, feat_idx), "")
+
+            key = (layer_name, net_name)
+            if key in seen:
+                continue
+            seen.add(key)
+
+            dist = outline.distance(geom)
+            feat_type = type(feat).__name__.replace("Record", "")
+            results.append({
+                "layer_name": layer_name,
+                "net_name": net_name,
+                "feature_type": feat_type,
+                "distance": f"{dist:.3f}",
+                "status": "FAIL",
+            })
+
+    return results
+
+
+def _feature_to_geometry(feat, sym_lookup: dict):
+    """Convert a layer feature record to a Shapely geometry.
+
+    Returns a buffered point for pads, a buffered line for lines/arcs, or
+    None if conversion is not possible.
+    """
+    from src.models import ArcRecord, LineRecord, PadRecord
+    from src.parsers.symbol_resolver import resolve_symbol
+
+    if not _HAS_SHAPELY:
+        return None
+
+    if isinstance(feat, PadRecord):
+        sym_ref = sym_lookup.get(feat.symbol_idx)
+        radius = 0.05  # fallback
+        if sym_ref is not None:
+            ss = resolve_symbol(sym_ref.name)
+            radius = max(ss.width, ss.height) / 2.0 if ss.width > 0 else 0.05
+        return ShapelyPoint(feat.x, feat.y).buffer(radius)
+
+    if isinstance(feat, LineRecord):
+        sym_ref = sym_lookup.get(feat.symbol_idx)
+        half_w = 0.0
+        if sym_ref is not None:
+            ss = resolve_symbol(sym_ref.name)
+            half_w = ss.width / 2.0 if ss.width > 0 else 0.0
+        line = LineString([(feat.xs, feat.ys), (feat.xe, feat.ye)])
+        return line.buffer(half_w) if half_w > 0 else line
+
+    if isinstance(feat, ArcRecord):
+        sym_ref = sym_lookup.get(feat.symbol_idx)
+        half_w = 0.0
+        if sym_ref is not None:
+            ss = resolve_symbol(sym_ref.name)
+            half_w = ss.width / 2.0 if ss.width > 0 else 0.0
+        # Approximate arc as a polyline for clearance purposes
+        pts = _arc_to_points(feat)
+        if len(pts) >= 2:
+            line = LineString(pts)
+            return line.buffer(half_w) if half_w > 0 else line
+
+    return None
+
+
+def _arc_to_points(feat, segments: int = 16) -> list[tuple[float, float]]:
+    """Approximate an arc feature as a list of (x, y) points."""
+    cx, cy = feat.xc, feat.yc
+    r = math.hypot(feat.xs - cx, feat.ys - cy)
+    if r < 1e-9:
+        return [(feat.xs, feat.ys), (feat.xe, feat.ye)]
+
+    start_angle = math.atan2(feat.ys - cy, feat.xs - cx)
+    end_angle = math.atan2(feat.ye - cy, feat.xe - cx)
+
+    if feat.clockwise:
+        if end_angle >= start_angle:
+            end_angle -= 2 * math.pi
+    else:
+        if end_angle <= start_angle:
+            end_angle += 2 * math.pi
+
+    pts: list[tuple[float, float]] = []
+    for i in range(segments + 1):
+        t = start_angle + (end_angle - start_angle) * i / segments
+        pts.append((cx + r * math.cos(t), cy + r * math.sin(t)))
+    return pts
+
+
 # ---------------------------------------------------------------------------
 # 10. VIA-on-Pad Detection
 # ---------------------------------------------------------------------------
