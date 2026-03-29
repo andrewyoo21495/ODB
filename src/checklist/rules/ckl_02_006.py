@@ -10,7 +10,7 @@ from src.checklist.component_classifier import find_capacitors, find_connectors
 from src.checklist.engine import register_rule
 from src.checklist.geometry_utils import (
     find_overlapping_components,
-    get_component_orientation,
+    get_pair_orientation,
     is_on_edge,
 )
 from src.checklist.reference_loader import get_managed_part_names
@@ -68,7 +68,7 @@ class CKL02006(ChecklistRule):
                 )
                 for cap in overlaps:
                     on_edge = is_on_edge(cap, conn, packages)
-                    orientation = get_component_orientation(cap, packages)
+                    orientation = get_pair_orientation(cap, conn, packages)
                     edge_str = "TRUE" if on_edge else "FALSE"
                     status = (
                         "PASS"

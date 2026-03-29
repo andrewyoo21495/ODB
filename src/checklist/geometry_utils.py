@@ -119,6 +119,87 @@ def get_component_orientation(comp: Component,
     return "Vertical"
 
 
+def get_major_axis_angle(comp: Component,
+                         packages: list[Package]) -> Optional[float]:
+    """Return the major-axis direction of *comp* as an angle in degrees [0, 180).
+
+    The major axis is the longer side of the component outline (or fallback
+    bounding box) in board coordinates.  Returns ``None`` when orientation
+    cannot be determined (missing geometry or near-square outline).
+    """
+    if comp.pkg_ref < 0 or comp.pkg_ref >= len(packages):
+        return None
+
+    pkg = packages[comp.pkg_ref]
+
+    # Primary: use the component outline polygon in board coordinates
+    outline_poly = get_component_outline(comp, pkg)
+    if outline_poly is not None:
+        # Use minimum rotated rectangle to find the true major axis
+        mrr = outline_poly.minimum_rotated_rectangle
+        coords = list(mrr.exterior.coords)  # 5 points (closed ring)
+        # Two edge vectors from the first vertex
+        edge_a = (coords[1][0] - coords[0][0], coords[1][1] - coords[0][1])
+        edge_b = (coords[2][0] - coords[1][0], coords[2][1] - coords[1][1])
+        len_a = math.hypot(*edge_a)
+        len_b = math.hypot(*edge_b)
+
+        # Near-square check (within 5 % tolerance)
+        if len_a > 0 and len_b > 0:
+            ratio = max(len_a, len_b) / min(len_a, len_b)
+            if ratio < 1.05:
+                return None  # Square — no dominant axis
+
+        major = edge_a if len_a >= len_b else edge_b
+        angle = math.degrees(math.atan2(major[1], major[0])) % 180.0
+        return angle
+
+    # Fallback: package bbox with rotation
+    if pkg.bbox is None:
+        return None
+
+    w = pkg.bbox.xmax - pkg.bbox.xmin
+    h = pkg.bbox.ymax - pkg.bbox.ymin
+
+    if w <= 0 and h <= 0:
+        return None
+
+    if w > 0 and h > 0:
+        ratio = max(w, h) / min(w, h)
+        if ratio < 1.05:
+            return None  # Square
+
+    local_angle = 0.0 if w >= h else 90.0
+    board_angle = (local_angle + comp.rotation) % 180.0
+    return board_angle
+
+
+def get_pair_orientation(comp_a: Component, comp_b: Component,
+                         packages: list[Package]) -> str:
+    """Determine alignment by comparing major axes of two component outlines.
+
+    Finds the major-axis direction of each component and checks whether they
+    are parallel (→ ``"Horizontal"``) or perpendicular (→ ``"Vertical"``).
+
+    Returns ``"Unknown"`` when either component's axis cannot be determined.
+    """
+    angle_a = get_major_axis_angle(comp_a, packages)
+    angle_b = get_major_axis_angle(comp_b, packages)
+
+    if angle_a is None or angle_b is None:
+        return "Unknown"
+
+    # Angle difference, normalised to [0, 90]
+    diff = abs(angle_a - angle_b) % 180.0
+    if diff > 90.0:
+        diff = 180.0 - diff
+
+    # 45° threshold: < 45° → parallel (Horizontal), >= 45° → perpendicular (Vertical)
+    if diff < 45.0:
+        return "Horizontal"
+    return "Vertical"
+
+
 def are_components_aligned(comp_a: Component, comp_b: Component,
                            packages: list[Package]) -> bool:
     """Return True if both components have the same orientation (both H or both V)."""

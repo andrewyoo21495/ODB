@@ -12,7 +12,7 @@ from src.checklist.engine import register_rule
 from src.checklist.geometry_utils import (
     filter_by_size,
     find_overlapping_components,
-    get_component_orientation,
+    get_pair_orientation,
     is_on_edge,
 )
 from src.checklist.reference_loader import get_managed_part_names, get_part_size_map
@@ -68,7 +68,7 @@ class CKL02008(ChecklistRule):
 
                 for ind, sz in filtered:
                     on_edge = is_on_edge(ind, conn, packages)
-                    orientation = get_component_orientation(ind, packages)
+                    orientation = get_pair_orientation(ind, conn, packages)
                     edge_str = "TRUE" if on_edge else "FALSE"
                     status = (
                         "PASS"
