@@ -894,12 +894,14 @@ def find_outline_crossing_components(
     candidates: Sequence[Component],
     packages: list[Package],
 ) -> list[tuple[Component, str]]:
-    """Return *candidates* whose footprint crosses *comp*'s outline boundary.
+    """Return *candidates* whose footprint overlaps *comp*'s outline polygon.
 
-    For each candidate that intersects the outline boundary of *comp*,
-    the function determines which boundary segment has the largest
-    intersection and returns the orientation of that segment
-    ("Horizontal" or "Vertical").
+    For each candidate that intersects the outline polygon of *comp*,
+    the function checks whether it crosses the outline boundary.  If it
+    does, the dominant crossed segment determines the required orientation
+    ("Horizontal" or "Vertical").  If the candidate is fully inside the
+    outline (no boundary crossing), the required orientation defaults to
+    "Horizontal".
 
     Returns:
         List of ``(candidate, required_orientation)`` tuples.
@@ -929,28 +931,29 @@ def find_outline_crossing_components(
         if fp is None:
             fp = ShapelyPoint(cand.x, cand.y).buffer(0.05)
 
-        if not fp.intersects(boundary):
+        # Check overlap with the outline polygon (not just boundary)
+        if not fp.intersects(outline):
             continue
 
-        # Find the dominant crossed segment
+        # Determine required orientation from crossed boundary segments
         best_orient: str | None = None
         best_length = -1.0
-        for seg_line, seg_cls in segments:
-            if not fp.intersects(seg_line):
-                continue
-            try:
-                ix = fp.intersection(seg_line)
-                ix_len = ix.length if not ix.is_empty else 0.0
-            except Exception:
-                ix_len = 0.0
-            if ix_len > best_length:
-                best_length = ix_len
-                best_orient = seg_cls
+        if fp.intersects(boundary):
+            for seg_line, seg_cls in segments:
+                if not fp.intersects(seg_line):
+                    continue
+                try:
+                    ix = fp.intersection(seg_line)
+                    ix_len = ix.length if not ix.is_empty else 0.0
+                except Exception:
+                    ix_len = 0.0
+                if ix_len > best_length:
+                    best_length = ix_len
+                    best_orient = seg_cls
 
         if best_orient is None or best_orient == "Diagonal":
-            # Fallback: if only diagonal segments are crossed, use the
-            # component's own bounding-box orientation as the requirement
-            # (effectively same as old behaviour).
+            # Component is fully inside the outline or only crosses
+            # diagonal segments — default to "Horizontal".
             best_orient = "Horizontal"
 
         result.append((cand, best_orient))
