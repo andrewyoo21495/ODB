@@ -75,19 +75,21 @@ def find_ics(components: Sequence[Component]) -> list[Component]:
     """Return IC components.
 
     Matches when comp_name starts with 'U' (excluding 'USB'), or
-    TYPE property is 'IC', or DEVICE_TYPE property is one of
-    'IC', 'Linear IC', 'Microprocessor IC', or 'Memory IC' (case-insensitive).
+    DEVICE_TYPE property is one of 'IC', 'Linear IC', 'Microprocessor IC',
+    or 'Memory IC' (case-insensitive).
+
+    When TYPE is 'IC' but DEVICE_TYPE indicates a non-IC component
+    (e.g. Capacitor, Resistor, Inductor, Connector, etc.), DEVICE_TYPE
+    takes precedence and the component is NOT treated as an IC.
     """
     _IC_DEVICE_TYPES = {"ic", "linear ic", "microprocessor ic", "memory ic"}
     result = []
     for c in components:
         name = c.comp_name or ""
         props = c.properties or {}
-        comp_type = props.get("TYPE", "").lower()
         device_type = props.get("DEVICE_TYPE", "").lower()
         if (
             (name.startswith("U") and not name.startswith("USB"))
-            or comp_type == "ic"
             or device_type in _IC_DEVICE_TYPES
         ):
             result.append(c)
