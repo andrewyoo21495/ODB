@@ -13,7 +13,7 @@ from src.checklist.component_classifier import (
 from src.checklist.engine import register_rule
 from src.checklist.geometry_utils import (
     filter_by_size,
-    find_overlapping_components,
+    find_pad_overlapping_components,
 )
 from src.checklist.reference_loader import get_managed_part_names, get_part_size_map
 from src.checklist.rule_base import ChecklistRule
@@ -64,7 +64,7 @@ class CKL02012(ChecklistRule):
 
             for ap in ap_comps:
                 # Find inductors overlapping opposite side of AP/Memory
-                overlapping_inds = find_overlapping_components(
+                overlapping_inds = find_pad_overlapping_components(
                     ap, opp_inductors, packages
                 )
                 # Filter to size >= 2012
@@ -76,7 +76,7 @@ class CKL02012(ChecklistRule):
                     # Check if a Shield Can also overlaps on the opposite
                     # side of this inductor (i.e. same side as the AP/Memory)
                     same_side_shield_cans = find_shield_cans(ap_layer_comps)
-                    sc_overlaps = find_overlapping_components(
+                    sc_overlaps = find_pad_overlapping_components(
                         ind, same_side_shield_cans, packages
                     )
 

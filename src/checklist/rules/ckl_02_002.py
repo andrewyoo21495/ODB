@@ -10,7 +10,7 @@ from __future__ import annotations
 from src.checklist.component_classifier import find_connectors
 from src.checklist.engine import register_rule
 from src.checklist.geometry_utils import (
-    find_overlapping_components,
+    find_pad_overlapping_components,
     get_pair_orientation,
     is_on_edge,
 )
@@ -56,7 +56,7 @@ class CKL02002(ChecklistRule):
                 continue
 
             for conn in connectors:
-                overlaps = find_overlapping_components(
+                overlaps = find_pad_overlapping_components(
                     conn, opp_managed_caps, packages
                 )
                 for cap in overlaps:

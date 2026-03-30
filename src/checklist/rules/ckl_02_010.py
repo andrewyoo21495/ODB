@@ -13,7 +13,7 @@ from src.checklist.component_classifier import (
 from src.checklist.engine import register_rule
 from src.checklist.geometry_utils import (
     filter_by_size,
-    find_overlapping_components,
+    find_pad_overlapping_components,
     get_component_orientation,
 )
 from src.checklist.reference_loader import get_part_size_map
@@ -60,7 +60,7 @@ class CKL02010(ChecklistRule):
                 continue
 
             for sim in sims:
-                overlaps = find_overlapping_components(
+                overlaps = find_pad_overlapping_components(
                     sim, opp_targets, packages
                 )
                 # Filter to size >= 2012

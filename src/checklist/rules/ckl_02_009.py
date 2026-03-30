@@ -11,7 +11,7 @@ from src.checklist.component_classifier import find_connectors, find_inductors
 from src.checklist.engine import register_rule
 from src.checklist.geometry_utils import (
     filter_by_size,
-    find_overlapping_components,
+    find_pad_overlapping_components,
     get_component_orientation,
     is_on_edge,
 )
@@ -60,7 +60,7 @@ class CKL02009(ChecklistRule):
                 continue
 
             for conn in connectors:
-                overlaps = find_overlapping_components(
+                overlaps = find_pad_overlapping_components(
                     conn, opp_general_ind, packages
                 )
                 # Filter to size >= 2012

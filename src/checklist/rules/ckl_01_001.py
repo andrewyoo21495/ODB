@@ -81,14 +81,6 @@ class CKL01001(ChecklistRule):
                             "opp_type": _opp_type(ovl),
                             "status": "PASS",
                         })
-                else:
-                    rows.append({
-                        "comp": ic.comp_name,
-                        "cmp_layer": ic_layer,
-                        "overlapping_cmp": "-",
-                        "opp_type": "-",
-                        "status": "PASS",
-                    })
 
         fail_count = sum(1 for r in rows if r["status"] == "FAIL")
         passed = fail_count == 0

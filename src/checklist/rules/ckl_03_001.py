@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from src.checklist.component_classifier import find_connectors, find_ics
 from src.checklist.engine import register_rule
-from src.checklist.geometry_utils import find_overlapping_components
+from src.checklist.geometry_utils import find_pad_overlapping_components
 from src.checklist.reference_loader import get_part_category_map
 from src.checklist.rule_base import ChecklistRule
 from src.models import Component, RuleResult
@@ -56,7 +56,7 @@ class CKL03001(ChecklistRule):
                 continue
 
             for mcp in mcp_ics:
-                overlaps = find_overlapping_components(
+                overlaps = find_pad_overlapping_components(
                     mcp, opp_connectors, packages
                 )
                 for conn in overlaps:

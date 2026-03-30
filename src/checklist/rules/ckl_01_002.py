@@ -7,6 +7,7 @@ A pad on the outer perimeter with zero VIAs is flagged FAIL.
 
 from __future__ import annotations
 
+from src.checklist.component_classifier import find_pmics
 from src.checklist.engine import register_rule
 from src.checklist.geometry_utils import (
     build_toeprint_lookup,
@@ -160,9 +161,14 @@ class CKL01002(ChecklistRule):
         ]:
             via_positions = via_bot if is_bottom else via_top
             sig_name = bot_sig_name if is_bottom else top_sig_name
-            pmic_comps = [
-                c for c in comps if (c.part_name or "") in pmic_parts
-            ]
+            csv_pmics = [c for c in comps if (c.part_name or "") in pmic_parts]
+            prop_pmics = find_pmics(comps)
+            seen = set()
+            pmic_comps = []
+            for c in csv_pmics + prop_pmics:
+                if c.comp_name not in seen:
+                    seen.add(c.comp_name)
+                    pmic_comps.append(c)
 
             for comp in pmic_comps:
                 if comp.pkg_ref < 0 or comp.pkg_ref >= len(packages):

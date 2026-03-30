@@ -341,31 +341,61 @@ def _resolve_footprint(comp: Component, packages: list[Package]):
 # 3. Edge Detection
 # ---------------------------------------------------------------------------
 
+def _get_pad_centers(comp: Component, packages: list[Package],
+                     ) -> list[tuple[float, float]]:
+    """Return board-coordinate centre points for each pad of *comp*.
+
+    Uses pin centre positions transformed to board coordinates.
+    Falls back to toeprint positions when package pin data is unavailable.
+    """
+    if comp.pkg_ref < 0 or comp.pkg_ref >= len(packages):
+        return []
+    pkg = packages[comp.pkg_ref]
+
+    if pkg.pins:
+        return [
+            transform_point(pin.center.x, pin.center.y, comp)
+            for pin in pkg.pins
+        ]
+
+    # Fallback: toeprint positions
+    if comp.toeprints:
+        return [(tp.x, tp.y) for tp in comp.toeprints]
+
+    return []
+
+
 def is_on_edge(comp_a: Component, comp_b: Component,
                packages: list[Package],
                tolerance: float = 0.254) -> bool:
-    """Return True if comp_a's footprint is near the boundary of comp_b's footprint.
+    """Return True if any pad of *comp_a* is in a corner area of *comp_b*'s outline.
 
-    "On the edge" means the minimum distance between the two footprint
-    boundaries is less than *tolerance*, but comp_a is NOT fully contained
-    inside comp_b.
+    "On the edge" means at least one of *comp_a*'s pad centres falls
+    within *tolerance* of a corner vertex of *comp_b*'s component outline.
 
     Args:
-        tolerance: Maximum distance in mm to consider "on edge".
+        tolerance: Radius in mm around each corner vertex to consider
+                   as the corner area.
     """
     if not _HAS_SHAPELY:
         return False
 
-    fp_a = _resolve_footprint(comp_a, packages)
-    fp_b = _resolve_footprint(comp_b, packages)
+    pad_centers = _get_pad_centers(comp_a, packages)
+    outline_b = _resolve_outline(comp_b, packages)
 
-    if fp_a is None or fp_b is None:
+    if not pad_centers or outline_b is None:
         return False
 
-    boundary_dist = fp_a.boundary.distance(fp_b.boundary)
-    fully_inside = fp_b.contains(fp_a)
+    # Extract corner vertices of comp_b's outline (exclude closing duplicate)
+    corners = list(outline_b.exterior.coords[:-1])
 
-    return boundary_dist < tolerance and not fully_inside
+    for cx, cy in corners:
+        corner_region = ShapelyPoint(cx, cy).buffer(tolerance)
+        for px, py in pad_centers:
+            if corner_region.contains(ShapelyPoint(px, py)):
+                return True
+
+    return False
 
 
 # ---------------------------------------------------------------------------
