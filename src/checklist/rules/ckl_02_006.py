@@ -85,7 +85,8 @@ class CKL02006(ChecklistRule):
                         "status": status,
                     })
 
-        fail_count = sum(1 for r in rows if r["status"] == "FAIL")
+        fail_rows = [r for r in rows if r["status"] == "FAIL"]
+        fail_count = len(fail_rows)
         passed = fail_count == 0
 
         return RuleResult(
@@ -99,7 +100,7 @@ class CKL02006(ChecklistRule):
                 else "All general capacitors near connectors are properly placed."
             ),
             affected_components=[
-                r["overlapping_cap"] for r in rows if r["status"] == "FAIL"
+                r["overlapping_cap"] for r in fail_rows
             ],
-            details={"columns": columns, "rows": rows},
+            details={"columns": columns, "rows": fail_rows},
         )

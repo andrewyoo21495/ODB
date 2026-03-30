@@ -153,10 +153,10 @@ def find_inductors(components: Sequence[Component]) -> list[Component]:
     result = []
     for c in components:
         props = c.properties or {}
-        pkg_type = props.get("PKG_TYPE", "").lower()
-        pkg_device_type = props.get("PKG_DEVICE_TYPE", "").lower()
+        comp_type = props.get("TYPE", "").lower()
+        device_type = props.get("DEVICE_TYPE", "").lower()
         part = c.part_name or ""
-        if pkg_type == "inductor" or pkg_device_type == "inductor" or part.startswith("2703-"):
+        if comp_type == "inductor" or device_type == "inductor" or part.startswith("2703-"):
             result.append(c)
     return result
 
@@ -171,10 +171,10 @@ def find_capacitors(components: Sequence[Component]) -> list[Component]:
     result = []
     for c in components:
         props = c.properties or {}
-        pkg_type = props.get("PKG_TYPE", "").lower()
-        pkg_device_type = props.get("PKG_DEVICE_TYPE", "").lower()
+        comp_type = props.get("TYPE", "").lower()
+        device_type = props.get("DEVICE_TYPE", "").lower()
         part = c.part_name or ""
-        if pkg_type == "capacitor" or pkg_device_type == "capacitor" or part.startswith("2203-"):
+        if comp_type == "capacitor" or device_type == "capacitor" or part.startswith("2203-"):
             result.append(c)
     return result
 
