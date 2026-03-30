@@ -204,6 +204,11 @@ def find_rf_components(components: Sequence[Component]) -> list[Component]:
     return [c for c in components if (c.comp_name or "").startswith("RF")]
 
 
+def find_leds(components: Sequence[Component]) -> list[Component]:
+    """Return LED components: comp_name starts with 'LED'."""
+    return [c for c in components if (c.comp_name or "").startswith("LED")]
+
+
 # ---------------------------------------------------------------------------
 # BGA detection
 # ---------------------------------------------------------------------------
