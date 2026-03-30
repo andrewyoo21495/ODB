@@ -514,6 +514,168 @@ def overlaps_component_outline(
 
 
 # ---------------------------------------------------------------------------
+# 6b. Outermost Pin Detection
+# ---------------------------------------------------------------------------
+
+def _outermost_convex_hull(
+    points: list[tuple[float, float]],
+) -> list[tuple[float, float]]:
+    """Andrew's monotone chain convex hull.  Returns vertices in CCW order."""
+    pts = sorted(set(points))
+    if len(pts) <= 1:
+        return pts
+
+    lower: list[tuple[float, float]] = []
+    for p in pts:
+        while len(lower) >= 2 and _outermost_cross(lower[-2], lower[-1], p) <= 0:
+            lower.pop()
+        lower.append(p)
+
+    upper: list[tuple[float, float]] = []
+    for p in reversed(pts):
+        while len(upper) >= 2 and _outermost_cross(upper[-2], upper[-1], p) <= 0:
+            upper.pop()
+        upper.append(p)
+
+    return lower[:-1] + upper[:-1]
+
+
+def _outermost_cross(
+    o: tuple[float, float],
+    a: tuple[float, float],
+    b: tuple[float, float],
+) -> float:
+    return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+
+
+def _outermost_point_on_segment(
+    px: float, py: float,
+    ax: float, ay: float,
+    bx: float, by: float,
+    tol: float,
+) -> bool:
+    """Check if point (px,py) lies on segment (ax,ay)-(bx,by) within tolerance."""
+    cross = abs((bx - ax) * (py - ay) - (by - ay) * (px - ax))
+    seg_len = ((bx - ax) ** 2 + (by - ay) ** 2) ** 0.5
+    if seg_len < 1e-9:
+        return False
+    dist = cross / seg_len
+    if dist > tol:
+        return False
+    dot = (px - ax) * (bx - ax) + (py - ay) * (by - ay)
+    return -tol <= dot <= seg_len * seg_len + tol
+
+
+def find_outermost_pin_indices(pins: list[Pin]) -> set[int]:
+    """Return indices of pins that lie on the outer perimeter (convex hull).
+
+    For packages with <= 4 pins, all pins are considered outermost.
+    For larger packages, computes the convex hull of pin centres and
+    returns pins whose centres lie on or very near the hull boundary.
+    """
+    if len(pins) <= 4:
+        return set(range(len(pins)))
+
+    centres = [(p.center.x, p.center.y) for p in pins]
+
+    xs = {c[0] for c in centres}
+    ys = {c[1] for c in centres}
+    if len(xs) <= 1 or len(ys) <= 1:
+        return set(range(len(pins)))
+
+    hull_pts = _outermost_convex_hull(centres)
+    hull_set = set(hull_pts)
+
+    tol = 0.01
+
+    outermost: set[int] = set()
+    for idx, (cx, cy) in enumerate(centres):
+        if (cx, cy) in hull_set:
+            outermost.add(idx)
+        else:
+            for i in range(len(hull_pts)):
+                ax, ay = hull_pts[i]
+                bx, by = hull_pts[(i + 1) % len(hull_pts)]
+                if _outermost_point_on_segment(cx, cy, ax, ay, bx, by, tol):
+                    outermost.add(idx)
+                    break
+
+    return outermost
+
+
+def _get_outermost_pad_union(comp: Component, packages: list[Package]):
+    """Build a union of only the **outermost** pad polygons for *comp*.
+
+    Same as :func:`_get_pad_union` but restricted to pins whose indices
+    are in the convex-hull perimeter set.
+    """
+    if not _HAS_SHAPELY:
+        return None
+    if comp.pkg_ref < 0 or comp.pkg_ref >= len(packages):
+        return None
+
+    pkg = packages[comp.pkg_ref]
+    if not pkg.pins:
+        return None
+
+    outermost_indices = find_outermost_pin_indices(pkg.pins)
+    pad_polys = []
+
+    for pin_idx in outermost_indices:
+        pin = pkg.pins[pin_idx]
+        placed = False
+        for outline in pin.outlines:
+            verts = _outline_vertices(outline)
+            if not verts:
+                continue
+            board_verts = [transform_point(v[0], v[1], comp) for v in verts]
+            if len(board_verts) >= 3:
+                try:
+                    poly = ShapelyPolygon(board_verts)
+                    if poly.is_valid and not poly.is_empty:
+                        pad_polys.append(poly)
+                        placed = True
+                        break
+                except Exception:
+                    pass
+        if not placed:
+            bx, by = transform_point(pin.center.x, pin.center.y, comp)
+            pad_polys.append(ShapelyPoint(bx, by).buffer(0.05))
+
+    if not pad_polys:
+        return None
+
+    return unary_union(pad_polys)
+
+
+def find_outermost_pad_overlapping_components(
+    comp: Component,
+    candidates: Sequence[Component],
+    packages: list[Package],
+) -> list[Component]:
+    """Return *candidates* whose **outermost** pads overlap *comp*'s pads.
+
+    For each candidate, only the outermost (convex-hull perimeter) pads are
+    considered.  *comp*'s full pad set is used.
+    """
+    if not _HAS_SHAPELY:
+        return []
+
+    pad_union_comp = _get_pad_union(comp, packages)
+    if pad_union_comp is None:
+        pad_union_comp = ShapelyPoint(comp.x, comp.y).buffer(0.05)
+
+    overlapping: list[Component] = []
+    for cand in candidates:
+        outermost_union = _get_outermost_pad_union(cand, packages)
+        if outermost_union is None:
+            outermost_union = ShapelyPoint(cand.x, cand.y).buffer(0.05)
+        if pad_union_comp.intersects(outermost_union):
+            overlapping.append(cand)
+    return overlapping
+
+
+# ---------------------------------------------------------------------------
 # 7. Pad-to-Pad Overlap Detection
 # ---------------------------------------------------------------------------
 

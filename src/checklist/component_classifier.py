@@ -93,7 +93,6 @@ def find_ics(components: Sequence[Component]) -> list[Component]:
         if (
             (name.startswith("U") and not name.startswith("USB"))
             or device_type in _IC_DEVICE_TYPES
-            or (comp_type == "ic" and device_type == "filter")
         ):
             result.append(c)
     return result

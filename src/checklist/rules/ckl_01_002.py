@@ -13,109 +13,17 @@ from src.checklist.geometry_utils import (
     build_toeprint_lookup,
     build_via_position_set,
     count_vias_at_pad,
+    find_outermost_pin_indices,
     lookup_resolved_pads_for_pin,
 )
 from src.checklist.reference_loader import get_managed_part_names
 from src.checklist.rule_base import ChecklistRule
-from src.models import Pin, RuleResult
+from src.models import RuleResult
 from src.visualizer.fid_lookup import (
     build_fid_map,
     resolve_fid_features,
     _find_top_bottom_signal_layers,
 )
-
-
-def _find_outermost_pin_indices(pins: list[Pin]) -> set[int]:
-    """Return indices of pins that lie on the outer perimeter (convex hull).
-
-    For packages with <= 4 pins, all pins are considered outermost.
-    For larger packages, computes the convex hull of pin centres and
-    returns pins whose centres lie on or very near the hull boundary.
-    """
-    if len(pins) <= 4:
-        return set(range(len(pins)))
-
-    centres = [(p.center.x, p.center.y) for p in pins]
-
-    # Check for degenerate cases (all collinear or coincident)
-    xs = {c[0] for c in centres}
-    ys = {c[1] for c in centres}
-    if len(xs) <= 1 or len(ys) <= 1:
-        # All pins in a line or single point – all are outermost
-        return set(range(len(pins)))
-
-    # Compute convex hull using Andrew's monotone chain algorithm
-    hull_pts = _convex_hull(centres)
-    hull_set = set(hull_pts)
-
-    # Tolerance for "on hull edge" check (0.01 mm)
-    tol = 0.01
-
-    outermost: set[int] = set()
-    for idx, (cx, cy) in enumerate(centres):
-        if (cx, cy) in hull_set:
-            outermost.add(idx)
-        else:
-            # Check if point lies on any hull edge
-            for i in range(len(hull_pts)):
-                ax, ay = hull_pts[i]
-                bx, by = hull_pts[(i + 1) % len(hull_pts)]
-                if _point_on_segment(cx, cy, ax, ay, bx, by, tol):
-                    outermost.add(idx)
-                    break
-
-    return outermost
-
-
-def _convex_hull(points: list[tuple[float, float]]) -> list[tuple[float, float]]:
-    """Andrew's monotone chain convex hull. Returns vertices in CCW order."""
-    pts = sorted(set(points))
-    if len(pts) <= 1:
-        return pts
-
-    # Build lower hull
-    lower: list[tuple[float, float]] = []
-    for p in pts:
-        while len(lower) >= 2 and _cross(lower[-2], lower[-1], p) <= 0:
-            lower.pop()
-        lower.append(p)
-
-    # Build upper hull
-    upper: list[tuple[float, float]] = []
-    for p in reversed(pts):
-        while len(upper) >= 2 and _cross(upper[-2], upper[-1], p) <= 0:
-            upper.pop()
-        upper.append(p)
-
-    return lower[:-1] + upper[:-1]
-
-
-def _cross(
-    o: tuple[float, float],
-    a: tuple[float, float],
-    b: tuple[float, float],
-) -> float:
-    return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
-
-
-def _point_on_segment(
-    px: float, py: float,
-    ax: float, ay: float,
-    bx: float, by: float,
-    tol: float,
-) -> bool:
-    """Check if point (px,py) lies on segment (ax,ay)-(bx,by) within tolerance."""
-    # Cross product for distance from line
-    cross = abs((bx - ax) * (py - ay) - (by - ay) * (px - ax))
-    seg_len = ((bx - ax) ** 2 + (by - ay) ** 2) ** 0.5
-    if seg_len < 1e-9:
-        return False
-    dist = cross / seg_len
-    if dist > tol:
-        return False
-    # Check that projection falls within segment bounds
-    dot = (px - ax) * (bx - ax) + (py - ay) * (by - ay)
-    return -tol <= dot <= seg_len * seg_len + tol
 
 
 @register_rule
@@ -178,7 +86,7 @@ class CKL01002(ChecklistRule):
                 if not pkg.pins:
                     continue
 
-                outermost_indices = _find_outermost_pin_indices(pkg.pins)
+                outermost_indices = find_outermost_pin_indices(pkg.pins)
                 toep_by_pin = build_toeprint_lookup(comp, pkg)
 
                 for pin_idx in sorted(outermost_indices):
@@ -219,5 +127,6 @@ class CKL01002(ChecklistRule):
             affected_components=[
                 r["comp"] for r in rows if r["status"] == "FAIL"
             ],
-            details={"columns": columns, "rows": rows},
+            details={"columns": columns,
+                     "rows": [r for r in rows if r["status"] != "PASS"]},
         )

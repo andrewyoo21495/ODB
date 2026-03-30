@@ -116,6 +116,6 @@ class CKL03015(ChecklistRule):
             ],
             details={
                 "columns": columns,
-                "rows": rows,
+                "rows": [r for r in rows if r["status"] != "PASS"],
             },
         )
