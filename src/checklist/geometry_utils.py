@@ -755,6 +755,35 @@ def find_pad_overlapping_components(
     return overlapping
 
 
+def find_components_inside_outline(
+    comp: Component,
+    candidates: Sequence[Component],
+    packages: list[Package],
+) -> list[Component]:
+    """Return *candidates* whose footprint is inside *comp*'s component outline.
+
+    Checks whether a candidate's footprint (or centre point fallback) is
+    contained within the physical component body outline of *comp*.  This
+    captures cases where pads do not overlap but the candidate sits entirely
+    inside the outline boundary.
+    """
+    if not _HAS_SHAPELY:
+        return []
+
+    outline = _resolve_outline(comp, packages)
+    if outline is None:
+        return []
+
+    inside: list[Component] = []
+    for cand in candidates:
+        fp_cand = _resolve_footprint(cand, packages)
+        if fp_cand is None:
+            fp_cand = ShapelyPoint(cand.x, cand.y).buffer(0.05)
+        if outline.contains(fp_cand):
+            inside.append(cand)
+    return inside
+
+
 # ---------------------------------------------------------------------------
 # 7b. Empty-Centre Pad Layout Detection
 # ---------------------------------------------------------------------------

@@ -10,6 +10,7 @@ from __future__ import annotations
 from src.checklist.component_classifier import find_connectors
 from src.checklist.engine import register_rule
 from src.checklist.geometry_utils import (
+    find_components_inside_outline,
     find_pad_overlapping_components,
     get_pair_orientation,
     is_on_edge,
@@ -59,6 +60,15 @@ class CKL02002(ChecklistRule):
                 overlaps = find_pad_overlapping_components(
                     conn, opp_managed_caps, packages
                 )
+                # Caps inside connector outline but not pad-overlapping
+                inside_caps = find_components_inside_outline(
+                    conn, opp_managed_caps, packages
+                )
+                inside_only = [
+                    c for c in inside_caps
+                    if c not in overlaps
+                ]
+
                 for cap in overlaps:
                     on_edge = is_on_edge(cap, conn, packages)
                     orientation = get_pair_orientation(cap, conn, packages)
@@ -74,6 +84,19 @@ class CKL02002(ChecklistRule):
                         "overlapping_cap": cap.comp_name,
                         "part_name": cap.part_name or "",
                         "edge": edge_str,
+                        "hori/verti": orientation,
+                        "status": status,
+                    })
+
+                for cap in inside_only:
+                    orientation = get_pair_orientation(cap, conn, packages)
+                    status = "FAIL" if orientation == "Vertical" else "PASS"
+                    rows.append({
+                        "comp": conn.comp_name,
+                        "cmp_layer": conn_layer,
+                        "overlapping_cap": cap.comp_name,
+                        "part_name": cap.part_name or "",
+                        "edge": "FALSE",
                         "hori/verti": orientation,
                         "status": status,
                     })
