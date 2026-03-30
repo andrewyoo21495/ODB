@@ -1,9 +1,8 @@
 """CKL-02-010: SIM socket vs capacitors/inductors (>=2012) on opposite side.
 
-Inspect capacitors and inductors of size 2012 or larger that cross the
-outer outline boundary of SIM socket components on the opposite side.
-The required orientation (horizontal/vertical) is determined by the
-specific outline segment being crossed.
+Inspect capacitors and inductors of size 2012 or larger overlapping
+the opposite side of SIM socket components.  Check horizontal/vertical
+orientation.
 """
 
 from __future__ import annotations
@@ -14,7 +13,7 @@ from src.checklist.component_classifier import (
 from src.checklist.engine import register_rule
 from src.checklist.geometry_utils import (
     filter_by_size,
-    find_outline_crossing_components,
+    find_pad_overlapping_components,
     get_component_orientation,
 )
 from src.checklist.reference_loader import get_part_size_map
@@ -26,9 +25,8 @@ from src.models import RuleResult
 class CKL02010(ChecklistRule):
     rule_id = "CKL-02-010"
     description = (
-        "SIM sockets: capacitors/inductors >=2012 crossing the outer "
-        "outline on the opposite side must match the crossed segment "
-        "orientation"
+        "SIM sockets: capacitors/inductors >=2012 on the opposite side "
+        "must be horizontally oriented"
     )
     category = "Placement"
 
@@ -45,7 +43,7 @@ class CKL02010(ChecklistRule):
 
         columns = [
             "comp", "cmp_layer", "overlapping_cmp", "part_name",
-            "hori/verti", "required", "status",
+            "hori/verti", "status",
         ]
         rows: list[dict] = []
 
@@ -62,36 +60,21 @@ class CKL02010(ChecklistRule):
                 continue
 
             for sim in sims:
-                # Find components that cross the SIM socket outline
-                # and the required orientation per crossed segment
-                crossings = find_outline_crossing_components(
-                    sim, opp_targets, packages,
+                overlaps = find_pad_overlapping_components(
+                    sim, opp_targets, packages
                 )
-
-                # Extract just the components for size filtering
-                crossing_comps = [comp for comp, _ in crossings]
-                crossing_orient = {
-                    id(comp): req for comp, req in crossings
-                }
-
                 # Filter to size >= 2012
-                filtered = filter_by_size(
-                    crossing_comps, 2012, size_maps, packages,
-                )
+                filtered = filter_by_size(overlaps, 2012, size_maps, packages)
 
                 for comp, sz in filtered:
                     orientation = get_component_orientation(comp, packages)
-                    required = crossing_orient[id(comp)]
-                    status = (
-                        "PASS" if orientation == required else "FAIL"
-                    )
+                    status = "PASS" if orientation == "Horizontal" else "FAIL"
                     rows.append({
                         "comp": sim.comp_name,
                         "cmp_layer": sim_layer,
                         "overlapping_cmp": comp.comp_name,
                         "part_name": comp.part_name or "",
                         "hori/verti": orientation,
-                        "required": required,
                         "status": status,
                     })
 
@@ -104,8 +87,7 @@ class CKL02010(ChecklistRule):
             category=self.category,
             passed=passed,
             message=(
-                f"{fail_count} component(s) near SIM socket not matching "
-                f"required orientation."
+                f"{fail_count} component(s) near SIM socket not horizontally oriented."
                 if not passed
                 else "All components near SIM sockets are properly oriented."
             ),
