@@ -14,7 +14,7 @@ from src.checklist.engine import register_rule
 from src.checklist.geometry_utils import (
     filter_by_size,
     get_orientation_relative_to_edge,
-    overlaps_component_outline,
+    pads_overlap_component_outline,
 )
 from src.checklist.reference_loader import get_part_size_map
 from src.checklist.rule_base import ChecklistRule
@@ -64,8 +64,8 @@ class CKL02010(ChecklistRule):
 
             for sim in sims:
                 for comp, sz in filtered:
-                    # Only check components overlapping the SIM outline
-                    if not overlaps_component_outline(comp, sim, packages):
+                    # Only check components whose pads overlap the SIM outline
+                    if not pads_overlap_component_outline(comp, sim, packages):
                         continue
 
                     orientation = get_orientation_relative_to_edge(

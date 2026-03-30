@@ -571,6 +571,29 @@ def overlaps_component_outline(
     return fp_comp.intersects(outline_target)
 
 
+def pads_overlap_component_outline(
+    comp: Component,
+    target: Component,
+    packages: list[Package],
+) -> bool:
+    """Return True if *comp*'s pad geometry overlaps *target*'s component outline.
+
+    Unlike :func:`overlaps_component_outline` (which uses the full footprint
+    including the component body outline), this checks only *comp*'s pads
+    against the package-level outline of *target*.
+    """
+    if not _HAS_SHAPELY:
+        return False
+
+    pad_geom = _get_pad_union(comp, packages)
+    outline_target = _resolve_outline(target, packages)
+
+    if pad_geom is None or outline_target is None:
+        return False
+
+    return pad_geom.intersects(outline_target)
+
+
 # ---------------------------------------------------------------------------
 # 6b. Outermost Pin Detection
 # ---------------------------------------------------------------------------
