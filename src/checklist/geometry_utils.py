@@ -576,12 +576,11 @@ def pads_overlap_component_outline(
     target: Component,
     packages: list[Package],
 ) -> bool:
-    """Return True if *comp*'s pad geometry overlaps *target*'s outer outline boundary.
+    """Return True if *comp*'s pad geometry overlaps *target*'s component outline.
 
-    Checks only *comp*'s pads against the exterior ring (boundary) of
-    *target*'s component outline — not the filled interior.  Components
-    whose pads sit inside the outline without touching the border are
-    not matched.
+    Unlike :func:`overlaps_component_outline` (which uses the full footprint
+    including the component body outline), this checks only *comp*'s pads
+    against the package-level outline of *target*.
     """
     if not _HAS_SHAPELY:
         return False
@@ -592,7 +591,7 @@ def pads_overlap_component_outline(
     if pad_geom is None or outline_target is None:
         return False
 
-    return pad_geom.intersects(outline_target.boundary)
+    return pad_geom.intersects(outline_target)
 
 
 # ---------------------------------------------------------------------------
