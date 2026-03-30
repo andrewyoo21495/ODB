@@ -166,5 +166,8 @@ class CKL01001(ChecklistRule):
                 r["comp"] for r in rows if r["status"] == "FAIL"
             ],
             details={"columns": columns,
-                     "rows": [r for r in rows if r["status"] != "PASS"]},
+                     "rows": sorted(
+                         [r for r in rows if r["status"] != "PASS"],
+                         key=lambda r: r.get("overlapping_cmp", ""),
+                     )},
         )
