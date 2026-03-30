@@ -81,16 +81,19 @@ def find_ics(components: Sequence[Component]) -> list[Component]:
     When TYPE is 'IC' but DEVICE_TYPE indicates a non-IC component
     (e.g. Capacitor, Resistor, Inductor, Connector, etc.), DEVICE_TYPE
     takes precedence and the component is NOT treated as an IC.
+    Exception: TYPE='IC' with DEVICE_TYPE='Filter' is still treated as an IC.
     """
     _IC_DEVICE_TYPES = {"ic", "linear ic", "microprocessor ic", "memory ic"}
     result = []
     for c in components:
         name = c.comp_name or ""
         props = c.properties or {}
+        comp_type = props.get("TYPE", "").lower()
         device_type = props.get("DEVICE_TYPE", "").lower()
         if (
             (name.startswith("U") and not name.startswith("USB"))
             or device_type in _IC_DEVICE_TYPES
+            or (comp_type == "ic" and device_type == "filter")
         ):
             result.append(c)
     return result
