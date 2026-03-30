@@ -1,8 +1,8 @@
 """CKL-02-010: SIM socket vs capacitors/inductors (>=2012) on opposite side.
 
-Inspect capacitors and inductors of size 2012 or larger that overlap the
-component outline of SIM sockets on the opposite side.  Check orientation
-relative to the specific SIM socket outline edge being overlapped.
+Inspect capacitors and inductors of size 2012 or larger overlapping
+the opposite side of SIM socket components.  Check horizontal/vertical
+orientation.
 """
 
 from __future__ import annotations
@@ -13,8 +13,8 @@ from src.checklist.component_classifier import (
 from src.checklist.engine import register_rule
 from src.checklist.geometry_utils import (
     filter_by_size,
-    get_orientation_relative_to_edge,
-    overlaps_component_outline,
+    find_pad_overlapping_components,
+    get_component_orientation,
 )
 from src.checklist.reference_loader import get_part_size_map
 from src.checklist.rule_base import ChecklistRule
@@ -25,8 +25,8 @@ from src.models import RuleResult
 class CKL02010(ChecklistRule):
     rule_id = "CKL-02-010"
     description = (
-        "SIM sockets: capacitors/inductors >=2012 overlapping the SIM "
-        "outline on the opposite side must be aligned with the overlapped edge"
+        "SIM sockets: capacitors/inductors >=2012 on the opposite side "
+        "must be horizontally oriented"
     )
     category = "Placement"
 
@@ -59,18 +59,15 @@ class CKL02010(ChecklistRule):
             if not sims or not opp_targets:
                 continue
 
-            # Filter to size >= 2012
-            filtered = filter_by_size(opp_targets, 2012, size_maps, packages)
-
             for sim in sims:
-                for comp, sz in filtered:
-                    # Only check components overlapping the SIM outline
-                    if not overlaps_component_outline(comp, sim, packages):
-                        continue
+                overlaps = find_pad_overlapping_components(
+                    sim, opp_targets, packages
+                )
+                # Filter to size >= 2012
+                filtered = filter_by_size(overlaps, 2012, size_maps, packages)
 
-                    orientation = get_orientation_relative_to_edge(
-                        comp, sim, packages,
-                    )
+                for comp, sz in filtered:
+                    orientation = get_component_orientation(comp, packages)
                     status = "PASS" if orientation == "Horizontal" else "FAIL"
                     rows.append({
                         "comp": sim.comp_name,
@@ -90,7 +87,7 @@ class CKL02010(ChecklistRule):
             category=self.category,
             passed=passed,
             message=(
-                f"{fail_count} component(s) near SIM socket not aligned with outline edge."
+                f"{fail_count} component(s) near SIM socket not horizontally oriented."
                 if not passed
                 else "All components near SIM sockets are properly oriented."
             ),

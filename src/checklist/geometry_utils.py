@@ -210,64 +210,6 @@ def are_components_aligned(comp_a: Component, comp_b: Component,
     return orient_a == orient_b
 
 
-def get_orientation_relative_to_edge(
-    comp: Component,
-    ref_comp: Component,
-    packages: list[Package],
-) -> str:
-    """Classify *comp*'s orientation relative to the nearest outline edge of *ref_comp*.
-
-    Finds the edge segment of *ref_comp*'s component outline that is closest
-    to *comp*'s centre, then compares *comp*'s major axis to that edge's
-    direction.
-
-    Returns:
-        "Horizontal" – comp's major axis is parallel to the nearest edge
-        "Vertical"   – comp's major axis is perpendicular to the nearest edge
-        "Square"     – comp has no dominant axis (near 1:1 aspect ratio)
-        "Unknown"    – geometry data unavailable
-    """
-    comp_angle = get_major_axis_angle(comp, packages)
-    if comp_angle is None:
-        # Check if it's square vs truly unknown
-        orient = get_component_orientation(comp, packages)
-        if orient == "Square":
-            return "Square"
-        return "Unknown"
-
-    # Build the ref component's outline polygon
-    if ref_comp.pkg_ref < 0 or ref_comp.pkg_ref >= len(packages):
-        return "Unknown"
-    ref_pkg = packages[ref_comp.pkg_ref]
-    outline_poly = get_component_outline(ref_comp, ref_pkg)
-    if outline_poly is None:
-        return "Unknown"
-
-    # Extract edge segments from the outline exterior ring
-    coords = list(outline_poly.exterior.coords)  # closed ring (last == first)
-    comp_pt = ShapelyPoint(comp.x, comp.y)
-
-    best_dist = float("inf")
-    best_edge_angle: float = 0.0
-    for i in range(len(coords) - 1):
-        seg = LineString([coords[i], coords[i + 1]])
-        d = seg.distance(comp_pt)
-        if d < best_dist:
-            best_dist = d
-            dx = coords[i + 1][0] - coords[i][0]
-            dy = coords[i + 1][1] - coords[i][1]
-            best_edge_angle = math.degrees(math.atan2(dy, dx)) % 180.0
-
-    # Compare component major axis angle to the nearest edge angle
-    diff = abs(comp_angle - best_edge_angle) % 180.0
-    if diff > 90.0:
-        diff = 180.0 - diff
-
-    if diff < 45.0:
-        return "Horizontal"
-    return "Vertical"
-
-
 # ---------------------------------------------------------------------------
 # 2. Component Footprint Polygon
 # ---------------------------------------------------------------------------
