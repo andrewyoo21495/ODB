@@ -7,6 +7,9 @@ actual pad geometry of the OSC component (not from its outline or centre).
 
 from __future__ import annotations
 
+import tempfile
+from pathlib import Path
+
 from src.checklist.component_classifier import find_bothholes, find_oscillators
 from src.checklist.engine import register_rule
 from src.checklist.geometry_utils import (
@@ -15,6 +18,7 @@ from src.checklist.geometry_utils import (
     pad_distance_to_outline,
 )
 from src.checklist.rule_base import ChecklistRule
+from src.checklist.visualizers.ckl_03_012_viz import render_osc_clearance_image
 from src.models import RuleResult
 
 
@@ -43,6 +47,8 @@ class CKL03012(ChecklistRule):
 
         columns = ["comp", "cmp_layer", "to_pcb", "to_BTH", "status"]
         rows: list[dict] = []
+        images: list[dict] = []
+        image_dir = Path(tempfile.mkdtemp(prefix="ckl_03_012_"))
 
         for comps, layer_name in [
             (components_top, "Top"),
@@ -59,10 +65,12 @@ class CKL03012(ChecklistRule):
 
                 # Distance from OSC pads to nearest BOTHHOLE
                 dist_bth = float("inf")
+                nearest_bth = None
                 for bth in all_bothholes:
                     d = pad_distance_to_component(osc, bth, packages)
                     if d < dist_bth:
                         dist_bth = d
+                        nearest_bth = bth
 
                 pcb_str = f"{dist_pcb:.3f}" if dist_pcb < float("inf") else "N/A"
                 bth_str = f"{dist_bth:.3f}" if dist_bth < float("inf") else "N/A"
@@ -79,6 +87,20 @@ class CKL03012(ChecklistRule):
                     "to_pcb": pcb_str,
                     "to_BTH": bth_str,
                     "status": status,
+                })
+
+                # Generate visualisation image for this OSC
+                safe_name = osc.comp_name.replace("/", "_")
+                img_path = image_dir / f"{safe_name}_{layer_name}.png"
+                render_osc_clearance_image(
+                    osc, packages, board_poly, all_bothholes,
+                    dist_pcb, dist_bth, nearest_bth,
+                    img_path, layer_name=layer_name,
+                )
+                images.append({
+                    "path": img_path,
+                    "title": f"{osc.comp_name} ({layer_name})",
+                    "width": 500,
                 })
 
         fail_count = sum(1 for r in rows if r["status"] == "FAIL")
@@ -98,4 +120,5 @@ class CKL03012(ChecklistRule):
                 r["comp"] for r in rows if r["status"] == "FAIL"
             ],
             details={"columns": columns, "rows": rows},
+            images=images,
         )
