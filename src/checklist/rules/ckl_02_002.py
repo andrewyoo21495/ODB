@@ -7,6 +7,9 @@ side of a connector must be aligned horizontally.
 
 from __future__ import annotations
 
+import tempfile
+from pathlib import Path
+
 from src.checklist.component_classifier import find_connectors
 from src.checklist.engine import register_rule
 from src.checklist.geometry_utils import (
@@ -17,6 +20,7 @@ from src.checklist.geometry_utils import (
 )
 from src.checklist.reference_loader import get_managed_part_names
 from src.checklist.rule_base import ChecklistRule
+from src.checklist.visualizers.ckl_02_002_viz import render_connector_cap_image
 from src.models import RuleResult
 
 
@@ -42,6 +46,8 @@ class CKL02002(ChecklistRule):
             "edge", "hori/verti", "status",
         ]
         rows: list[dict] = []
+        images: list[dict] = []
+        image_dir = Path(tempfile.mkdtemp(prefix="ckl_02_002_"))
 
         for conn_comps, conn_layer, opp_comps in [
             (components_top, "Top", components_bot),
@@ -69,6 +75,9 @@ class CKL02002(ChecklistRule):
                     if c not in overlaps
                 ]
 
+                # Per-connector cap results for visualisation
+                cap_results: dict[str, dict] = {}
+
                 for cap in overlaps:
                     on_edge = is_on_edge(cap, conn, packages)
                     orientation = get_pair_orientation(cap, conn, packages)
@@ -87,6 +96,11 @@ class CKL02002(ChecklistRule):
                         "hori/verti": orientation,
                         "status": status,
                     })
+                    cap_results[cap.comp_name] = {
+                        "status": status,
+                        "edge": on_edge,
+                        "orientation": orientation,
+                    }
 
                 for cap in inside_only:
                     orientation = get_pair_orientation(cap, conn, packages)
@@ -99,6 +113,30 @@ class CKL02002(ChecklistRule):
                         "edge": "FALSE",
                         "hori/verti": orientation,
                         "status": status,
+                    })
+                    cap_results[cap.comp_name] = {
+                        "status": status,
+                        "edge": False,
+                        "orientation": orientation,
+                    }
+
+                # Generate visualisation image for this connector
+                if cap_results:
+                    relevant_caps = [
+                        c for c in opp_managed_caps
+                        if c.comp_name in cap_results
+                    ]
+                    safe_name = conn.comp_name.replace("/", "_")
+                    img_path = image_dir / f"{safe_name}_{conn_layer}.png"
+                    render_connector_cap_image(
+                        conn, conn_layer, packages,
+                        relevant_caps, opp_comps, cap_results,
+                        img_path,
+                    )
+                    images.append({
+                        "path": img_path,
+                        "title": f"{conn.comp_name} ({conn_layer})",
+                        "width": 500,
                     })
 
         fail_count = sum(1 for r in rows if r["status"] == "FAIL")
@@ -119,4 +157,5 @@ class CKL02002(ChecklistRule):
                 r["overlapping_cap"] for r in rows if r["status"] == "FAIL"
             ],
             details={"columns": columns, "rows": rows},
+            images=images,
         )
