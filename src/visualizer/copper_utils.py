@@ -13,6 +13,7 @@ from typing import Optional
 from pathlib import Path
 import numpy as np
 
+import matplotlib
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.path import Path as MplPath
@@ -69,7 +70,7 @@ def rasterize_layer(
         return None
 
     # Build a fixed-resolution off-screen figure
-    _DPI = 200
+    _DPI = 400
     _LONG = 10.0
     if board_w >= board_h:
         fig_w, fig_h = _LONG, _LONG * board_h / board_w
@@ -86,15 +87,22 @@ def rasterize_layer(
     calc_ax.set_aspect("equal", adjustable="box")
     calc_ax.axis("off")
 
-    # Render the layer (without profile outline to avoid edge anti-aliasing issues)
+    # Render with anti-aliasing disabled so every pixel is either fully
+    # copper-coloured or fully black — no ambiguous fringe pixels.
+    _no_aa = {
+        "patch.antialiased": False,
+        "lines.antialiased": False,
+        "text.antialiased": False,
+    }
     features, matrix_layer = layers_data[layer_name]
     color = LAYER_COLORS.get(matrix_layer.type, "#00CC00")
-    render_layer(
-        calc_ax, features, color=color,
-        layer_type=matrix_layer.type,
-        alpha=1.0, user_symbols=user_symbols,
-        font=font
-    )
+    with matplotlib.rc_context(_no_aa):
+        render_layer(
+            calc_ax, features, color=color,
+            layer_type=matrix_layer.type,
+            alpha=1.0, user_symbols=user_symbols,
+            font=font
+        )
 
     # Rasterize to numpy RGBA
     agg = FigureCanvasAgg(calc_fig)
@@ -312,6 +320,8 @@ def save_layer_image(
     subsection_ratios: Optional[np.ndarray],
     output_path: str | Path,
     dpi: int = 150,
+    n_rows: int = 5,
+    n_cols: int = 5,
 ) -> None:
     """Render a layer to an image file with optional sub-section overlay.
 
@@ -369,7 +379,8 @@ def save_layer_image(
 
     # Draw sub-section overlay if provided
     if subsection_ratios is not None:
-        draw_subsection_overlay(ax, fig, subsection_ratios, profile)
+        draw_subsection_overlay(ax, fig, subsection_ratios, profile,
+                                n_rows=n_rows, n_cols=n_cols)
 
     # Save to file
     output_path.parent.mkdir(parents=True, exist_ok=True)

@@ -1404,6 +1404,7 @@ class CopperCalculateViewer:
         self._calc_btn: Optional[tk.Button] = None
         self._odb_var: Optional[tk.StringVar] = None
         self._excel_var: Optional[tk.StringVar] = None
+        self._grid_var: Optional[tk.StringVar] = None
 
     def show(self):
         """Launch the GUI window."""
@@ -1417,6 +1418,7 @@ class CopperCalculateViewer:
         # Create StringVars after root window exists
         self._odb_var = tk.StringVar(value="")
         self._excel_var = tk.StringVar(value="")
+        self._grid_var = tk.StringVar(value="5x5")
 
         # ---- Main layout ----
         main_frame = tk.Frame(self._root, bg=_BG)
@@ -1445,6 +1447,17 @@ class CopperCalculateViewer:
         tk.Button(row2, text="Save As...", bg="#1a73e8", fg="#ffffff",
                   activebackground="#1557b0", relief=tk.FLAT,
                   command=self._browse_excel).pack(side=tk.LEFT)
+
+        # Sub-section grid row
+        row_grid = tk.Frame(main_frame, bg=_BG)
+        row_grid.pack(fill=tk.X, pady=(0, 6))
+
+        tk.Label(row_grid, text="Sub-section Grid:", bg=_BG, fg=_FG, font=_FONT).pack(
+            side=tk.LEFT, padx=(0, 6))
+        tk.Entry(row_grid, textvariable=self._grid_var, bg=_BG2, fg=_FG,
+                 font=_FONT, width=8).pack(side=tk.LEFT, padx=(0, 6))
+        tk.Label(row_grid, text="(rows x cols, e.g. 4x5)", bg=_BG, fg="#888888",
+                 font=("Segoe UI", 9)).pack(side=tk.LEFT)
 
         # Button row
         row3 = tk.Frame(main_frame, bg=_BG)
@@ -1510,23 +1523,34 @@ class CopperCalculateViewer:
             self._log("Error: ODB++ path and Excel output path are required.")
             return
 
+        # Parse grid specification
+        grid_str = self._grid_var.get().strip()
+        import re
+        m = re.match(r"^(\d+)\s*[xX×]\s*(\d+)$", grid_str)
+        if not m or int(m.group(1)) < 1 or int(m.group(2)) < 1:
+            self._log(f"Error: Invalid grid format '{grid_str}'. Use NxM (e.g. 4x5).")
+            return
+        n_rows, n_cols = int(m.group(1)), int(m.group(2))
+
         self._calc_btn.config(state=tk.DISABLED)
         self._status_text.config(state=tk.NORMAL)
         self._status_text.delete("1.0", tk.END)
         self._status_text.config(state=tk.DISABLED)
 
         t = threading.Thread(target=self._run_calculation,
-                             args=(odb_path, excel_path), daemon=True)
+                             args=(odb_path, excel_path, n_rows, n_cols),
+                             daemon=True)
         t.start()
 
-    def _run_calculation(self, odb_path: str, excel_path: str):
+    def _run_calculation(self, odb_path: str, excel_path: str,
+                         n_rows: int = 5, n_cols: int = 5):
         """Run the full calculation loop (background thread)."""
         import numpy as np
         from pathlib import Path
         from src.copper_reporter import generate_copper_report
 
         try:
-            self._log("Loading ODB++ data...")
+            self._log(f"Loading ODB++ data... (grid: {n_rows}×{n_cols})")
             data = self._load_data_fn(odb_path)
 
             profile = data.get("profile")
@@ -1560,9 +1584,10 @@ class CopperCalculateViewer:
                     layer_name, profile, layers_data, user_symbols, font
                 )
 
-                self._log(f"  Calculating sub-section ratios...")
+                self._log(f"  Calculating sub-section ratios ({n_rows}×{n_cols})...")
                 sub_ratios = copper_utils.calculate_subsection_ratios(
-                    layer_name, profile, layers_data, user_symbols, font
+                    layer_name, profile, layers_data, user_symbols, font,
+                    n_rows=n_rows, n_cols=n_cols,
                 )
 
                 self._log(f"  Saving image...")
@@ -1574,7 +1599,8 @@ class CopperCalculateViewer:
                 img_path = images_dir / f"{safe_name}.png"
                 copper_utils.save_layer_image(
                     layer_name, profile, layers_data, user_symbols, font,
-                    sub_ratios, img_path
+                    sub_ratios, img_path,
+                    n_rows=n_rows, n_cols=n_cols,
                 )
 
                 _, ml = layers_data[layer_name]

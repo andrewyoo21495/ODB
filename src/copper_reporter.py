@@ -42,7 +42,7 @@ def generate_copper_report(
         layer_results: List of dicts (one per signal layer) with keys:
             - layer_name: str
             - total_ratio: float (0–1)
-            - subsection_ratios: np.ndarray (5, 5) or None
+            - subsection_ratios: np.ndarray (n_rows, n_cols) or None
             - thickness_mm: float or None
             - image_path: Path or None
         copper_data: dict[layer_name, thickness_mm] for all layers (signal + dielectric)
@@ -221,14 +221,17 @@ def _create_layer_sheet(wb: Workbook, result: dict, excel_dir: Path = None) -> N
 
     # Sub-section grid
     if result["subsection_ratios"] is not None:
-        ws.cell(row=current_row, column=1, value="Sub-section Grid (5×5):").font = Font(bold=True)
+        ratios = result["subsection_ratios"]
+        grid_rows, grid_cols = ratios.shape
+        ws.cell(row=current_row, column=1,
+                value=f"Sub-section Grid ({grid_rows}×{grid_cols}):").font = Font(bold=True)
         current_row += 1
 
         # Column headers
         ws.cell(row=current_row, column=1, value="")
-        for j in range(1, 6):
-            cell = ws.cell(row=current_row, column=j + 1)
-            cell.value = f"C{j}"
+        for j in range(grid_cols):
+            cell = ws.cell(row=current_row, column=j + 2)
+            cell.value = f"C{j + 1}"
             cell.fill = _HEADER_FILL
             cell.font = _HEADER_FONT
             cell.alignment = Alignment(horizontal="center")
@@ -236,8 +239,7 @@ def _create_layer_sheet(wb: Workbook, result: dict, excel_dir: Path = None) -> N
         current_row += 1
 
         # Data rows
-        ratios = result["subsection_ratios"]
-        for i in range(5):
+        for i in range(grid_rows):
             # Row label
             row_label_cell = ws.cell(row=current_row, column=1)
             row_label_cell.value = f"R{i + 1}"
@@ -246,7 +248,7 @@ def _create_layer_sheet(wb: Workbook, result: dict, excel_dir: Path = None) -> N
             row_label_cell.border = _THIN_BORDER
 
             # Data cells
-            for j in range(5):
+            for j in range(grid_cols):
                 cell = ws.cell(row=current_row, column=j + 2)
                 ratio = ratios[i, j]
 
