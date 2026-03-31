@@ -189,6 +189,11 @@ def find_bothholes(components: Sequence[Component]) -> list[Component]:
     return [c for c in components if (c.comp_name or "").startswith("BOTHHOLE")]
 
 
+def find_antennas(components: Sequence[Component]) -> list[Component]:
+    """Return Antenna components: comp_name starts with 'ANT'."""
+    return [c for c in components if (c.comp_name or "").startswith("ANT")]
+
+
 def find_shield_cans(components: Sequence[Component]) -> list[Component]:
     """Return Shield Can components: comp_name starts with 'SC'."""
     return [c for c in components if (c.comp_name or "").upper().startswith("SC")]
