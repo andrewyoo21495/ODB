@@ -7,10 +7,14 @@ component whose footprint intersects the PMIC outline is flagged FAIL.
 
 from __future__ import annotations
 
+import tempfile
+from pathlib import Path
+
 from src.checklist.engine import register_rule
 from src.checklist.geometry_utils import overlaps_component_outline
 from src.checklist.reference_loader import load_reference_csv
 from src.checklist.rule_base import ChecklistRule
+from src.checklist.visualizers.overlap_viz import render_overlap_image
 from src.models import RuleResult
 
 
@@ -43,6 +47,8 @@ class CKL01003(ChecklistRule):
 
         columns = ["comp", "cmp_layer", "overlapping_cmp", "outline", "status"]
         rows: list[dict] = []
+        images: list[dict] = []
+        image_dir = Path(tempfile.mkdtemp(prefix="ckl_01_003_"))
 
         for comps, layer_name, opp_comps in [
             (components_top, "Top", components_bot),
@@ -57,7 +63,7 @@ class CKL01003(ChecklistRule):
                 if pmic.pkg_ref < 0 or pmic.pkg_ref >= len(packages):
                     continue
 
-                has_any_overlap = False
+                overlap_items: list[dict] = []
                 for opp in opp_comps:
                     if opp.pkg_ref < 0 or opp.pkg_ref >= len(packages):
                         continue
@@ -65,7 +71,6 @@ class CKL01003(ChecklistRule):
                         opp, pmic, packages,
                     )
                     if overlaps:
-                        has_any_overlap = True
                         rows.append({
                             "comp": pmic.comp_name,
                             "cmp_layer": layer_name,
@@ -73,8 +78,11 @@ class CKL01003(ChecklistRule):
                             "outline": "TRUE",
                             "status": "FAIL",
                         })
+                        overlap_items.append({
+                            "comp": opp, "status": "FAIL",
+                        })
 
-                if not has_any_overlap:
+                if not overlap_items:
                     rows.append({
                         "comp": pmic.comp_name,
                         "cmp_layer": layer_name,
@@ -82,6 +90,20 @@ class CKL01003(ChecklistRule):
                         "outline": "FALSE",
                         "status": "PASS",
                     })
+
+                if overlap_items:
+                    safe = pmic.comp_name.replace("/", "_")
+                    img_path = image_dir / f"{safe}_{layer_name}.png"
+                    render_overlap_image(
+                        pmic, packages, overlap_items, opp_comps, img_path,
+                        rule_id=self.rule_id,
+                        title="PMIC outline containment",
+                        layer_name=layer_name,
+                        primary_label="PMIC",
+                    )
+                    images.append({"path": img_path,
+                                   "title": f"{pmic.comp_name} ({layer_name})",
+                                   "width": 500})
 
         fail_count = sum(1 for r in rows if r["status"] == "FAIL")
         passed = fail_count == 0
@@ -101,4 +123,5 @@ class CKL01003(ChecklistRule):
                 r["comp"] for r in rows if r["status"] == "FAIL"
             ],
             details={"columns": columns, "rows": rows},
+            images=images,
         )

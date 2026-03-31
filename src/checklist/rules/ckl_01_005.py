@@ -6,6 +6,9 @@ AP or Memory components, review their corner placement and orientation.
 
 from __future__ import annotations
 
+import tempfile
+from pathlib import Path
+
 from src.checklist.component_classifier import find_inductors
 from src.checklist.engine import register_rule
 from src.checklist.geometry_utils import (
@@ -17,6 +20,7 @@ from src.checklist.geometry_utils import (
 )
 from src.checklist.reference_loader import get_managed_part_names, get_part_size_map
 from src.checklist.rule_base import ChecklistRule
+from src.checklist.visualizers.overlap_viz import render_overlap_image
 from src.models import Component, RuleResult
 
 
@@ -50,6 +54,8 @@ class CKL01005(ChecklistRule):
             "edge", "hori/verti", "status",
         ]
         rows: list[dict] = []
+        images: list[dict] = []
+        image_dir = Path(tempfile.mkdtemp(prefix="ckl_01_005_"))
 
         for ap_comps, ap_layer, opp_comps in [
             (_find_ap_memory(components_top), "Top", components_bot),
@@ -64,15 +70,13 @@ class CKL01005(ChecklistRule):
                 # Filter to size >= 2012
                 filtered = filter_by_size(overlaps, 2012, size_maps, packages)
 
+                overlap_items: list[dict] = []
                 for ind, sz in filtered:
                     on_edge = is_on_edge(ind, ap, packages)
                     orientation = get_component_orientation(ind, packages)
                     edge_str = "TRUE" if on_edge else "FALSE"
                     hits_outline = overlaps_component_outline(ind, ap, packages)
 
-                    # PASS if NOT on edge AND Horizontal
-                    # Also PASS if Vertical but does NOT overlap the
-                    # actual component outline of the AP/Memory
                     if not on_edge and orientation == "Horizontal":
                         status = "PASS"
                     elif orientation == "Vertical" and not hits_outline:
@@ -89,6 +93,28 @@ class CKL01005(ChecklistRule):
                         "hori/verti": orientation,
                         "status": status,
                     })
+                    detail_parts = [orientation]
+                    if on_edge:
+                        detail_parts.append("Edge")
+                    overlap_items.append({
+                        "comp": ind, "status": status,
+                        "detail": ", ".join(detail_parts),
+                    })
+
+                if overlap_items:
+                    safe = ap.comp_name.replace("/", "_")
+                    img_path = image_dir / f"{safe}_{ap_layer}.png"
+                    render_overlap_image(
+                        ap, packages, overlap_items, opp_comps, img_path,
+                        rule_id=self.rule_id,
+                        title="Inductor overlap",
+                        layer_name=ap_layer,
+                        primary_label="AP/Memory",
+                        overlap_label="Inductor",
+                    )
+                    images.append({"path": img_path,
+                                   "title": f"{ap.comp_name} ({ap_layer})",
+                                   "width": 500})
 
         fail_count = sum(1 for r in rows if r["status"] == "FAIL")
         passed = fail_count == 0
@@ -107,4 +133,5 @@ class CKL01005(ChecklistRule):
                 r["overlapping_ind"] for r in rows if r["status"] == "FAIL"
             ],
             details={"columns": columns, "rows": rows},
+            images=images,
         )

@@ -7,6 +7,9 @@ orientation.
 
 from __future__ import annotations
 
+import tempfile
+from pathlib import Path
+
 from src.checklist.component_classifier import (
     find_capacitors, find_inductors, find_simsockets,
 )
@@ -18,6 +21,7 @@ from src.checklist.geometry_utils import (
 )
 from src.checklist.reference_loader import get_part_size_map
 from src.checklist.rule_base import ChecklistRule
+from src.checklist.visualizers.overlap_viz import render_overlap_image
 from src.models import RuleResult
 
 
@@ -46,6 +50,8 @@ class CKL02010(ChecklistRule):
             "hori/verti", "status",
         ]
         rows: list[dict] = []
+        images: list[dict] = []
+        image_dir = Path(tempfile.mkdtemp(prefix="ckl_02_010_"))
 
         for sim_comps, sim_layer, opp_comps in [
             (components_top, "Top", components_bot),
@@ -66,6 +72,7 @@ class CKL02010(ChecklistRule):
                 # Filter to size >= 2012
                 filtered = filter_by_size(overlaps, 2012, size_maps, packages)
 
+                overlap_items: list[dict] = []
                 for comp, sz in filtered:
                     orientation = get_component_orientation(comp, packages)
                     status = "PASS" if orientation == "Horizontal" else "FAIL"
@@ -77,6 +84,25 @@ class CKL02010(ChecklistRule):
                         "hori/verti": orientation,
                         "status": status,
                     })
+                    overlap_items.append({
+                        "comp": comp, "status": status,
+                        "detail": orientation,
+                    })
+
+                if overlap_items:
+                    safe = sim.comp_name.replace("/", "_")
+                    img_path = image_dir / f"{safe}_{sim_layer}.png"
+                    render_overlap_image(
+                        sim, packages, overlap_items, opp_comps, img_path,
+                        rule_id=self.rule_id,
+                        title="Cap/inductor orientation",
+                        layer_name=sim_layer,
+                        primary_label="SIM Socket",
+                        overlap_label="Cap/Inductor",
+                    )
+                    images.append({"path": img_path,
+                                   "title": f"{sim.comp_name} ({sim_layer})",
+                                   "width": 500})
 
         fail_count = sum(1 for r in rows if r["status"] == "FAIL")
         passed = fail_count == 0
@@ -95,4 +121,5 @@ class CKL02010(ChecklistRule):
                 r["overlapping_cmp"] for r in rows if r["status"] == "FAIL"
             ],
             details={"columns": columns, "rows": rows},
+            images=images,
         )

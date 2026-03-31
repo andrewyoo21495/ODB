@@ -6,6 +6,9 @@ connector components on the opposite side.  Distance must be >= 1.5mm.
 
 from __future__ import annotations
 
+import tempfile
+from pathlib import Path
+
 from src.checklist.component_classifier import find_connectors
 from src.checklist.engine import register_rule
 from src.checklist.geometry_utils import (
@@ -14,6 +17,7 @@ from src.checklist.geometry_utils import (
 )
 from src.checklist.reference_loader import get_managed_part_names
 from src.checklist.rule_base import ChecklistRule
+from src.checklist.visualizers.overlap_viz import render_overlap_image
 from src.models import Component, RuleResult
 
 
@@ -42,6 +46,8 @@ class CKL02001(ChecklistRule):
             "overlapping_con", "distance", "status",
         ]
         rows: list[dict] = []
+        images: list[dict] = []
+        image_dir = Path(tempfile.mkdtemp(prefix="ckl_02_001_"))
 
         for caps_layer_comps, cap_layer, opp_comps in [
             (components_top, "Top", components_bot),
@@ -61,6 +67,7 @@ class CKL02001(ChecklistRule):
                 overlaps = find_overlapping_components(
                     cap, opp_connectors, packages
                 )
+                overlap_items: list[dict] = []
                 if overlaps:
                     for conn in overlaps:
                         dist = edge_distance(cap, conn, packages)
@@ -74,6 +81,11 @@ class CKL02001(ChecklistRule):
                             "distance": dist_str,
                             "status": status,
                         })
+                        overlap_items.append({
+                            "comp": conn, "status": status,
+                            "distance": dist if dist < float("inf") else None,
+                            "min_distance": _MIN_DISTANCE_MM,
+                        })
                 else:
                     rows.append({
                         "comp": cap.comp_name,
@@ -83,6 +95,21 @@ class CKL02001(ChecklistRule):
                         "distance": "-",
                         "status": "PASS",
                     })
+
+                if overlap_items:
+                    safe = cap.comp_name.replace("/", "_")
+                    img_path = image_dir / f"{safe}_{cap_layer}.png"
+                    render_overlap_image(
+                        cap, packages, overlap_items, opp_comps, img_path,
+                        rule_id=self.rule_id,
+                        title="Capacitor-connector distance",
+                        layer_name=cap_layer,
+                        primary_label="Capacitor",
+                        overlap_label="Connector",
+                    )
+                    images.append({"path": img_path,
+                                   "title": f"{cap.comp_name} ({cap_layer})",
+                                   "width": 500})
 
         fail_count = sum(1 for r in rows if r["status"] == "FAIL")
         passed = fail_count == 0
@@ -101,4 +128,5 @@ class CKL02001(ChecklistRule):
                 r["comp"] for r in rows if r["status"] == "FAIL"
             ],
             details={"columns": columns, "rows": rows},
+            images=images,
         )

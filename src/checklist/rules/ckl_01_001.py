@@ -15,6 +15,9 @@ Items with no overlap are excluded from results.
 
 from __future__ import annotations
 
+import tempfile
+from pathlib import Path
+
 from src.checklist.component_classifier import (
     find_connectors, find_filters, find_ics,
     find_interposers, find_shield_cans, find_simsockets,
@@ -26,6 +29,7 @@ from src.checklist.geometry_utils import (
     find_pad_overlapping_components,
 )
 from src.checklist.rule_base import ChecklistRule
+from src.checklist.visualizers.overlap_viz import render_overlap_image
 from src.models import RuleResult
 
 
@@ -46,7 +50,11 @@ def _check_overlaps(comp, comp_layer, interposers, full_pad_targets,
     - Interposers: checked against outermost pads only
     - full_pad_targets (connectors, SIM sockets, and optionally shield cans):
       checked against all pads
+
+    Returns a list of overlap_item dicts for visualisation.
     """
+    overlap_items: list[dict] = []
+
     # --- Interposer checks (outermost pads) ---
     if interposers:
         outline_ovl = find_overlapping_components(comp, interposers, packages)
@@ -55,21 +63,31 @@ def _check_overlaps(comp, comp_layer, interposers, full_pad_targets,
 
         if pad_ovl:
             for ovl in pad_ovl:
+                status = "FAIL"
                 rows.append({
                     "comp": comp.comp_name,
                     "cmp_layer": comp_layer,
                     "overlapping_cmp": ovl.comp_name,
                     "opp_type": opp_type_fn(ovl),
-                    "status": "FAIL",
+                    "status": status,
+                })
+                overlap_items.append({
+                    "comp": ovl, "status": status,
+                    "detail": opp_type_fn(ovl),
                 })
         elif outline_ovl:
             for ovl in outline_ovl:
+                status = "PASS"
                 rows.append({
                     "comp": comp.comp_name,
                     "cmp_layer": comp_layer,
                     "overlapping_cmp": ovl.comp_name,
                     "opp_type": opp_type_fn(ovl),
-                    "status": "PASS",
+                    "status": status,
+                })
+                overlap_items.append({
+                    "comp": ovl, "status": status,
+                    "detail": opp_type_fn(ovl),
                 })
 
     # --- Connector / SIM socket / Shield Can checks (all pads) ---
@@ -81,22 +99,34 @@ def _check_overlaps(comp, comp_layer, interposers, full_pad_targets,
 
         if pad_ovl:
             for ovl in pad_ovl:
+                status = "FAIL"
                 rows.append({
                     "comp": comp.comp_name,
                     "cmp_layer": comp_layer,
                     "overlapping_cmp": ovl.comp_name,
                     "opp_type": opp_type_fn(ovl),
-                    "status": "FAIL",
+                    "status": status,
+                })
+                overlap_items.append({
+                    "comp": ovl, "status": status,
+                    "detail": opp_type_fn(ovl),
                 })
         elif outline_ovl:
             for ovl in outline_ovl:
+                status = "PASS"
                 rows.append({
                     "comp": comp.comp_name,
                     "cmp_layer": comp_layer,
                     "overlapping_cmp": ovl.comp_name,
                     "opp_type": opp_type_fn(ovl),
-                    "status": "PASS",
+                    "status": status,
                 })
+                overlap_items.append({
+                    "comp": ovl, "status": status,
+                    "detail": opp_type_fn(ovl),
+                })
+
+    return overlap_items
 
 
 @register_rule
@@ -116,6 +146,8 @@ class CKL01001(ChecklistRule):
 
         columns = ["comp", "cmp_layer", "overlapping_cmp", "opp_type", "status"]
         rows: list[dict] = []
+        images: list[dict] = []
+        image_dir = Path(tempfile.mkdtemp(prefix="ckl_01_001_"))
 
         for same_comps, layer, opp_comps in [
             (components_top, "Top", components_bot),
@@ -134,19 +166,45 @@ class CKL01001(ChecklistRule):
             ics = find_ics(same_comps)
             ic_full_targets = opp_connectors + opp_simsockets + opp_shield_cans
             for ic in ics:
-                _check_overlaps(
+                items = _check_overlaps(
                     ic, layer, opp_interposers, ic_full_targets,
                     opp_type_fn, packages, rows,
                 )
+                if items:
+                    safe = ic.comp_name.replace("/", "_")
+                    img_path = image_dir / f"{safe}_{layer}.png"
+                    render_overlap_image(
+                        ic, packages, items, opp_comps, img_path,
+                        rule_id=self.rule_id,
+                        title="Opposite-side overlap",
+                        layer_name=layer,
+                        primary_label="IC",
+                    )
+                    images.append({"path": img_path,
+                                   "title": f"{ic.comp_name} ({layer})",
+                                   "width": 500})
 
             # --- Filter checks ---
             filters = find_filters(same_comps)
             filter_full_targets = opp_connectors + opp_simsockets
             for flt in filters:
-                _check_overlaps(
+                items = _check_overlaps(
                     flt, layer, opp_interposers, filter_full_targets,
                     opp_type_fn, packages, rows,
                 )
+                if items:
+                    safe = flt.comp_name.replace("/", "_")
+                    img_path = image_dir / f"{safe}_{layer}.png"
+                    render_overlap_image(
+                        flt, packages, items, opp_comps, img_path,
+                        rule_id=self.rule_id,
+                        title="Opposite-side overlap",
+                        layer_name=layer,
+                        primary_label="Filter",
+                    )
+                    images.append({"path": img_path,
+                                   "title": f"{flt.comp_name} ({layer})",
+                                   "width": 500})
 
         fail_count = sum(1 for r in rows if r["status"] == "FAIL")
         passed = fail_count == 0
@@ -170,4 +228,5 @@ class CKL01001(ChecklistRule):
                          [r for r in rows if r["status"] != "PASS"],
                          key=lambda r: r.get("overlapping_cmp", ""),
                      )},
+            images=images,
         )

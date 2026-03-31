@@ -6,6 +6,9 @@ an AP/Memory component on opposite sides must be avoided.
 
 from __future__ import annotations
 
+import tempfile
+from pathlib import Path
+
 from src.checklist.component_classifier import (
     find_inductors,
     find_shield_cans,
@@ -17,6 +20,7 @@ from src.checklist.geometry_utils import (
 )
 from src.checklist.reference_loader import get_managed_part_names, get_part_size_map
 from src.checklist.rule_base import ChecklistRule
+from src.checklist.visualizers.overlap_viz import render_overlap_image
 from src.models import Component, RuleResult
 
 
@@ -48,6 +52,8 @@ class CKL02012(ChecklistRule):
             "comp", "cmp_layer", "part_name", "overlapping_ap", "status",
         ]
         rows: list[dict] = []
+        images: list[dict] = []
+        image_dir = Path(tempfile.mkdtemp(prefix="ckl_02_012_"))
 
         for ap_layer_comps, ap_layer, opp_comps in [
             (components_top, "Top", components_bot),
@@ -72,6 +78,7 @@ class CKL02012(ChecklistRule):
                     overlapping_inds, 2012, size_maps, packages
                 )
 
+                overlap_items: list[dict] = []
                 for ind, sz in filtered:
                     # Check if a Shield Can also overlaps on the opposite
                     # side of this inductor (i.e. same side as the AP/Memory)
@@ -88,6 +95,25 @@ class CKL02012(ChecklistRule):
                             "overlapping_ap": ap.comp_name,
                             "status": "FAIL",
                         })
+                        overlap_items.append({
+                            "comp": ind, "status": "FAIL",
+                            "detail": f"+ Shield Can",
+                        })
+
+                if overlap_items:
+                    safe = ap.comp_name.replace("/", "_")
+                    img_path = image_dir / f"{safe}_{ap_layer}.png"
+                    render_overlap_image(
+                        ap, packages, overlap_items, opp_comps, img_path,
+                        rule_id=self.rule_id,
+                        title="Inductor + Shield Can dual overlap",
+                        layer_name=ap_layer,
+                        primary_label="AP/Memory",
+                        overlap_label="Inductor",
+                    )
+                    images.append({"path": img_path,
+                                   "title": f"{ap.comp_name} ({ap_layer})",
+                                   "width": 500})
 
         fail_count = sum(1 for r in rows if r["status"] == "FAIL")
         passed = fail_count == 0
@@ -106,4 +132,5 @@ class CKL02012(ChecklistRule):
                 r["comp"] for r in rows if r["status"] == "FAIL"
             ],
             details={"columns": columns, "rows": rows},
+            images=images,
         )

@@ -7,6 +7,9 @@ opposite layer.
 
 from __future__ import annotations
 
+import tempfile
+from pathlib import Path
+
 from src.checklist.component_classifier import (
     find_connectors,
     find_ics,
@@ -15,6 +18,7 @@ from src.checklist.component_classifier import (
 from src.checklist.engine import register_rule
 from src.checklist.geometry_utils import find_overlapping_components
 from src.checklist.rule_base import ChecklistRule
+from src.checklist.visualizers.overlap_viz import render_overlap_image
 from src.models import Component, RuleResult
 
 _AIR_PRESSURE_SENSOR_PART = "1209-002567"
@@ -45,6 +49,8 @@ class CKL01007(ChecklistRule):
 
         columns = ["comp", "cmp_layer", "overlapping_cmp", "status"]
         rows: list[dict] = []
+        images: list[dict] = []
+        image_dir = Path(tempfile.mkdtemp(prefix="ckl_01_007_"))
 
         for sensors, sensor_layer, opp_comps in [
             (_find_air_pressure_sensors(components_top), "Top", components_bot),
@@ -63,6 +69,7 @@ class CKL01007(ChecklistRule):
                     sensor, opp_targets, packages,
                 )
 
+                overlap_items: list[dict] = []
                 if overlaps:
                     for ovl in overlaps:
                         rows.append({
@@ -71,6 +78,7 @@ class CKL01007(ChecklistRule):
                             "overlapping_cmp": ovl.comp_name,
                             "status": "FAIL",
                         })
+                        overlap_items.append({"comp": ovl, "status": "FAIL"})
                 else:
                     rows.append({
                         "comp": sensor.comp_name,
@@ -78,6 +86,20 @@ class CKL01007(ChecklistRule):
                         "overlapping_cmp": "-",
                         "status": "PASS",
                     })
+
+                if overlap_items:
+                    safe = sensor.comp_name.replace("/", "_")
+                    img_path = image_dir / f"{safe}_{sensor_layer}.png"
+                    render_overlap_image(
+                        sensor, packages, overlap_items, opp_comps, img_path,
+                        rule_id=self.rule_id,
+                        title="Sensing area overlap",
+                        layer_name=sensor_layer,
+                        primary_label="Air Pressure Sensor",
+                    )
+                    images.append({"path": img_path,
+                                   "title": f"{sensor.comp_name} ({sensor_layer})",
+                                   "width": 500})
 
         fail_count = sum(1 for r in rows if r["status"] == "FAIL")
         passed = fail_count == 0
@@ -97,4 +119,5 @@ class CKL01007(ChecklistRule):
                 r["comp"] for r in rows if r["status"] == "FAIL"
             ],
             details={"columns": columns, "rows": rows},
+            images=images,
         )

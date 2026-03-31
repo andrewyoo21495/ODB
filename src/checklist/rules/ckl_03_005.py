@@ -7,6 +7,9 @@ A pad with zero VIAs is flagged FAIL.
 
 from __future__ import annotations
 
+import tempfile
+from pathlib import Path
+
 from src.checklist.engine import register_rule
 from src.checklist.geometry_utils import (
     build_toeprint_lookup,
@@ -16,6 +19,7 @@ from src.checklist.geometry_utils import (
 )
 from src.checklist.reference_loader import get_managed_part_names
 from src.checklist.rule_base import ChecklistRule
+from src.checklist.visualizers.via_check_viz import render_via_check_image
 from src.models import RuleResult
 from src.visualizer.fid_lookup import (
     build_fid_map,
@@ -60,6 +64,8 @@ class CKL03005(ChecklistRule):
 
         columns = ["comp", "cmp_layer", "pad", "via", "status"]
         rows: list[dict] = []
+        images: list[dict] = []
+        image_dir = Path(tempfile.mkdtemp(prefix="ckl_03_005_"))
 
         for comps, layer_name, is_bottom in [
             (components_top, "Top", False),
@@ -96,6 +102,22 @@ class CKL03005(ChecklistRule):
                         "status": "PASS" if via_count > 0 else "FAIL",
                     })
 
+                # Generate visualisation image for this axis sensor
+                safe_name = comp.comp_name.replace("/", "_")
+                img_path = image_dir / f"{safe_name}_{layer_name}.png"
+                render_via_check_image(
+                    comp, pkg, via_positions, is_bottom, img_path,
+                    rule_id=self.rule_id,
+                    comp_type="Axis Sensor",
+                    fid_resolved=fid_resolved,
+                    signal_layer_name=sig_name,
+                )
+                images.append({
+                    "path": img_path,
+                    "title": f"{comp.comp_name} ({layer_name})",
+                    "width": 500,
+                })
+
         fail_count = sum(1 for r in rows if r["status"] == "FAIL")
         passed = fail_count == 0
 
@@ -113,4 +135,5 @@ class CKL03005(ChecklistRule):
                 r["comp"] for r in rows if r["status"] == "FAIL"
             ],
             details={"columns": columns, "rows": rows},
+            images=images,
         )

@@ -6,6 +6,9 @@ on the opposite side of Oscillator components (overlapping).
 
 from __future__ import annotations
 
+import tempfile
+from pathlib import Path
+
 from src.checklist.component_classifier import (
     find_connectors,
     find_interposers,
@@ -16,6 +19,7 @@ from src.checklist.component_classifier import (
 from src.checklist.engine import register_rule
 from src.checklist.geometry_utils import find_overlapping_components
 from src.checklist.rule_base import ChecklistRule
+from src.checklist.visualizers.overlap_viz import render_overlap_image
 from src.models import RuleResult
 
 
@@ -36,6 +40,8 @@ class CKL03016(ChecklistRule):
 
         columns = ["comp", "cmp_layer", "overlapping_cmp", "part_name", "status"]
         rows: list[dict] = []
+        images: list[dict] = []
+        image_dir = Path(tempfile.mkdtemp(prefix="ckl_03_016_"))
 
         for oscs, osc_layer, opp_comps in [
             (find_oscillators(components_top), "Top", components_bot),
@@ -64,6 +70,7 @@ class CKL03016(ChecklistRule):
             for osc in oscs:
                 overlaps = find_overlapping_components(osc, opp_targets, packages)
 
+                overlap_items: list[dict] = []
                 if overlaps:
                     for ovl in overlaps:
                         rows.append({
@@ -73,6 +80,7 @@ class CKL03016(ChecklistRule):
                             "part_name": ovl.part_name or "",
                             "status": "FAIL",
                         })
+                        overlap_items.append({"comp": ovl, "status": "FAIL"})
                 else:
                     rows.append({
                         "comp": osc.comp_name,
@@ -81,6 +89,20 @@ class CKL03016(ChecklistRule):
                         "part_name": "-",
                         "status": "PASS",
                     })
+
+                if overlap_items:
+                    safe = osc.comp_name.replace("/", "_")
+                    img_path = image_dir / f"{safe}_{osc_layer}.png"
+                    render_overlap_image(
+                        osc, packages, overlap_items, opp_comps, img_path,
+                        rule_id=self.rule_id,
+                        title="Opposite-side overlap on OSC",
+                        layer_name=osc_layer,
+                        primary_label="OSC",
+                    )
+                    images.append({"path": img_path,
+                                   "title": f"{osc.comp_name} ({osc_layer})",
+                                   "width": 500})
 
         fail_count = sum(1 for r in rows if r["status"] == "FAIL")
         passed = fail_count == 0
@@ -99,4 +121,5 @@ class CKL03016(ChecklistRule):
                 r["comp"] for r in rows if r["status"] == "FAIL"
             ],
             details={"columns": columns, "rows": rows},
+            images=images,
         )

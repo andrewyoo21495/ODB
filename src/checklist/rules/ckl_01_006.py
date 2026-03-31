@@ -6,10 +6,14 @@ opposite layer of the PCB.
 
 from __future__ import annotations
 
+import tempfile
+from pathlib import Path
+
 from src.checklist.component_classifier import find_filters, find_rf_components
 from src.checklist.engine import register_rule
 from src.checklist.geometry_utils import find_pad_overlapping_components
 from src.checklist.rule_base import ChecklistRule
+from src.checklist.visualizers.overlap_viz import render_overlap_image
 from src.models import RuleResult
 
 
@@ -30,6 +34,8 @@ class CKL01006(ChecklistRule):
 
         columns = ["comp", "cmp_layer", "overlapping_cmp", "status"]
         rows: list[dict] = []
+        images: list[dict] = []
+        image_dir = Path(tempfile.mkdtemp(prefix="ckl_01_006_"))
 
         for rf_comps, rf_layer, opp_comps in [
             (find_rf_components(components_top), "Top", components_bot),
@@ -51,6 +57,7 @@ class CKL01006(ChecklistRule):
                     rf, opp_filters, packages,
                 )
 
+                overlap_items: list[dict] = []
                 if pad_overlaps:
                     for ovl in pad_overlaps:
                         rows.append({
@@ -59,6 +66,7 @@ class CKL01006(ChecklistRule):
                             "overlapping_cmp": ovl.comp_name,
                             "status": "FAIL",
                         })
+                        overlap_items.append({"comp": ovl, "status": "FAIL"})
                 else:
                     rows.append({
                         "comp": rf.comp_name,
@@ -66,6 +74,21 @@ class CKL01006(ChecklistRule):
                         "overlapping_cmp": "-",
                         "status": "PASS",
                     })
+
+                if overlap_items:
+                    safe = rf.comp_name.replace("/", "_")
+                    img_path = image_dir / f"{safe}_{rf_layer}.png"
+                    render_overlap_image(
+                        rf, packages, overlap_items, opp_comps, img_path,
+                        rule_id=self.rule_id,
+                        title="5-pin filter pad overlap",
+                        layer_name=rf_layer,
+                        primary_label="RF Receptacle",
+                        overlap_label="5-pin Filter",
+                    )
+                    images.append({"path": img_path,
+                                   "title": f"{rf.comp_name} ({rf_layer})",
+                                   "width": 500})
 
         fail_count = sum(1 for r in rows if r["status"] == "FAIL")
         passed = fail_count == 0
@@ -85,4 +108,5 @@ class CKL01006(ChecklistRule):
                 r["comp"] for r in rows if r["status"] == "FAIL"
             ],
             details={"columns": columns, "rows": rows},
+            images=images,
         )
