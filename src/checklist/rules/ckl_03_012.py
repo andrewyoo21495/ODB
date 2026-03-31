@@ -18,7 +18,7 @@ from src.checklist.geometry_utils import (
     pad_distance_to_outline,
 )
 from src.checklist.rule_base import ChecklistRule
-from src.checklist.visualizers.ckl_03_012_viz import render_osc_clearance_image
+from src.checklist.visualizers.clearance_viz import render_clearance_image
 from src.models import RuleResult
 
 
@@ -92,10 +92,33 @@ class CKL03012(ChecklistRule):
                 # Generate visualisation image for this OSC
                 safe_name = osc.comp_name.replace("/", "_")
                 img_path = image_dir / f"{safe_name}_{layer_name}.png"
-                render_osc_clearance_image(
+
+                # Build distance entries for clearance viz
+                viz_distances: list[dict] = []
+                if board_poly is not None and dist_pcb < float("inf"):
+                    viz_distances.append({
+                        "label": "PCB edge",
+                        "value": dist_pcb,
+                        "target_geom": board_poly.boundary,
+                        "target_comp": None,
+                    })
+                if nearest_bth is not None and dist_bth < float("inf"):
+                    viz_distances.append({
+                        "label": "BOTHHOLE",
+                        "value": dist_bth,
+                        "target_geom": None,
+                        "target_comp": nearest_bth,
+                    })
+
+                render_clearance_image(
                     osc, packages, board_poly, all_bothholes,
-                    dist_pcb, dist_bth, nearest_bth,
-                    img_path, layer_name=layer_name,
+                    viz_distances, img_path,
+                    rule_id=self.rule_id,
+                    title="PCB edge & BOTHHOLE clearance",
+                    layer_name=layer_name,
+                    comp_label="OSC",
+                    ref_label="BOTHHOLE",
+                    min_clearance=_MIN_CLEARANCE_MM,
                 )
                 images.append({
                     "path": img_path,

@@ -18,7 +18,7 @@ from src.checklist.geometry_utils import (
     lookup_resolved_pads_for_pin,
 )
 from src.checklist.rule_base import ChecklistRule
-from src.checklist.visualizers.ckl_03_013_viz import render_mic_via_image
+from src.checklist.visualizers.via_check_viz import render_via_check_image
 from src.models import RuleResult
 from src.visualizer.fid_lookup import (
     build_fid_map,
@@ -100,8 +100,10 @@ class CKL03013(ChecklistRule):
                 # Generate visualisation image for this MIC
                 safe_name = mic.comp_name.replace("/", "_")
                 img_path = image_dir / f"{safe_name}_{layer_name}.png"
-                render_mic_via_image(
+                render_via_check_image(
                     mic, pkg, via_positions, is_bottom, img_path,
+                    rule_id=self.rule_id,
+                    comp_type="MIC",
                     fid_resolved=fid_resolved,
                     signal_layer_name=sig_name,
                 )

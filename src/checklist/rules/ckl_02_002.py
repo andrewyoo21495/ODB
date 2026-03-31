@@ -20,7 +20,7 @@ from src.checklist.geometry_utils import (
 )
 from src.checklist.reference_loader import get_managed_part_names
 from src.checklist.rule_base import ChecklistRule
-from src.checklist.visualizers.ckl_02_002_viz import render_connector_cap_image
+from src.checklist.visualizers.overlap_viz import render_overlap_image
 from src.models import RuleResult
 
 
@@ -75,8 +75,7 @@ class CKL02002(ChecklistRule):
                     if c not in overlaps
                 ]
 
-                # Per-connector cap results for visualisation
-                cap_results: dict[str, dict] = {}
+                overlap_items: list[dict] = []
 
                 for cap in overlaps:
                     on_edge = is_on_edge(cap, conn, packages)
@@ -96,11 +95,14 @@ class CKL02002(ChecklistRule):
                         "hori/verti": orientation,
                         "status": status,
                     })
-                    cap_results[cap.comp_name] = {
+                    detail_parts = [orientation]
+                    if on_edge:
+                        detail_parts.append("Edge")
+                    overlap_items.append({
+                        "comp": cap,
                         "status": status,
-                        "edge": on_edge,
-                        "orientation": orientation,
-                    }
+                        "detail": ", ".join(detail_parts),
+                    })
 
                 for cap in inside_only:
                     orientation = get_pair_orientation(cap, conn, packages)
@@ -114,24 +116,23 @@ class CKL02002(ChecklistRule):
                         "hori/verti": orientation,
                         "status": status,
                     })
-                    cap_results[cap.comp_name] = {
+                    overlap_items.append({
+                        "comp": cap,
                         "status": status,
-                        "edge": False,
-                        "orientation": orientation,
-                    }
+                        "detail": orientation,
+                    })
 
                 # Generate visualisation image for this connector
-                if cap_results:
-                    relevant_caps = [
-                        c for c in opp_managed_caps
-                        if c.comp_name in cap_results
-                    ]
+                if overlap_items:
                     safe_name = conn.comp_name.replace("/", "_")
                     img_path = image_dir / f"{safe_name}_{conn_layer}.png"
-                    render_connector_cap_image(
-                        conn, conn_layer, packages,
-                        relevant_caps, opp_comps, cap_results,
-                        img_path,
+                    render_overlap_image(
+                        conn, packages, overlap_items, opp_comps, img_path,
+                        rule_id=self.rule_id,
+                        title="Managed capacitor alignment",
+                        layer_name=conn_layer,
+                        primary_label="Connector",
+                        overlap_label="Managed cap",
                     )
                     images.append({
                         "path": img_path,

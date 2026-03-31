@@ -1,10 +1,12 @@
-"""Visualization for CKL-03-012: OSC clearance to PCB edge and BOTHHOLE.
+"""Shared visualization for PCB edge / component clearance rules.
 
-Produces one PNG per OSC component showing:
-- The OSC pad geometry
+Produces one PNG per component showing:
+- The component pad geometry
 - The board outline
-- Nearby BOTHHOLE footprints
-- Distance annotations to the PCB outline and nearest BOTHHOLE
+- Nearby reference components (e.g. BOTHHOLE footprints)
+- Distance annotations to the PCB outline and nearest reference component
+
+Used by: CKL-03-012.
 """
 
 from __future__ import annotations
@@ -19,14 +21,9 @@ from matplotlib.patches import Polygon as MplPolygon
 import numpy as np
 
 from src.checklist.geometry_utils import (
-    build_board_polygon,
     _get_pad_union,
     _resolve_footprint,
-    pad_distance_to_component,
-    pad_distance_to_outline,
 )
-
-_MIN_CLEARANCE_MM = 1.0
 
 
 # ---------------------------------------------------------------------------
@@ -70,44 +67,66 @@ def _nearest_points_coords(geom_a, geom_b):
 # Main render function
 # ---------------------------------------------------------------------------
 
-def render_osc_clearance_image(
-    osc, packages, board_poly, all_bothholes,
-    dist_pcb: float, dist_bth: float,
-    nearest_bth,
+def render_clearance_image(
+    comp,
+    packages,
+    board_poly,
+    ref_comps: list,
+    distances: list[dict],
     output_path: Path,
+    *,
+    rule_id: str,
+    title: str,
     layer_name: str = "Top",
+    comp_label: str = "Component",
+    ref_label: str = "Reference",
+    min_clearance: float = 1.0,
 ) -> Path:
-    """Render a single OSC component's clearance situation to a PNG.
+    """Render a component's clearance to board edge and reference components.
 
     Parameters
     ----------
-    osc : Component
+    comp : Component
+        The primary component to visualise.
     packages : list[Package]
-    board_poly : Shapely Polygon (board outline)
-    all_bothholes : list[Component]
-    dist_pcb : float – measured distance to PCB outline
-    dist_bth : float – measured distance to nearest BOTHHOLE
-    nearest_bth : Component | None – the nearest BOTHHOLE component
+    board_poly : Shapely Polygon | None
+        Board outline geometry.
+    ref_comps : list[Component]
+        Reference components (e.g. BOTHHOLEs) to display.
+    distances : list[dict]
+        Each dict has:
+          - "label": str – annotation label (e.g. "PCB edge", "BOTHHOLE")
+          - "value": float – measured distance
+          - "target_geom": Shapely geometry | None – the target to draw a line to
+          - "target_comp": Component | None – if this is a component, draw its footprint
+        The first entry is typically the board-edge distance.
     output_path : Path
+    rule_id : str
+    title : str
     layer_name : str
+    comp_label : str
+    ref_label : str
+    min_clearance : float
 
     Returns
     -------
-    Path – *output_path*
+    Path
     """
-    pad_geom = _get_pad_union(osc, packages)
+    pad_geom = _get_pad_union(comp, packages)
     if pad_geom is None:
         return output_path
 
     # --- figure setup --------------------------------------------------------
-    pcb_ok = dist_pcb >= _MIN_CLEARANCE_MM or dist_pcb == float("inf")
-    bth_ok = dist_bth >= _MIN_CLEARANCE_MM or dist_bth == float("inf")
-    status = "PASS" if (pcb_ok and bth_ok) else "FAIL"
+    all_ok = all(
+        d["value"] >= min_clearance or d["value"] == float("inf")
+        for d in distances
+    )
+    status = "PASS" if all_ok else "FAIL"
 
     fig, ax = plt.subplots(1, 1, figsize=(10, 10))
     ax.set_title(
-        f"{osc.comp_name} ({osc.part_name}) — {layer_name} Layer\n"
-        f"CKL-03-012: PCB edge & BOTHHOLE clearance  [{status}]",
+        f"{comp.comp_name} ({comp.part_name}) — {layer_name} Layer\n"
+        f"{rule_id}: {title}  [{status}]",
         fontsize=12, fontweight="bold",
     )
     ax.set_aspect("equal")
@@ -118,28 +137,65 @@ def render_osc_clearance_image(
             ax.plot(xs, ys, color="royalblue", linewidth=1.2)
             ax.fill(xs, ys, alpha=0.04, color="royalblue")
 
-    # --- OSC pads ------------------------------------------------------------
+    # --- component pads ------------------------------------------------------
     pad_color = "#90EE90" if status == "PASS" else "#FFB0B0"
     pad_edge = "darkgreen" if status == "PASS" else "darkred"
     _draw_geom(ax, pad_geom, pad_color, pad_edge, alpha=0.55,
-               label=f"OSC pads ({osc.comp_name})")
+               label=f"{comp_label} pads ({comp.comp_name})")
 
     # Component centre marker
-    ax.plot(osc.x, osc.y, "x", color="blue", markersize=10,
+    ax.plot(comp.x, comp.y, "x", color="blue", markersize=10,
             markeredgewidth=2)
 
-    # --- distance annotation: PCB outline ------------------------------------
-    if board_poly is not None and dist_pcb < float("inf"):
-        outline = board_poly.boundary
-        (px, py), (ox, oy) = _nearest_points_coords(pad_geom, outline)
-        line_color = "green" if pcb_ok else "red"
-        ax.plot([px, ox], [py, oy], color=line_color, linewidth=2,
+    # --- distance annotations ------------------------------------------------
+    view_pts_x, view_pts_y = [], []
+    pad_bounds = pad_geom.bounds
+    view_pts_x.extend([pad_bounds[0], pad_bounds[2]])
+    view_pts_y.extend([pad_bounds[1], pad_bounds[3]])
+
+    xytext_offsets = [(10, 10), (10, -15), (-15, 10), (-15, -15)]
+    for idx, d in enumerate(distances):
+        dist_val = d["value"]
+        if dist_val == float("inf"):
+            continue
+
+        target_geom = d.get("target_geom")
+        target_comp = d.get("target_comp")
+
+        # Draw target component footprint if provided
+        if target_comp is not None:
+            fp = _resolve_footprint(target_comp, packages)
+            if fp is not None:
+                _draw_geom(ax, fp, "#FFD080", "darkorange", alpha=0.5,
+                           label=f"{ref_label} ({target_comp.comp_name})")
+                bb = fp.bounds
+                view_pts_x.extend([bb[0], bb[2]])
+                view_pts_y.extend([bb[1], bb[3]])
+                if target_geom is None:
+                    target_geom = fp
+
+        if target_geom is None:
+            continue
+
+        # Distance measurement line
+        try:
+            (px, py), (tx, ty) = _nearest_points_coords(pad_geom, target_geom)
+        except Exception:
+            continue
+
+        dist_ok = dist_val >= min_clearance
+        line_color = "green" if dist_ok else "red"
+        ax.plot([px, tx], [py, ty], color=line_color, linewidth=2,
                 linestyle="--", zorder=5)
-        mid_x, mid_y = (px + ox) / 2, (py + oy) / 2
+        mid_x, mid_y = (px + tx) / 2, (py + ty) / 2
+        view_pts_x.append(tx)
+        view_pts_y.append(ty)
+
+        offset = xytext_offsets[idx % len(xytext_offsets)]
         ax.annotate(
-            f"PCB edge: {dist_pcb:.3f} mm",
+            f"{d['label']}: {dist_val:.3f} mm",
             (mid_x, mid_y),
-            textcoords="offset points", xytext=(10, 10),
+            textcoords="offset points", xytext=offset,
             fontsize=8, fontweight="bold", color=line_color,
             bbox=dict(boxstyle="round,pad=0.3", facecolor="white",
                       edgecolor=line_color, alpha=0.9),
@@ -147,60 +203,16 @@ def render_osc_clearance_image(
             zorder=6,
         )
 
-    # --- nearby BOTHHOLEs and distance annotation ----------------------------
-    if nearest_bth is not None:
-        fp_bth = _resolve_footprint(nearest_bth, packages)
-        if fp_bth is not None:
-            _draw_geom(ax, fp_bth, "#FFD080", "darkorange", alpha=0.5,
-                       label=f"BOTHHOLE ({nearest_bth.comp_name})")
-
-            if dist_bth < float("inf"):
-                (px, py), (bx, by) = _nearest_points_coords(pad_geom, fp_bth)
-                line_color = "green" if bth_ok else "red"
-                ax.plot([px, bx], [py, by], color=line_color, linewidth=2,
-                        linestyle="--", zorder=5)
-                mid_x, mid_y = (px + bx) / 2, (py + by) / 2
-                ax.annotate(
-                    f"BOTHHOLE: {dist_bth:.3f} mm",
-                    (mid_x, mid_y),
-                    textcoords="offset points", xytext=(10, -15),
-                    fontsize=8, fontweight="bold", color=line_color,
-                    bbox=dict(boxstyle="round,pad=0.3", facecolor="white",
-                              edgecolor=line_color, alpha=0.9),
-                    arrowprops=dict(arrowstyle="->", color=line_color, lw=1.0),
-                    zorder=6,
-                )
-
-    # Also draw other nearby BOTHHOLEs (dimmed) for context
-    for bth in all_bothholes:
-        if nearest_bth is not None and bth.comp_name == nearest_bth.comp_name:
+    # --- draw other reference components (dimmed) ----------------------------
+    highlighted = {d.get("target_comp") for d in distances if d.get("target_comp")}
+    for rc in ref_comps:
+        if rc in highlighted:
             continue
-        fp = _resolve_footprint(bth, packages)
+        fp = _resolve_footprint(rc, packages)
         if fp is not None:
             _draw_geom(ax, fp, "#E0D0A0", "tan", alpha=0.3)
 
-    # --- viewport: zoom to OSC pad extent with margin for context ------------
-    pad_bounds = pad_geom.bounds  # (minx, miny, maxx, maxy)
-    span_x = pad_bounds[2] - pad_bounds[0]
-    span_y = pad_bounds[3] - pad_bounds[1]
-    span = max(span_x, span_y, 1.0)
-    # Extend viewport to include nearest BOTHHOLE and PCB edge line if present
-    view_pts_x = [pad_bounds[0], pad_bounds[2]]
-    view_pts_y = [pad_bounds[1], pad_bounds[3]]
-
-    if nearest_bth is not None:
-        fp_bth = _resolve_footprint(nearest_bth, packages)
-        if fp_bth is not None:
-            bb = fp_bth.bounds
-            view_pts_x.extend([bb[0], bb[2]])
-            view_pts_y.extend([bb[1], bb[3]])
-
-    if board_poly is not None and dist_pcb < float("inf"):
-        outline = board_poly.boundary
-        _, (ox, oy) = _nearest_points_coords(pad_geom, outline)
-        view_pts_x.append(ox)
-        view_pts_y.append(oy)
-
+    # --- viewport ------------------------------------------------------------
     vx_min, vx_max = min(view_pts_x), max(view_pts_x)
     vy_min, vy_max = min(view_pts_y), max(view_pts_y)
     v_span = max(vx_max - vx_min, vy_max - vy_min, 1.0)
@@ -213,18 +225,18 @@ def render_osc_clearance_image(
     # --- legend --------------------------------------------------------------
     legend_elements = [
         mpatches.Patch(facecolor=pad_color, edgecolor=pad_edge, alpha=0.55,
-                       label=f"OSC pads"),
+                       label=f"{comp_label} pads"),
         plt.Line2D([], [], color="royalblue", linewidth=1.2,
                    label="Board outline"),
         plt.Line2D([], [], color="green", linewidth=2, linestyle="--",
-                   label=f"Distance >= {_MIN_CLEARANCE_MM} mm (OK)"),
+                   label=f"Distance >= {min_clearance} mm (OK)"),
         plt.Line2D([], [], color="red", linewidth=2, linestyle="--",
-                   label=f"Distance < {_MIN_CLEARANCE_MM} mm (FAIL)"),
+                   label=f"Distance < {min_clearance} mm (FAIL)"),
     ]
-    if nearest_bth is not None:
+    if any(d.get("target_comp") for d in distances):
         legend_elements.insert(1,
             mpatches.Patch(facecolor="#FFD080", edgecolor="darkorange",
-                           alpha=0.5, label="BOTHHOLE (nearest)"))
+                           alpha=0.5, label=f"{ref_label} (nearest)"))
     ax.legend(handles=legend_elements, loc="upper left", fontsize=8)
     ax.set_xlabel("X (mm)")
     ax.set_ylabel("Y (mm)")
