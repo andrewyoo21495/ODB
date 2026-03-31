@@ -535,3 +535,5 @@ class RuleResult:
     message: str = ""
     affected_components: list[str] = field(default_factory=list)
     details: dict = field(default_factory=dict)
+    images: list[dict] = field(default_factory=list)
+    # Each dict: {"path": Path, "title": str, "width": int (px, default 500)}

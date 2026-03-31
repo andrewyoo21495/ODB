@@ -7,6 +7,7 @@ import re
 from pathlib import Path
 
 from openpyxl import Workbook
+from openpyxl.drawing.image import Image as XlImage
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
@@ -66,6 +67,9 @@ def generate_report(results: list[RuleResult], output_path: str | Path,
     output_path.parent.mkdir(parents=True, exist_ok=True)
     wb.save(str(output_path))
     print(f"Checklist report saved: {output_path}")
+
+    # Clean up temporary visualisation images
+    _cleanup_images(results)
 
 
 def _rule_sort_key(result: RuleResult) -> tuple:
@@ -211,73 +215,136 @@ def _create_rule_sheet(wb: Workbook, result: RuleResult):
     columns = result.details.get("columns")
     rows = result.details.get("rows")
 
+    end_row = 6  # after the header block
+
     if isinstance(columns, list) and isinstance(rows, list):
         _write_tabular_details(ws, columns, rows, start_row=7)
+        end_row = 7 + len(rows)  # header row + data rows
 
         # Optional second table (e.g. signal-layer results for CKL-03-015)
         sig_columns = result.details.get("signal_columns")
         sig_rows = result.details.get("signal_rows")
         if isinstance(sig_columns, list) and isinstance(sig_rows, list) and sig_rows:
-            gap_row = 7 + len(rows) + 2  # +1 header, +1 blank
+            gap_row = end_row + 2  # +1 blank
             _write_tabular_details(ws, sig_columns, sig_rows, start_row=gap_row)
+            end_row = gap_row + len(sig_rows)
 
-        _auto_fit_columns(ws)
-        return
+    else:
+        # -- Legacy detail rendering -------------------------------------------
+        if result.affected_components:
+            ws["A7"] = "Affected Components:"
+            ws["A7"].font = Font(bold=True)
+            for i, comp_name in enumerate(result.affected_components):
+                cell = ws.cell(row=8 + i, column=1, value=comp_name)
+                cell.border = _THIN_BORDER
 
-    # -- Legacy detail rendering -----------------------------------------------
-    if result.affected_components:
-        ws["A7"] = "Affected Components:"
-        ws["A7"].font = Font(bold=True)
-        for i, comp_name in enumerate(result.affected_components):
-            cell = ws.cell(row=8 + i, column=1, value=comp_name)
-            cell.border = _THIN_BORDER
+        start_row = 8 + len(result.affected_components) + 2 if result.affected_components else 8
 
-    start_row = 8 + len(result.affected_components) + 2 if result.affected_components else 8
-
-    for key, value in result.details.items():
-        if key in ("columns", "rows"):
-            continue
-        header_cell = ws.cell(row=start_row, column=1, value=key)
-        header_cell.font = Font(bold=True, size=11)
-        start_row += 1
-
-        if isinstance(value, list):
-            hdr_cell = ws.cell(row=start_row, column=1, value="#")
-            hdr_cell.fill = _HEADER_FILL
-            hdr_cell.font = _HEADER_FONT
-            hdr_cell.border = _THIN_BORDER
-            hdr_cell = ws.cell(row=start_row, column=2, value="Detail")
-            hdr_cell.fill = _HEADER_FILL
-            hdr_cell.font = _HEADER_FONT
-            hdr_cell.border = _THIN_BORDER
+        for key, value in result.details.items():
+            if key in ("columns", "rows"):
+                continue
+            header_cell = ws.cell(row=start_row, column=1, value=key)
+            header_cell.font = Font(bold=True, size=11)
             start_row += 1
 
-            for idx, item in enumerate(value, 1):
-                ws.cell(row=start_row, column=1, value=idx).border = _THIN_BORDER
-                ws.cell(row=start_row, column=2, value=str(item)).border = _THIN_BORDER
+            if isinstance(value, list):
+                hdr_cell = ws.cell(row=start_row, column=1, value="#")
+                hdr_cell.fill = _HEADER_FILL
+                hdr_cell.font = _HEADER_FONT
+                hdr_cell.border = _THIN_BORDER
+                hdr_cell = ws.cell(row=start_row, column=2, value="Detail")
+                hdr_cell.fill = _HEADER_FILL
+                hdr_cell.font = _HEADER_FONT
+                hdr_cell.border = _THIN_BORDER
                 start_row += 1
-        elif isinstance(value, dict):
-            hdr_cell = ws.cell(row=start_row, column=1, value="Key")
-            hdr_cell.fill = _HEADER_FILL
-            hdr_cell.font = _HEADER_FONT
-            hdr_cell.border = _THIN_BORDER
-            hdr_cell = ws.cell(row=start_row, column=2, value="Value")
-            hdr_cell.fill = _HEADER_FILL
-            hdr_cell.font = _HEADER_FONT
-            hdr_cell.border = _THIN_BORDER
-            start_row += 1
 
-            for k, v in value.items():
-                ws.cell(row=start_row, column=1, value=str(k)).border = _THIN_BORDER
-                ws.cell(row=start_row, column=2, value=str(v)).border = _THIN_BORDER
+                for idx, item in enumerate(value, 1):
+                    ws.cell(row=start_row, column=1, value=idx).border = _THIN_BORDER
+                    ws.cell(row=start_row, column=2, value=str(item)).border = _THIN_BORDER
+                    start_row += 1
+            elif isinstance(value, dict):
+                hdr_cell = ws.cell(row=start_row, column=1, value="Key")
+                hdr_cell.fill = _HEADER_FILL
+                hdr_cell.font = _HEADER_FONT
+                hdr_cell.border = _THIN_BORDER
+                hdr_cell = ws.cell(row=start_row, column=2, value="Value")
+                hdr_cell.fill = _HEADER_FILL
+                hdr_cell.font = _HEADER_FONT
+                hdr_cell.border = _THIN_BORDER
                 start_row += 1
-        else:
-            ws.cell(row=start_row, column=1, value=str(value)).border = _THIN_BORDER
+
+                for k, v in value.items():
+                    ws.cell(row=start_row, column=1, value=str(k)).border = _THIN_BORDER
+                    ws.cell(row=start_row, column=2, value=str(v)).border = _THIN_BORDER
+                    start_row += 1
+            else:
+                ws.cell(row=start_row, column=1, value=str(value)).border = _THIN_BORDER
+                start_row += 1
+
             start_row += 1
 
-        start_row += 1
+        end_row = start_row
+
+    # -- Visualization images --------------------------------------------------
+    if result.images:
+        _insert_images(ws, result.images, start_row=end_row + 2)
 
     _auto_fit_columns(ws)
+
+
+def _insert_images(ws, images: list[dict], start_row: int):
+    """Insert visualisation images into the worksheet.
+
+    Each entry in *images* is a dict with keys:
+    - ``path``  – Path to a PNG file
+    - ``title`` – caption shown above the image
+    - ``width`` – desired width in pixels (default 500)
+    """
+    _IMG_TITLE_FILL = PatternFill(
+        start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
+
+    row = start_row
+    for img_info in images:
+        img_path = Path(img_info["path"])
+        if not img_path.exists():
+            continue
+
+        # Title row
+        title = img_info.get("title", img_path.stem)
+        title_cell = ws.cell(row=row, column=1, value=title)
+        title_cell.font = Font(bold=True, size=11)
+        title_cell.fill = _IMG_TITLE_FILL
+        row += 1
+
+        # Insert image
+        img = XlImage(str(img_path))
+        target_width = img_info.get("width", 500)
+        scale = target_width / img.width
+        img.width = target_width
+        img.height = int(img.height * scale)
+        ws.add_image(img, f"A{row}")
+
+        # Skip enough rows to accommodate the image (~20 px per row)
+        row += max(1, img.height // 20) + 2
+
+    return row
+
+
+def _cleanup_images(results: list):
+    """Remove temporary visualisation image files after the report is saved."""
+    dirs_to_remove: set[Path] = set()
+    for r in results:
+        for img_info in r.images:
+            p = Path(img_info["path"])
+            if p.exists():
+                dirs_to_remove.add(p.parent)
+                p.unlink(missing_ok=True)
+    for d in dirs_to_remove:
+        try:
+            if d.exists() and not any(d.iterdir()):
+                d.rmdir()
+        except OSError:
+            pass
 
 
 def _write_tabular_details(ws, columns: list[str], rows: list[dict],

@@ -6,6 +6,9 @@ location.  A pad with zero VIAs is flagged as FAIL.
 
 from __future__ import annotations
 
+import tempfile
+from pathlib import Path
+
 from src.checklist.component_classifier import find_mics
 from src.checklist.engine import register_rule
 from src.checklist.geometry_utils import (
@@ -15,6 +18,7 @@ from src.checklist.geometry_utils import (
     lookup_resolved_pads_for_pin,
 )
 from src.checklist.rule_base import ChecklistRule
+from src.checklist.visualizers.ckl_03_013_viz import render_mic_via_image
 from src.models import RuleResult
 from src.visualizer.fid_lookup import (
     build_fid_map,
@@ -55,6 +59,8 @@ class CKL03013(ChecklistRule):
 
         columns = ["comp", "cmp_layer", "pad", "via", "status"]
         rows: list[dict] = []
+        images: list[dict] = []
+        image_dir = Path(tempfile.mkdtemp(prefix="ckl_03_013_"))
 
         for comps, layer_name, is_bottom in [
             (components_top, "Top", False),
@@ -91,6 +97,20 @@ class CKL03013(ChecklistRule):
                         "status": "PASS" if via_count > 0 else "FAIL",
                     })
 
+                # Generate visualisation image for this MIC
+                safe_name = mic.comp_name.replace("/", "_")
+                img_path = image_dir / f"{safe_name}_{layer_name}.png"
+                render_mic_via_image(
+                    mic, pkg, via_positions, is_bottom, img_path,
+                    fid_resolved=fid_resolved,
+                    signal_layer_name=sig_name,
+                )
+                images.append({
+                    "path": img_path,
+                    "title": f"{mic.comp_name} ({layer_name})",
+                    "width": 500,
+                })
+
         fail_count = sum(1 for r in rows if r["status"] == "FAIL")
         passed = fail_count == 0
 
@@ -108,4 +128,5 @@ class CKL03013(ChecklistRule):
                 r["comp"] for r in rows if r["status"] == "FAIL"
             ],
             details={"columns": columns, "rows": rows},
+            images=images,
         )
