@@ -426,11 +426,10 @@ def _create_manage_list_sheet(wb: Workbook, components_top: list,
                                references_dir):
     """Create the 'manage_list' sheet tracking usage frequency of managed parts.
 
-    Four sections are generated:
-    - Capacitors (merged): combined capacitors_10_list + capacitors_41_list
+    Three separate sections are generated:
+    - Capacitors 10-type: capacitors_10_list
+    - Capacitors 41-type: capacitors_41_list
     - Inductors (2S): inductors_2s_list
-    - Capacitors 10-type: capacitors_10_list only (dedicated view)
-    - Inductors 2S: inductors_2s_list only (dedicated view)
 
     Each section shows one row per managed part_name with TOP/BOTTOM/Total
     usage counts, sorted by total count descending.
@@ -443,34 +442,21 @@ def _create_manage_list_sheet(wb: Workbook, components_top: list,
         return
 
     # Load the three active reference CSVs
-    cap10_map  = _load_csv_part_map(ref / "capacitors_10_list.csv")
-    cap41_map  = _load_csv_part_map(ref / "capacitors_41_list.csv")
-    ind2s_map  = _load_csv_part_map(ref / "inductors_2s_list.csv")
-
-    # Merged capacitor map – 10-type entries take precedence for size
-    cap_merged: dict[str, dict] = {}
-    for pn, sz in cap41_map.items():
-        cap_merged[pn] = {"size": sz, "source": "41-type"}
-    for pn, sz in cap10_map.items():
-        cap_merged[pn] = {"size": sz, "source": "10-type"}
-
-    ind_merged: dict[str, dict] = {
-        pn: {"size": sz} for pn, sz in ind2s_map.items()
-    }
-
-    cap10_only: dict[str, dict] = {
-        pn: {"size": sz} for pn, sz in cap10_map.items()
-    }
+    cap10_map = _load_csv_part_map(ref / "capacitors_10_list.csv")
+    cap41_map = _load_csv_part_map(ref / "capacitors_41_list.csv")
+    ind2s_map = _load_csv_part_map(ref / "inductors_2s_list.csv")
 
     sections = [
-        (f"Capacitors ({len(cap_merged)} types)", cap_merged, True),
-        ("Inductors (2S)", ind_merged, False),
-        (f"Capacitors 10-type ({len(cap10_only)} types)", cap10_only, False),
-        (f"Inductors 2S ({len(ind_merged)} types)", ind_merged, False),
+        (f"Capacitors 10-type ({len(cap10_map)} types)",
+         {pn: {"size": sz} for pn, sz in cap10_map.items()}),
+        (f"Capacitors 41-type ({len(cap41_map)} types)",
+         {pn: {"size": sz} for pn, sz in cap41_map.items()}),
+        (f"Inductors 2S ({len(ind2s_map)} types)",
+         {pn: {"size": sz} for pn, sz in ind2s_map.items()}),
     ]
 
     # -- Sheet title --
-    NUM_COLS = 6
+    NUM_COLS = 5
     ws.merge_cells(f"A1:{get_column_letter(NUM_COLS)}1")
     title = ws["A1"]
     title.value = "Managed Parts — Usage Frequency"
@@ -484,14 +470,11 @@ def _create_manage_list_sheet(wb: Workbook, components_top: list,
     _USED_FONT   = Font(color="006100")
     _ZERO_FONT   = Font(color="A0A0A0", italic=True)
 
-    for section_title, part_meta, has_source in sections:
+    for section_title, part_meta in sections:
         if not part_meta:
             continue
 
         usage = _count_usage(set(part_meta.keys()), components_top, components_bot)
-
-        total_on_board = sum(v["total"] for v in usage.values())
-        used_types     = sum(1 for v in usage.values() if v["total"] > 0)
 
         # -- Section header (blue bar) --
         hdr = ws.cell(row=current_row, column=1, value=section_title)
@@ -505,24 +488,8 @@ def _create_manage_list_sheet(wb: Workbook, components_top: list,
         hdr.alignment = Alignment(horizontal="left")
         current_row += 1
 
-        # -- Summary row --
-        summary_text = (
-            f"Managed types: {len(part_meta)}    "
-            f"Types found on board: {used_types}    "
-            f"Total placements: {total_on_board}"
-        )
-        summary = ws.cell(row=current_row, column=1, value=summary_text)
-        summary.font = Font(bold=True)
-        ws.merge_cells(
-            start_row=current_row, start_column=1,
-            end_row=current_row, end_column=NUM_COLS
-        )
-        current_row += 1
-
         # -- Column headers --
         col_headers = ["part_name", "size", "TOP", "BOTTOM", "Total"]
-        if has_source:
-            col_headers.append("source")
         for col, h in enumerate(col_headers, 1):
             cell = ws.cell(row=current_row, column=col, value=h)
             cell.font = Font(bold=True)
@@ -544,9 +511,6 @@ def _create_manage_list_sheet(wb: Workbook, components_top: list,
             row_font = _USED_FONT if is_used else _ZERO_FONT
 
             values = [pn, meta.get("size", ""), cnt["top"], cnt["bottom"], cnt["total"]]
-            if has_source:
-                values.append(meta.get("source", ""))
-
             for col, val in enumerate(values, 1):
                 cell = ws.cell(row=current_row, column=col, value=val)
                 cell.fill = row_fill
