@@ -7,9 +7,9 @@ Produces one PNG per primary component showing:
 - Nearby non-overlapping opposite-side components drawn dimmed for context
 
 Used by: CKL-01-001, CKL-01-003, CKL-01-004, CKL-01-005, CKL-01-006,
-         CKL-01-007, CKL-02-002, CKL-02-006, CKL-02-008, CKL-02-009,
-         CKL-02-010, CKL-02-012, CKL-03-001, CKL-03-016,
-         CKL-02-001, CKL-02-004.
+         CKL-01-007, CKL-02-001, CKL-02-002, CKL-02-004, CKL-02-006,
+         CKL-02-008, CKL-02-009, CKL-02-010, CKL-02-011, CKL-02-012,
+         CKL-03-001, CKL-03-016.
 """
 
 from __future__ import annotations

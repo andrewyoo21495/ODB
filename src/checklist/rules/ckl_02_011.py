@@ -7,7 +7,9 @@ outline.  If even one side overlaps, the placement is flagged as FAIL.
 
 from __future__ import annotations
 
+import tempfile
 from itertools import combinations
+from pathlib import Path
 
 from src.checklist.component_classifier import find_capacitors
 from src.checklist.engine import register_rule
@@ -17,6 +19,7 @@ from src.checklist.geometry_utils import (
 )
 from src.checklist.reference_loader import get_managed_part_names
 from src.checklist.rule_base import ChecklistRule
+from src.checklist.visualizers.overlap_viz import render_overlap_image
 from src.models import Component, RuleResult
 
 
@@ -64,6 +67,8 @@ class CKL02011(ChecklistRule):
 
         columns = ["comp", "part_name", "overlapping_cmp", "status"]
         rows: list[dict] = []
+        image_dir = Path(tempfile.mkdtemp(prefix="ckl_02_011_"))
+        images: list[dict] = []
 
         for layer_comps, layer_name in [
             (components_top, "Top"),
@@ -104,11 +109,15 @@ class CKL02011(ChecklistRule):
 
                 # Check outline overlap with each neighbouring AP/Memory.
                 overlapping_names: list[str] = []
+                overlap_items: list[dict] = []
                 for am in ap_mems:
                     if am.comp_name not in sandwiching_ams:
                         continue
                     if overlaps_component_outline(cap, am, packages):
                         overlapping_names.append(am.comp_name)
+                        overlap_items.append({"comp": am, "status": "FAIL"})
+                    else:
+                        overlap_items.append({"comp": am, "status": "PASS"})
 
                 if overlapping_names:
                     for am_name in overlapping_names:
@@ -125,6 +134,24 @@ class CKL02011(ChecklistRule):
                         "part_name": cap.part_name or "",
                         "overlapping_cmp": "",
                         "status": "PASS",
+                    })
+
+                # --- visualisation ----------------------------------------
+                if overlap_items:
+                    safe = cap.comp_name.replace("/", "_")
+                    img_path = image_dir / f"{safe}_{layer_name}.png"
+                    render_overlap_image(
+                        cap, packages, overlap_items, ap_mems, img_path,
+                        rule_id=self.rule_id,
+                        title="AP/Memory outline overlap",
+                        layer_name=layer_name,
+                        primary_label="Capacitor",
+                        overlap_label="AP/Memory",
+                    )
+                    images.append({
+                        "path": img_path,
+                        "title": f"{cap.comp_name} ({layer_name})",
+                        "width": 500,
                     })
 
         fail_count = sum(1 for r in rows if r["status"] == "FAIL")
@@ -145,4 +172,5 @@ class CKL02011(ChecklistRule):
                 r["comp"] for r in rows if r["status"] == "FAIL"
             ],
             details={"columns": columns, "rows": rows},
+            images=images,
         )
