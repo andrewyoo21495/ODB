@@ -22,7 +22,7 @@ from typing import Optional, Sequence
 
 import numpy as np
 
-from src.models import BBox, Component, EdaData, Package, Pin, PinOutline
+from src.models import BBox, Component, EdaData, Package, Pin, PinOutline, Toeprint
 from src.visualizer.component_overlay import (
     transform_point,
     transform_pts,
@@ -1917,3 +1917,50 @@ def find_bending_vulnerable_areas(
             vulnerable.append(part)
 
     return vulnerable
+
+
+# ---------------------------------------------------------------------------
+# NC (Not Connected) pad detection
+# ---------------------------------------------------------------------------
+
+_NC_NET_NAMES = frozenset({"$NONE$", "NC", "NO_CONNECT", ""})
+
+
+def is_pad_nc(
+    toeprint: Toeprint | None,
+    eda_data: EdaData | None,
+) -> bool:
+    """Return *True* if the pad has no net connection (NC).
+
+    Detection logic (checked in order):
+
+    1. ``toeprint`` is *None* or ``net_num < 0`` → no net assigned → NC.
+    2. ``net_num`` out of range → invalid reference → NC.
+    3. Net name matches a known NC pattern (``$NONE$``, ``NC``, …) → NC.
+    4. **EDA subnet routing check** – the net's subnets are inspected across
+       *all* layers.  If the net contains **no** ``TRC`` (trace), ``VIA``,
+       or ``PLN`` (plane) subnets — i.e. only ``TOP`` (toeprint) subnets
+       exist — the pad has no physical routing and is NC.
+    """
+    if toeprint is None:
+        return False  # Cannot determine; assume connected (conservative)
+    if toeprint.net_num < 0:
+        return True
+    if eda_data is None:
+        return False
+    if toeprint.net_num >= len(eda_data.nets):
+        return True
+
+    net = eda_data.nets[toeprint.net_num]
+
+    # Quick name-based check
+    if (net.name or "").strip().upper() in _NC_NET_NAMES:
+        return True
+
+    # Authoritative check: does this net have any routing at all?
+    for subnet in net.subnets:
+        if subnet.type in ("TRC", "VIA", "PLN"):
+            return False  # Has routing → definitely connected
+
+    # Net exists but has only TOP (toeprint) subnets → no routing → NC
+    return True

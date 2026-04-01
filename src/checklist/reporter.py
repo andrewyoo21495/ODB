@@ -19,8 +19,10 @@ _HEADER_FILL = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="
 _HEADER_FONT = Font(bold=True, color="FFFFFF", size=11)
 _PASS_FILL = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
 _FAIL_FILL = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
+_NC_FILL = PatternFill(start_color="BDD7EE", end_color="BDD7EE", fill_type="solid")
 _PASS_FONT = Font(color="006100", bold=True)
 _FAIL_FONT = Font(color="9C0006", bold=True)
+_NC_FONT = Font(color="1F4E79", bold=True)
 _THIN_BORDER = Border(
     left=Side(style="thin"),
     right=Side(style="thin"),
@@ -378,6 +380,9 @@ def _write_tabular_details(ws, columns: list[str], rows: list[dict],
                 elif val_str == "FAIL":
                     cell.fill = _FAIL_FILL
                     cell.font = _FAIL_FONT
+                elif val_str == "NC":
+                    cell.fill = _NC_FILL
+                    cell.font = _NC_FONT
                 cell.alignment = Alignment(horizontal="center")
 
 
