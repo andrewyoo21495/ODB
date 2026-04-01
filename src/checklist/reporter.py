@@ -390,7 +390,7 @@ def _load_csv_part_map(csv_path: Path) -> dict[str, str]:
     """Load a CSV and return a mapping of part_name -> size."""
     part_map: dict[str, str] = {}
     try:
-        with open(csv_path, newline="", encoding="utf-8") as f:
+        with open(csv_path, newline="", encoding="utf-8-sig") as f:
             reader = csv.DictReader(f)
             for row in reader:
                 pn = (row.get("part_name") or "").strip()
@@ -426,9 +426,11 @@ def _create_manage_list_sheet(wb: Workbook, components_top: list,
                                references_dir):
     """Create the 'manage_list' sheet tracking usage frequency of managed parts.
 
-    Two sections are generated:
-    - Capacitors (51 types): combined capacitors_10_list + capacitors_41_list
+    Four sections are generated:
+    - Capacitors (merged): combined capacitors_10_list + capacitors_41_list
     - Inductors (2S): inductors_2s_list
+    - Capacitors 10-type: capacitors_10_list only (dedicated view)
+    - Inductors 2S: inductors_2s_list only (dedicated view)
 
     Each section shows one row per managed part_name with TOP/BOTTOM/Total
     usage counts, sorted by total count descending.
@@ -456,9 +458,15 @@ def _create_manage_list_sheet(wb: Workbook, components_top: list,
         pn: {"size": sz} for pn, sz in ind2s_map.items()
     }
 
+    cap10_only: dict[str, dict] = {
+        pn: {"size": sz} for pn, sz in cap10_map.items()
+    }
+
     sections = [
         (f"Capacitors ({len(cap_merged)} types)", cap_merged, True),
         ("Inductors (2S)", ind_merged, False),
+        (f"Capacitors 10-type ({len(cap10_only)} types)", cap10_only, False),
+        (f"Inductors 2S ({len(ind_merged)} types)", ind_merged, False),
     ]
 
     # -- Sheet title --
