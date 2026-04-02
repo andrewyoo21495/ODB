@@ -22,7 +22,10 @@ from typing import Optional, Sequence
 
 import numpy as np
 
-from src.models import BBox, Component, EdaData, Package, Pin, PinOutline, Toeprint
+from src.models import (
+    ArcSegment, BBox, Component, EdaData, LineSegment, Package, Pin,
+    PinOutline, Toeprint,
+)
 from src.visualizer.component_overlay import (
     transform_point,
     transform_pts,
@@ -2543,3 +2546,259 @@ def is_near_inner_wall(
             return True
 
     return False
+
+
+# ---------------------------------------------------------------------------
+# Shield Can Fill-Cut Detection
+# ---------------------------------------------------------------------------
+
+def _arc_seg_to_pts(
+    start: tuple[float, float],
+    seg: "ArcSegment",
+    resolution: int = 32,
+) -> list[tuple[float, float]]:
+    """Approximate a single ArcSegment as a polyline (local coords).
+
+    Returns a list of ``resolution`` points that traces the arc from *start*
+    to ``seg.end``, including both endpoints.
+    """
+    xs, ys = start
+    xe, ye = seg.end.x, seg.end.y
+    xc, yc = seg.center.x, seg.center.y
+
+    radius = math.hypot(xs - xc, ys - yc)
+    if radius < 1e-10:
+        return [(xs, ys), (xe, ye)]
+
+    start_angle = math.atan2(ys - yc, xs - xc)
+    end_angle   = math.atan2(ye - yc, xe - xc)
+
+    if seg.clockwise:
+        if end_angle >= start_angle:
+            end_angle -= 2 * math.pi
+    else:
+        if end_angle <= start_angle:
+            end_angle += 2 * math.pi
+
+    pts = []
+    for i in range(resolution):
+        t = start_angle + (end_angle - start_angle) * i / (resolution - 1)
+        pts.append((xc + radius * math.cos(t), yc + radius * math.sin(t)))
+    pts[-1] = (xe, ye)
+    return pts
+
+
+def _extract_fill_cuts_from_contour(
+    contour,
+    arc_resolution: int = 32,
+) -> list[list[tuple[float, float]]]:
+    """Extract fill-cut cap polygon vertices from a CONTOUR outline (local coords).
+
+    A fill-cut is the semicircular end-cap region of an oblong (stadium) pad —
+    the area bounded by the arc and the straight chord at its base.
+
+    For a well-formed stadium contour the sequence of segments contains exactly
+    two arc segments (one per end cap) separated by straight line segments.
+    Each arc's polygon is built by tracing the arc then closing with the chord.
+
+    Returns a list of polygon vertex lists (one per end cap), or an empty list
+    if the contour is not a stadium shape (transition count != 4).
+    """
+    segs = contour.segments
+    if not segs:
+        return []
+
+    arc_flags: list[bool] = [isinstance(seg, ArcSegment) for seg in segs]
+
+    # Verify exactly 4 arc<->line transitions (stadium shape)
+    n = len(segs)
+    transitions = sum(1 for i in range(n) if arc_flags[i] != arc_flags[(i + 1) % n])
+    if transitions != 4:
+        return []
+
+    # Build endpoint sequence: pts[i] is the start point of segs[i]
+    pts: list[tuple[float, float]] = [(contour.start.x, contour.start.y)]
+    for seg in segs:
+        pts.append((seg.end.x, seg.end.y))
+
+    cap_polys: list[list[tuple[float, float]]] = []
+    for i, seg in enumerate(segs):
+        if not arc_flags[i]:
+            continue  # only process arc segments
+
+        arc_start = pts[i]
+        arc_pts = _arc_seg_to_pts(arc_start, seg, arc_resolution)
+
+        # Polygon = arc path + implicit chord (Shapely closes back to first pt)
+        cap_polys.append(arc_pts)
+
+    return cap_polys
+
+
+def _extract_fill_cuts_from_rc(
+    params: dict,
+    min_aspect: float = 1.3,
+    arc_resolution: int = 32,
+) -> list[list[tuple[float, float]]]:
+    """Build fill-cut cap polygon vertices for an RC outline (local coords).
+
+    Treats the rectangle as the bounding box of a stadium pad and constructs
+    two semicircular end-cap polygons.  Returns an empty list when the aspect
+    ratio is below *min_aspect*.
+    """
+    llx = params.get("llx", 0.0)
+    lly = params.get("lly", 0.0)
+    w = params.get("width", 0.0)
+    h = params.get("height", 0.0)
+    if w <= 0 or h <= 0:
+        return []
+    if max(w, h) / min(w, h) < min_aspect:
+        return []
+
+    cx = llx + w / 2.0
+    cy = lly + h / 2.0
+    radius = min(w, h) / 2.0
+    offset = max(w, h) / 2.0 - radius
+
+    cap_polys: list[list[tuple[float, float]]] = []
+
+    if h >= w:
+        # Vertical pad: top cap faces +y (angles pi→0), bottom cap faces -y (angles 0→-pi)
+        top_angles = [math.pi - i * math.pi / (arc_resolution - 1)
+                      for i in range(arc_resolution)]
+        top_pts = [(cx + radius * math.cos(a), (cy + offset) + radius * math.sin(a))
+                   for a in top_angles]
+        cap_polys.append(top_pts)
+
+        bot_angles = [i * math.pi / (arc_resolution - 1) - math.pi
+                      for i in range(arc_resolution)]
+        bot_pts = [(cx + radius * math.cos(a), (cy - offset) + radius * math.sin(a))
+                   for a in bot_angles]
+        cap_polys.append(bot_pts)
+    else:
+        # Horizontal pad: right cap faces +x, left cap faces -x
+        right_angles = [-math.pi / 2 + i * math.pi / (arc_resolution - 1)
+                        for i in range(arc_resolution)]
+        right_pts = [((cx + offset) + radius * math.cos(a), cy + radius * math.sin(a))
+                     for a in right_angles]
+        cap_polys.append(right_pts)
+
+        left_angles = [math.pi / 2 + i * math.pi / (arc_resolution - 1)
+                       for i in range(arc_resolution)]
+        left_pts = [((cx - offset) + radius * math.cos(a), cy + radius * math.sin(a))
+                    for a in left_angles]
+        cap_polys.append(left_pts)
+
+    return cap_polys
+
+
+def _get_pin_fill_cuts(
+    pin: Pin,
+    min_aspect: float = 1.3,
+    min_long_side_mm: float = 0.3,
+    arc_resolution: int = 32,
+) -> list[list[tuple[float, float]]]:
+    """Return fill-cut cap polygon vertex lists for a single pin (local coords).
+
+    Only elongated (line-like) pads are processed.  Dot-like pads — circular
+    (CR/CT), square (SQ), RC with aspect ratio below *min_aspect*, or any pad
+    whose long side is shorter than *min_long_side_mm* — are skipped.
+
+    Tries CONTOUR outlines first (exact arc extraction), then falls back to
+    RC (bounding-box inference).
+    """
+    for outline in pin.outlines:
+        if outline.type == "CONTOUR" and outline.contour is not None:
+            result = _extract_fill_cuts_from_contour(outline.contour, arc_resolution)
+            if result:
+                # Guard: skip near-zero arcs (degenerate pads)
+                chord = math.hypot(
+                    result[0][-1][0] - result[0][0][0],
+                    result[0][-1][1] - result[0][0][1],
+                )
+                if chord >= min_long_side_mm:
+                    return result
+        elif outline.type == "RC":
+            p = outline.params
+            w = p.get("width", 0.0)
+            h = p.get("height", 0.0)
+            if max(w, h) < min_long_side_mm:
+                continue
+            result = _extract_fill_cuts_from_rc(p, min_aspect, arc_resolution)
+            if result:
+                return result
+    return []
+
+
+def detect_fill_cuts(
+    shield_can: Component,
+    packages: list[Package],
+    *,
+    is_bottom: bool = False,
+    min_aspect: float = 1.3,
+    min_long_side_mm: float = 0.3,
+    arc_resolution: int = 32,
+):
+    """Detect fill-cut regions for all pins of a shield can component.
+
+    A fill-cut is the semicircular end-cap area of an oblong (stadium) pad —
+    the region that is "cut" from the rectangular fill to produce the rounded
+    ends.  Each oblong pin produces two fill-cut polygons (one per end).
+
+    Dot-like pads (CR/CT/SQ, RC with aspect ratio below *min_aspect*, or any
+    pad shorter than *min_long_side_mm*) are skipped entirely.
+
+    Detection strategy:
+
+    * **CONTOUR outlines** – the arc segments are extracted directly from the
+      contour and traced into a closed polygon (exact, rotation-invariant).
+    * **RC outlines** (fallback) – semicircular caps are inferred from the
+      bounding-box dimensions.
+
+    Parameters
+    ----------
+    shield_can : Component
+        The shield-can component whose pins are inspected.
+    packages : list[Package]
+        All EDA packages (used for pin/outline lookup).
+    is_bottom : bool
+        Whether the component is on the bottom layer.
+    min_aspect : float
+        Minimum length/width ratio for a pad to be treated as oblong.
+    min_long_side_mm : float
+        Minimum pad long-side length (mm).  Shorter pads are ignored.
+    arc_resolution : int
+        Number of points used to approximate each arc (higher = smoother).
+
+    Returns
+    -------
+    list[ShapelyPolygon]
+        One polygon per fill-cut cap region, in board coordinates.
+        Empty when no oblong pads are found or Shapely is unavailable.
+    """
+    if not _HAS_SHAPELY:
+        return []
+
+    if shield_can.pkg_ref < 0 or shield_can.pkg_ref >= len(packages):
+        return []
+
+    pkg = packages[shield_can.pkg_ref]
+    fill_cuts = []
+
+    for pin in pkg.pins:
+        local_cap_polys = _get_pin_fill_cuts(
+            pin, min_aspect, min_long_side_mm, arc_resolution
+        )
+        for local_pts in local_cap_polys:
+            board_pts = [
+                transform_point(lx, ly, shield_can, is_bottom=is_bottom)
+                for lx, ly in local_pts
+            ]
+            try:
+                poly = ShapelyPolygon(board_pts)
+                if poly.is_valid and not poly.is_empty:
+                    fill_cuts.append(poly)
+            except Exception:
+                pass
+
+    return fill_cuts
