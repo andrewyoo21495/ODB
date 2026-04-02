@@ -120,7 +120,8 @@ def get_component_orientation(comp: Component,
 
 
 def get_major_axis_angle(comp: Component,
-                         packages: list[Package]) -> Optional[float]:
+                         packages: list[Package],
+                         *, is_bottom: bool = False) -> Optional[float]:
     """Return the major-axis direction of *comp* as an angle in degrees [0, 180).
 
     The major axis is the longer side of the component outline (or fallback
@@ -133,7 +134,7 @@ def get_major_axis_angle(comp: Component,
     pkg = packages[comp.pkg_ref]
 
     # Primary: use the component outline polygon in board coordinates
-    outline_poly = get_component_outline(comp, pkg)
+    outline_poly = get_component_outline(comp, pkg, is_bottom=is_bottom)
     if outline_poly is not None:
         # Use minimum rotated rectangle to find the true major axis
         mrr = outline_poly.minimum_rotated_rectangle
@@ -170,7 +171,9 @@ def get_major_axis_angle(comp: Component,
             return None  # Square
 
     local_angle = 0.0 if w >= h else 90.0
-    board_angle = (local_angle + comp.rotation) % 180.0
+    effective_mirror = (not comp.mirror) if is_bottom else comp.mirror
+    rot = -comp.rotation if effective_mirror else comp.rotation
+    board_angle = (local_angle + rot) % 180.0
     return board_angle
 
 
@@ -259,7 +262,8 @@ def _outline_vertices(outline: PinOutline) -> list[tuple[float, float]]:
     return []
 
 
-def get_component_footprint(comp: Component, pkg: Package):
+def get_component_footprint(comp: Component, pkg: Package,
+                            *, is_bottom: bool = False):
     """Build a board-coordinate shapely Polygon from pin outline vertices.
 
     Returns a shapely Polygon (convex hull of all pin outline points),
@@ -275,14 +279,14 @@ def get_component_footprint(comp: Component, pkg: Package):
         for outline in pin.outlines:
             local_verts = _outline_vertices(outline)
             for lv in local_verts:
-                bx, by = transform_point(lv[0], lv[1], comp)
+                bx, by = transform_point(lv[0], lv[1], comp, is_bottom=is_bottom)
                 all_points.append((bx, by))
 
     # Collect from package-level outlines
     for outline in pkg.outlines:
         local_verts = _outline_vertices(outline)
         for lv in local_verts:
-            bx, by = transform_point(lv[0], lv[1], comp)
+            bx, by = transform_point(lv[0], lv[1], comp, is_bottom=is_bottom)
             all_points.append((bx, by))
 
     if len(all_points) >= 3:
@@ -299,7 +303,8 @@ def get_component_footprint(comp: Component, pkg: Package):
     return None
 
 
-def _outline_to_shapely(outline: PinOutline, comp: Component):
+def _outline_to_shapely(outline: PinOutline, comp: Component,
+                        *, is_bottom: bool = False):
     """Convert a single *PinOutline* to a board-coordinate Shapely geometry.
 
     Mirrors the visualiser's ``_outline_to_patch`` but produces Shapely
@@ -321,7 +326,7 @@ def _outline_to_shapely(outline: PinOutline, comp: Component):
         r = p.get("radius", 0.0)
         if r <= 0:
             return None
-        bx, by = transform_point(xc, yc, comp)
+        bx, by = transform_point(xc, yc, comp, is_bottom=is_bottom)
         return ShapelyPoint(bx, by).buffer(r, resolution=32)
 
     # -- Rectangle (RC) – lower-left corner + width + height ------------------
@@ -336,7 +341,7 @@ def _outline_to_shapely(outline: PinOutline, comp: Component):
             (llx, lly), (llx + w, lly),
             (llx + w, lly + h), (llx, lly + h),
         ]
-        board_corners = [transform_point(x, y, comp) for x, y in corners]
+        board_corners = [transform_point(x, y, comp, is_bottom=is_bottom) for x, y in corners]
         try:
             poly = ShapelyPolygon(board_corners)
             return poly if poly.is_valid and not poly.is_empty else None
@@ -354,7 +359,7 @@ def _outline_to_shapely(outline: PinOutline, comp: Component):
             (xc - hs, yc - hs), (xc + hs, yc - hs),
             (xc + hs, yc + hs), (xc - hs, yc + hs),
         ]
-        board_corners = [transform_point(x, y, comp) for x, y in corners]
+        board_corners = [transform_point(x, y, comp, is_bottom=is_bottom) for x, y in corners]
         try:
             poly = ShapelyPolygon(board_corners)
             return poly if poly.is_valid and not poly.is_empty else None
@@ -366,7 +371,7 @@ def _outline_to_shapely(outline: PinOutline, comp: Component):
         verts = contour_to_vertices(outline.contour)
         if len(verts) < 3:
             return None
-        board_verts = [transform_point(v[0], v[1], comp) for v in verts]
+        board_verts = [transform_point(v[0], v[1], comp, is_bottom=is_bottom) for v in verts]
         try:
             poly = ShapelyPolygon(board_verts)
             return poly if poly.is_valid and not poly.is_empty else None
@@ -376,7 +381,8 @@ def _outline_to_shapely(outline: PinOutline, comp: Component):
     return None
 
 
-def get_component_outline(comp: Component, pkg: Package):
+def get_component_outline(comp: Component, pkg: Package,
+                          *, is_bottom: bool = False):
     """Build a board-coordinate polygon from **package-level** outlines only.
 
     Unlike :func:`get_component_footprint` (which includes pin/pad outlines),
@@ -393,7 +399,7 @@ def get_component_outline(comp: Component, pkg: Package):
 
     geoms = []
     for outline in pkg.outlines:
-        g = _outline_to_shapely(outline, comp)
+        g = _outline_to_shapely(outline, comp, is_bottom=is_bottom)
         if g is not None:
             geoms.append(g)
 
@@ -406,20 +412,22 @@ def get_component_outline(comp: Component, pkg: Package):
     return result
 
 
-def _resolve_outline(comp: Component, packages: list[Package]):
+def _resolve_outline(comp: Component, packages: list[Package],
+                     *, is_bottom: bool = False):
     """Look up the package and build the component outline polygon."""
     if comp.pkg_ref < 0 or comp.pkg_ref >= len(packages):
         return None
     pkg = packages[comp.pkg_ref]
-    return get_component_outline(comp, pkg)
+    return get_component_outline(comp, pkg, is_bottom=is_bottom)
 
 
-def _resolve_footprint(comp: Component, packages: list[Package]):
+def _resolve_footprint(comp: Component, packages: list[Package],
+                       *, is_bottom: bool = False):
     """Look up the package and build the footprint polygon."""
     if comp.pkg_ref < 0 or comp.pkg_ref >= len(packages):
         return None
     pkg = packages[comp.pkg_ref]
-    return get_component_footprint(comp, pkg)
+    return get_component_footprint(comp, pkg, is_bottom=is_bottom)
 
 
 # ---------------------------------------------------------------------------
@@ -427,6 +435,7 @@ def _resolve_footprint(comp: Component, packages: list[Package]):
 # ---------------------------------------------------------------------------
 
 def _get_pad_centers(comp: Component, packages: list[Package],
+                     *, is_bottom: bool = False,
                      ) -> list[tuple[float, float]]:
     """Return board-coordinate centre points for each pad of *comp*.
 
@@ -439,7 +448,8 @@ def _get_pad_centers(comp: Component, packages: list[Package],
 
     if pkg.pins:
         return [
-            transform_point(pin.center.x, pin.center.y, comp)
+            transform_point(pin.center.x, pin.center.y, comp,
+                            is_bottom=is_bottom)
             for pin in pkg.pins
         ]
 
@@ -772,7 +782,8 @@ def find_outermost_pad_overlapping_components(
 # 7. Pad-to-Pad Overlap Detection
 # ---------------------------------------------------------------------------
 
-def _get_pad_union(comp: Component, packages: list[Package]):
+def _get_pad_union(comp: Component, packages: list[Package],
+                   *, is_bottom: bool = False):
     """Build a union of all individual pad polygons for *comp*.
 
     For each pin in the package, the pin outline vertices are transformed to
@@ -795,7 +806,7 @@ def _get_pad_union(comp: Component, packages: list[Package]):
             verts = _outline_vertices(outline)
             if not verts:
                 continue
-            board_verts = [transform_point(v[0], v[1], comp) for v in verts]
+            board_verts = [transform_point(v[0], v[1], comp, is_bottom=is_bottom) for v in verts]
             if len(board_verts) >= 3:
                 try:
                     poly = ShapelyPolygon(board_verts)
@@ -806,7 +817,7 @@ def _get_pad_union(comp: Component, packages: list[Package]):
                 except Exception:
                     pass
         if not placed:
-            bx, by = transform_point(pin.center.x, pin.center.y, comp)
+            bx, by = transform_point(pin.center.x, pin.center.y, comp, is_bottom=is_bottom)
             pad_polys.append(ShapelyPoint(bx, by).buffer(0.05))
 
     # Fallback: toeprint positions if package has no pin data
@@ -824,6 +835,9 @@ def find_pad_overlapping_components(
     comp: Component,
     candidates: Sequence[Component],
     packages: list[Package],
+    *,
+    is_bottom_primary: bool = False,
+    is_bottom_candidates: bool = False,
 ) -> list[Component]:
     """Return *candidates* whose pads overlap *comp*'s pads.
 
@@ -834,13 +848,13 @@ def find_pad_overlapping_components(
     if not _HAS_SHAPELY:
         return []
 
-    pad_union_comp = _get_pad_union(comp, packages)
+    pad_union_comp = _get_pad_union(comp, packages, is_bottom=is_bottom_primary)
     if pad_union_comp is None:
         pad_union_comp = ShapelyPoint(comp.x, comp.y).buffer(0.05)
 
     overlapping: list[Component] = []
     for cand in candidates:
-        pad_union_cand = _get_pad_union(cand, packages)
+        pad_union_cand = _get_pad_union(cand, packages, is_bottom=is_bottom_candidates)
         if pad_union_cand is None:
             pad_union_cand = ShapelyPoint(cand.x, cand.y).buffer(0.05)
         if pad_union_comp.intersects(pad_union_cand):
@@ -2064,7 +2078,8 @@ def is_pad_nc(
 # ---------------------------------------------------------------------------
 
 def _get_shield_can_outline(comp: Component,
-                            packages: list[Package]):
+                            packages: list[Package],
+                            *, is_bottom: bool = False):
     """Build an outline polygon for a shield can component.
 
     Tries the component's package outlines first; falls back to the
@@ -2074,11 +2089,11 @@ def _get_shield_can_outline(comp: Component,
     """
     if not _HAS_SHAPELY:
         return None
-    outline = _resolve_outline(comp, packages)
+    outline = _resolve_outline(comp, packages, is_bottom=is_bottom)
     if outline is not None:
         return outline
     # Fallback: convex hull of pad centres
-    centers = _get_pad_centers(comp, packages)
+    centers = _get_pad_centers(comp, packages, is_bottom=is_bottom)
     if len(centers) >= 3:
         return MultiPoint(centers).convex_hull
     return None
@@ -2155,6 +2170,9 @@ def is_on_corner_or_diagonal(
     packages: list[Package],
     corner_tolerance: float = 0.254,
     diagonal_tolerance_deg: float = 10.0,
+    *,
+    cap_is_bottom: bool = False,
+    sc_is_bottom: bool = False,
 ) -> bool:
     """Check if *cap* is near a corner vertex or diagonal section of *shield_can*.
 
@@ -2167,11 +2185,11 @@ def is_on_corner_or_diagonal(
     if not _HAS_SHAPELY:
         return False
 
-    outline = _get_shield_can_outline(shield_can, packages)
+    outline = _get_shield_can_outline(shield_can, packages, is_bottom=sc_is_bottom)
     if outline is None:
         return False
 
-    pad_centers = _get_pad_centers(cap, packages)
+    pad_centers = _get_pad_centers(cap, packages, is_bottom=cap_is_bottom)
     if not pad_centers:
         return False
 
@@ -2198,6 +2216,9 @@ def get_orientation_relative_to_shield_can(
     cap: Component,
     shield_can: Component,
     packages: list[Package],
+    *,
+    cap_is_bottom: bool = False,
+    sc_is_bottom: bool = False,
 ) -> str:
     """Determine if *cap* is Horizontal or Vertical relative to a shield-can edge.
 
@@ -2213,7 +2234,7 @@ def get_orientation_relative_to_shield_can(
     if not _HAS_SHAPELY:
         return "Unknown"
 
-    outline = _get_shield_can_outline(shield_can, packages)
+    outline = _get_shield_can_outline(shield_can, packages, is_bottom=sc_is_bottom)
     if outline is None:
         return "Unknown"
 
@@ -2225,7 +2246,7 @@ def get_orientation_relative_to_shield_can(
     seg_dy = nearest_seg[1][1] - nearest_seg[0][1]
     seg_angle = math.degrees(math.atan2(seg_dy, seg_dx)) % 180.0
 
-    cap_angle = get_major_axis_angle(cap, packages)
+    cap_angle = get_major_axis_angle(cap, packages, is_bottom=cap_is_bottom)
     if cap_angle is None:
         return "Unknown"
 

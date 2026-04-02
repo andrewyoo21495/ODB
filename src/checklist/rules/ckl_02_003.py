@@ -54,6 +54,9 @@ class CKL02003(ChecklistRule):
             (components_top, "Top", components_bot),
             (components_bot, "Bottom", components_top),
         ]:
+            sc_is_bottom = (sc_layer == "Bottom")
+            opp_is_bottom = not sc_is_bottom
+
             shield_cans = find_shield_cans(sc_comps)
             # Filter opposite-side capacitors to managed 41 types
             opp_managed_caps = [
@@ -65,7 +68,9 @@ class CKL02003(ChecklistRule):
 
             for sc in shield_cans:
                 overlaps = find_pad_overlapping_components(
-                    sc, opp_managed_caps, packages
+                    sc, opp_managed_caps, packages,
+                    is_bottom_primary=sc_is_bottom,
+                    is_bottom_candidates=opp_is_bottom,
                 )
                 if not overlaps:
                     continue
@@ -73,9 +78,15 @@ class CKL02003(ChecklistRule):
                 overlap_items: list[dict] = []
 
                 for cap in overlaps:
-                    on_edge = is_on_corner_or_diagonal(cap, sc, packages)
+                    on_edge = is_on_corner_or_diagonal(
+                        cap, sc, packages,
+                        cap_is_bottom=opp_is_bottom,
+                        sc_is_bottom=sc_is_bottom,
+                    )
                     orientation = get_orientation_relative_to_shield_can(
-                        cap, sc, packages
+                        cap, sc, packages,
+                        cap_is_bottom=opp_is_bottom,
+                        sc_is_bottom=sc_is_bottom,
                     )
                     edge_str = "TRUE" if on_edge else "FALSE"
                     status = (
@@ -112,6 +123,8 @@ class CKL02003(ChecklistRule):
                         layer_name=sc_layer,
                         primary_label="Shield Can",
                         overlap_label="Managed cap",
+                        primary_is_bottom=sc_is_bottom,
+                        overlap_is_bottom=opp_is_bottom,
                     )
                     images.append({
                         "path": img_path,

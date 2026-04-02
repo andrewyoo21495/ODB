@@ -92,6 +92,8 @@ def render_overlap_image(
     primary_label: str = "Primary",
     overlap_label: str = "Overlapping",
     context_radius: float = 5.0,
+    primary_is_bottom: bool = False,
+    overlap_is_bottom: bool = False,
 ) -> Path:
     """Render a single primary component with overlapping opposite-side parts.
 
@@ -123,9 +125,9 @@ def render_overlap_image(
     Path
     """
     # --- build geometries ---------------------------------------------------
-    conn_pad_geom = _get_pad_union(primary, packages)
-    conn_outline = _resolve_outline(primary, packages)
-    conn_footprint = _resolve_footprint(primary, packages)
+    conn_pad_geom = _get_pad_union(primary, packages, is_bottom=primary_is_bottom)
+    conn_outline = _resolve_outline(primary, packages, is_bottom=primary_is_bottom)
+    conn_footprint = _resolve_footprint(primary, packages, is_bottom=primary_is_bottom)
     conn_display = conn_outline or conn_footprint or conn_pad_geom
 
     if conn_display is None:
@@ -161,7 +163,7 @@ def render_overlap_image(
     for comp in all_opp_comps:
         if comp.comp_name in overlap_names:
             continue
-        fp = _resolve_footprint(comp, packages)
+        fp = _resolve_footprint(comp, packages, is_bottom=overlap_is_bottom)
         if fp is None:
             continue
         if conn_display is not None and conn_display.distance(fp) > context_radius:
@@ -181,8 +183,8 @@ def render_overlap_image(
         fill_color = "#90EE90" if is_pass else "#FFB0B0"
         edge_color = "darkgreen" if is_pass else "darkred"
 
-        comp_pad_geom = _get_pad_union(comp, packages)
-        comp_fp = _resolve_footprint(comp, packages)
+        comp_pad_geom = _get_pad_union(comp, packages, is_bottom=overlap_is_bottom)
+        comp_fp = _resolve_footprint(comp, packages, is_bottom=overlap_is_bottom)
         draw_geom = comp_pad_geom or comp_fp
 
         if draw_geom is not None:
