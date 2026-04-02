@@ -905,6 +905,7 @@ def cmd_check(args):
     import src.checklist.rules.ckl_01_007  # noqa: F401
     import src.checklist.rules.ckl_02_001  # noqa: F401
     import src.checklist.rules.ckl_02_002  # noqa: F401
+    import src.checklist.rules.ckl_02_003  # noqa: F401
     import src.checklist.rules.ckl_02_004  # noqa: F401
     import src.checklist.rules.ckl_02_006  # noqa: F401
     import src.checklist.rules.ckl_02_008  # noqa: F401

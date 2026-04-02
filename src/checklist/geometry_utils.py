@@ -1964,3 +1964,171 @@ def is_pad_nc(
 
     # Net exists but has only TOP (toeprint) subnets → no routing → NC
     return True
+
+
+# ---------------------------------------------------------------------------
+# Shield Can Geometry Helpers
+# ---------------------------------------------------------------------------
+
+def _get_shield_can_outline(comp: Component,
+                            packages: list[Package]):
+    """Build an outline polygon for a shield can component.
+
+    Tries the component's package outlines first; falls back to the
+    convex hull of pad centre positions (which trace the perimeter).
+
+    Returns a Shapely Polygon or None.
+    """
+    if not _HAS_SHAPELY:
+        return None
+    outline = _resolve_outline(comp, packages)
+    if outline is not None:
+        return outline
+    # Fallback: convex hull of pad centres
+    centers = _get_pad_centers(comp, packages)
+    if len(centers) >= 3:
+        return MultiPoint(centers).convex_hull
+    return None
+
+
+def _find_nearest_segment(
+    point: tuple[float, float],
+    outline_poly,
+) -> tuple[tuple[float, float], tuple[float, float]] | None:
+    """Return the nearest edge segment of *outline_poly* to *point*.
+
+    Returns ``((x1, y1), (x2, y2))`` or ``None``.
+    """
+    coords = list(outline_poly.exterior.coords[:-1])
+    if len(coords) < 2:
+        return None
+
+    pt = ShapelyPoint(point)
+    best_seg = None
+    best_dist = float("inf")
+
+    n = len(coords)
+    for i in range(n):
+        p1 = coords[i]
+        p2 = coords[(i + 1) % n]
+        seg_line = LineString([p1, p2])
+        d = seg_line.distance(pt)
+        if d < best_dist:
+            best_dist = d
+            best_seg = (p1, p2)
+
+    return best_seg
+
+
+def _is_diagonal_segment(
+    p1: tuple[float, float],
+    p2: tuple[float, float],
+    tolerance_deg: float = 10.0,
+) -> bool:
+    """Return True if the segment is neither horizontal nor vertical.
+
+    Angles within *tolerance_deg* of 0°/180° (horizontal) or 90°
+    (vertical) are considered non-diagonal.
+    """
+    dx = p2[0] - p1[0]
+    dy = p2[1] - p1[1]
+    if dx == 0.0 and dy == 0.0:
+        return False
+    angle = math.degrees(math.atan2(dy, dx)) % 180.0  # [0, 180)
+    # Horizontal: angle near 0° or 180° (i.e. near 0° after mod)
+    if angle < tolerance_deg or angle > (180.0 - tolerance_deg):
+        return False
+    # Vertical: angle near 90°
+    if abs(angle - 90.0) < tolerance_deg:
+        return False
+    return True
+
+
+def is_on_corner_or_diagonal(
+    cap: Component,
+    shield_can: Component,
+    packages: list[Package],
+    corner_tolerance: float = 0.254,
+    diagonal_tolerance_deg: float = 10.0,
+) -> bool:
+    """Check if *cap* is near a corner vertex or diagonal section of *shield_can*.
+
+    Returns ``True`` when:
+    - Any of *cap*'s pad centres fall within *corner_tolerance* (mm) of a
+      shield-can outline vertex (corner area), **or**
+    - The nearest shield-can edge segment to *cap*'s board centre is
+      diagonal (neither horizontal nor vertical within tolerance).
+    """
+    if not _HAS_SHAPELY:
+        return False
+
+    outline = _get_shield_can_outline(shield_can, packages)
+    if outline is None:
+        return False
+
+    pad_centers = _get_pad_centers(cap, packages)
+    if not pad_centers:
+        return False
+
+    corners = list(outline.exterior.coords[:-1])
+
+    # Corner proximity check
+    for cx, cy in corners:
+        corner_region = ShapelyPoint(cx, cy).buffer(corner_tolerance)
+        for px, py in pad_centers:
+            if corner_region.contains(ShapelyPoint(px, py)):
+                return True
+
+    # Diagonal segment check — use cap board centre
+    nearest_seg = _find_nearest_segment((cap.x, cap.y), outline)
+    if nearest_seg is not None and _is_diagonal_segment(
+        nearest_seg[0], nearest_seg[1], diagonal_tolerance_deg
+    ):
+        return True
+
+    return False
+
+
+def get_orientation_relative_to_shield_can(
+    cap: Component,
+    shield_can: Component,
+    packages: list[Package],
+) -> str:
+    """Determine if *cap* is Horizontal or Vertical relative to a shield-can edge.
+
+    Finds the nearest edge segment of the shield-can outline to the
+    capacitor's board centre, then compares the capacitor's major axis
+    angle to the segment direction.
+
+    Returns:
+        ``"Horizontal"`` – cap major axis roughly parallel to segment
+        ``"Vertical"``   – cap major axis roughly perpendicular to segment
+        ``"Unknown"``    – insufficient geometry data
+    """
+    if not _HAS_SHAPELY:
+        return "Unknown"
+
+    outline = _get_shield_can_outline(shield_can, packages)
+    if outline is None:
+        return "Unknown"
+
+    nearest_seg = _find_nearest_segment((cap.x, cap.y), outline)
+    if nearest_seg is None:
+        return "Unknown"
+
+    seg_dx = nearest_seg[1][0] - nearest_seg[0][0]
+    seg_dy = nearest_seg[1][1] - nearest_seg[0][1]
+    seg_angle = math.degrees(math.atan2(seg_dy, seg_dx)) % 180.0
+
+    cap_angle = get_major_axis_angle(cap, packages)
+    if cap_angle is None:
+        return "Unknown"
+
+    # Angle difference normalised to [0, 90]
+    diff = abs(cap_angle - seg_angle) % 180.0
+    if diff > 90.0:
+        diff = 180.0 - diff
+
+    if diff < 45.0:
+        return "Horizontal"
+    return "Vertical"
