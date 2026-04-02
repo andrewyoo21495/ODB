@@ -2268,3 +2268,278 @@ def get_orientation_relative_to_shield_can(
     if diff < 45.0:
         return "Horizontal"
     return "Vertical"
+
+
+# ---------------------------------------------------------------------------
+# Shield Can Inner Wall Detection
+# ---------------------------------------------------------------------------
+
+def _classify_pads_by_boundary(
+    pad_centers: list[tuple[float, float]],
+    outline_poly,
+    boundary_tolerance: float = 0.2,
+    *,
+    is_convex_hull_fallback: bool = False,
+) -> tuple[list[tuple[float, float]], list[tuple[float, float]]]:
+    """Classify pad centres as boundary or interior pads.
+
+    A pad is *boundary* when it lies within *boundary_tolerance* (mm) of the
+    outline polygon exterior ring.  A pad that is inside the polygon but
+    farther than the tolerance is *interior* (candidate inner-wall pad).
+
+    When *is_convex_hull_fallback* is True the outline was derived from the
+    convex hull of all pads (no package outline available).  In that case a
+    stricter threshold (3× *boundary_tolerance*) is used so that pads near
+    concave indentations of the real boundary are not misclassified as
+    interior.
+
+    Returns ``(boundary_pads, interior_pads)``.
+    """
+    if not _HAS_SHAPELY:
+        return pad_centers[:], []
+
+    effective_tol = boundary_tolerance * 3.0 if is_convex_hull_fallback else boundary_tolerance
+    boundary_line = outline_poly.exterior
+
+    boundary_pads: list[tuple[float, float]] = []
+    interior_pads: list[tuple[float, float]] = []
+
+    for px, py in pad_centers:
+        pt = ShapelyPoint(px, py)
+        dist = boundary_line.distance(pt)
+        if dist <= effective_tol:
+            boundary_pads.append((px, py))
+        elif outline_poly.contains(pt):
+            interior_pads.append((px, py))
+        # else: outside the polygon — ignore
+
+    return boundary_pads, interior_pads
+
+
+def _cluster_pads_into_walls(
+    pads: list[tuple[float, float]],
+    max_spacing: float | None = None,
+    *,
+    min_pads_per_wall: int = 2,
+) -> list[list[tuple[float, float]]]:
+    """Group interior pads into wall segments via a proximity graph.
+
+    Pads within *max_spacing* (mm) of each other are considered neighbours.
+    Connected components of the resulting graph form candidate wall groups.
+    Each group with at least *min_pads_per_wall* pads is ordered along its
+    principal axis (PCA) so the resulting list traces the wall linearly.
+
+    If *max_spacing* is ``None`` an adaptive threshold is computed as
+    ``2.5 × median(nearest-neighbour distances)`` clamped to [0.5, 5.0] mm.
+
+    Returns a list of ordered pad groups.
+    """
+    n = len(pads)
+    if n < min_pads_per_wall:
+        return []
+
+    pts = np.array(pads)  # (n, 2)
+
+    # --- pairwise distance matrix ---
+    diff = pts[:, np.newaxis, :] - pts[np.newaxis, :, :]  # (n, n, 2)
+    dist_matrix = np.sqrt((diff ** 2).sum(axis=2))         # (n, n)
+
+    # --- adaptive spacing ---
+    if max_spacing is None:
+        np.fill_diagonal(dist_matrix, np.inf)
+        nn_dists = dist_matrix.min(axis=1)
+        np.fill_diagonal(dist_matrix, 0.0)
+        if n >= 3:
+            max_spacing = float(np.clip(2.5 * np.median(nn_dists), 0.5, 5.0))
+        else:
+            max_spacing = 2.0
+
+    # --- build adjacency & BFS ---
+    adjacency: list[list[int]] = [[] for _ in range(n)]
+    for i in range(n):
+        for j in range(i + 1, n):
+            if dist_matrix[i, j] <= max_spacing:
+                adjacency[i].append(j)
+                adjacency[j].append(i)
+
+    visited = [False] * n
+    components: list[list[int]] = []
+    for start in range(n):
+        if visited[start]:
+            continue
+        queue = [start]
+        visited[start] = True
+        comp: list[int] = []
+        while queue:
+            node = queue.pop(0)
+            comp.append(node)
+            for nb in adjacency[node]:
+                if not visited[nb]:
+                    visited[nb] = True
+                    queue.append(nb)
+        components.append(comp)
+
+    # --- order each component along principal axis ---
+    walls: list[list[tuple[float, float]]] = []
+    for comp in components:
+        if len(comp) < min_pads_per_wall:
+            continue
+        group = pts[comp]  # (m, 2)
+        centroid = group.mean(axis=0)
+        centred = group - centroid
+        cov = np.cov(centred, rowvar=False)
+        eigenvalues, eigenvectors = np.linalg.eigh(cov)
+        # Principal axis = eigenvector with largest eigenvalue
+        principal = eigenvectors[:, np.argmax(eigenvalues)]
+        projections = centred @ principal
+        order = np.argsort(projections)
+        ordered = [tuple(group[i]) for i in order]
+        walls.append(ordered)
+
+    return walls
+
+
+def detect_inner_walls(
+    shield_can: Component,
+    packages: list[Package],
+    *,
+    is_bottom: bool = False,
+    boundary_tolerance: float = 0.2,
+    max_pad_spacing: float | None = None,
+    min_pads_per_wall: int = 2,
+):
+    """Detect inner wall segments inside a shield can.
+
+    Identifies pads that lie inside the shield-can outline but are not part
+    of the outer perimeter, clusters them into linear groups, and returns
+    each group as a Shapely ``LineString``.
+
+    Parameters
+    ----------
+    shield_can : Component
+        The shield-can component.
+    packages : list[Package]
+        All EDA packages (used for outline / pin lookup).
+    is_bottom : bool
+        Whether the shield can is on the bottom layer.
+    boundary_tolerance : float
+        Distance (mm) from outline to be considered a boundary pad.
+    max_pad_spacing : float | None
+        Maximum distance (mm) between adjacent inner-wall pads.  ``None``
+        enables adaptive spacing based on pad pitch.
+    min_pads_per_wall : int
+        Minimum pad count for a cluster to be considered a wall.
+
+    Returns
+    -------
+    list[LineString]
+        Detected inner walls (empty when none found or Shapely unavailable).
+    """
+    if not _HAS_SHAPELY:
+        return []
+
+    outline = _get_shield_can_outline(shield_can, packages, is_bottom=is_bottom)
+    if outline is None:
+        return []
+
+    # Determine whether the outline came from convex-hull fallback
+    is_fallback = _resolve_outline(shield_can, packages, is_bottom=is_bottom) is None
+
+    pad_centers = _get_pad_centers(shield_can, packages, is_bottom=is_bottom)
+    if len(pad_centers) < min_pads_per_wall:
+        return []
+
+    _boundary, interior = _classify_pads_by_boundary(
+        pad_centers, outline, boundary_tolerance,
+        is_convex_hull_fallback=is_fallback,
+    )
+
+    if len(interior) < min_pads_per_wall:
+        return []
+
+    groups = _cluster_pads_into_walls(
+        interior, max_pad_spacing, min_pads_per_wall=min_pads_per_wall,
+    )
+
+    walls = [LineString(g) for g in groups if len(g) >= 2]
+    return walls
+
+
+def find_nearest_inner_wall(
+    point: tuple[float, float],
+    inner_walls,
+):
+    """Return the nearest inner wall to *point* and its distance.
+
+    Parameters
+    ----------
+    point : tuple[float, float]
+        Query point in board coordinates (mm).
+    inner_walls : list[LineString]
+        Inner walls as returned by :func:`detect_inner_walls`.
+
+    Returns
+    -------
+    tuple[LineString, float] | None
+        ``(nearest_wall, distance)`` or ``None`` when *inner_walls* is empty.
+    """
+    if not inner_walls or not _HAS_SHAPELY:
+        return None
+
+    pt = ShapelyPoint(point)
+    best_wall = None
+    best_dist = float("inf")
+    for wall in inner_walls:
+        d = wall.distance(pt)
+        if d < best_dist:
+            best_dist = d
+            best_wall = wall
+    return (best_wall, best_dist)
+
+
+def is_near_inner_wall(
+    comp: Component,
+    shield_can: Component,
+    packages: list[Package],
+    distance_threshold: float = 0.5,
+    *,
+    comp_is_bottom: bool = False,
+    sc_is_bottom: bool = False,
+    inner_walls=None,
+    boundary_tolerance: float = 0.2,
+) -> bool:
+    """Check if *comp* is within *distance_threshold* of an inner wall.
+
+    Tests both the component board centre and all of its pad centres.
+
+    Parameters
+    ----------
+    inner_walls : list[LineString] | None
+        Pre-computed inner walls (avoids recomputation when checking
+        multiple components against the same shield can).
+    """
+    if not _HAS_SHAPELY:
+        return False
+
+    if inner_walls is None:
+        inner_walls = detect_inner_walls(
+            shield_can, packages,
+            is_bottom=sc_is_bottom,
+            boundary_tolerance=boundary_tolerance,
+        )
+    if not inner_walls:
+        return False
+
+    # Check component board centre
+    result = find_nearest_inner_wall((comp.x, comp.y), inner_walls)
+    if result is not None and result[1] <= distance_threshold:
+        return True
+
+    # Check pad centres
+    pad_centers = _get_pad_centers(comp, packages, is_bottom=comp_is_bottom)
+    for px, py in pad_centers:
+        result = find_nearest_inner_wall((px, py), inner_walls)
+        if result is not None and result[1] <= distance_threshold:
+            return True
+
+    return False
