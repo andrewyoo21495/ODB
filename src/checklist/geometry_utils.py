@@ -299,26 +299,111 @@ def get_component_footprint(comp: Component, pkg: Package):
     return None
 
 
-def get_component_outline(comp: Component, pkg: Package):
-    """Build a board-coordinate polygon from **package-level** outlines only.
+def _outline_to_shapely(outline: PinOutline, comp: Component):
+    """Convert a single *PinOutline* to a board-coordinate Shapely geometry.
 
-    Unlike :func:`get_component_footprint` (which includes pin/pad outlines),
-    this returns only the physical component body outline.  Returns a shapely
-    Polygon (convex hull of package outline points) or None.
+    Mirrors the visualiser's ``_outline_to_patch`` but produces Shapely
+    objects instead of matplotlib patches, preserving the **exact original
+    shape** (circles, rectangles, squares, contours) rather than reducing
+    everything to a convex hull.
+
+    Returns a Shapely geometry or *None* for unknown / degenerate shapes.
     """
     if not _HAS_SHAPELY:
         return None
 
-    pts: list[tuple[float, float]] = []
-    for outline in pkg.outlines:
-        local_verts = _outline_vertices(outline)
-        for lv in local_verts:
-            bx, by = transform_point(lv[0], lv[1], comp)
-            pts.append((bx, by))
+    p = outline.params
 
-    if len(pts) >= 3:
-        return MultiPoint(pts).convex_hull
+    # -- Circle (CR) or rounded/chamfered circle (CT) -------------------------
+    if outline.type in ("CR", "CT"):
+        xc = p.get("xc", 0.0)
+        yc = p.get("yc", 0.0)
+        r = p.get("radius", 0.0)
+        if r <= 0:
+            return None
+        bx, by = transform_point(xc, yc, comp)
+        return ShapelyPoint(bx, by).buffer(r, resolution=32)
+
+    # -- Rectangle (RC) – lower-left corner + width + height ------------------
+    if outline.type == "RC":
+        llx = p.get("llx", 0.0)
+        lly = p.get("lly", 0.0)
+        w = p.get("width", 0.0)
+        h = p.get("height", 0.0)
+        if w <= 0 or h <= 0:
+            return None
+        corners = [
+            (llx, lly), (llx + w, lly),
+            (llx + w, lly + h), (llx, lly + h),
+        ]
+        board_corners = [transform_point(x, y, comp) for x, y in corners]
+        try:
+            poly = ShapelyPolygon(board_corners)
+            return poly if poly.is_valid and not poly.is_empty else None
+        except Exception:
+            return None
+
+    # -- Square (SQ) – centre + half-side -------------------------------------
+    if outline.type == "SQ":
+        xc = p.get("xc", 0.0)
+        yc = p.get("yc", 0.0)
+        hs = p.get("half_side", 0.0)
+        if hs <= 0:
+            return None
+        corners = [
+            (xc - hs, yc - hs), (xc + hs, yc - hs),
+            (xc + hs, yc + hs), (xc - hs, yc + hs),
+        ]
+        board_corners = [transform_point(x, y, comp) for x, y in corners]
+        try:
+            poly = ShapelyPolygon(board_corners)
+            return poly if poly.is_valid and not poly.is_empty else None
+        except Exception:
+            return None
+
+    # -- Complex contour (CONTOUR / OB) ---------------------------------------
+    if outline.type == "CONTOUR" and outline.contour is not None:
+        verts = contour_to_vertices(outline.contour)
+        if len(verts) < 3:
+            return None
+        board_verts = [transform_point(v[0], v[1], comp) for v in verts]
+        try:
+            poly = ShapelyPolygon(board_verts)
+            return poly if poly.is_valid and not poly.is_empty else None
+        except Exception:
+            return None
+
     return None
+
+
+def get_component_outline(comp: Component, pkg: Package):
+    """Build a board-coordinate polygon from **package-level** outlines only.
+
+    Unlike :func:`get_component_footprint` (which includes pin/pad outlines),
+    this returns only the physical component body outline.
+
+    Each outline entry in the package is converted to its **exact** Shapely
+    geometry (rectangle, circle, contour, etc.) and the results are combined
+    with ``unary_union``.  This preserves concave, L-shaped, and circular
+    outlines faithfully — matching the yellow boundary drawn by the
+    visualiser's ``show_pkg_outlines`` mode.
+    """
+    if not _HAS_SHAPELY:
+        return None
+
+    geoms = []
+    for outline in pkg.outlines:
+        g = _outline_to_shapely(outline, comp)
+        if g is not None:
+            geoms.append(g)
+
+    if not geoms:
+        return None
+
+    result = unary_union(geoms)
+    if result.is_empty:
+        return None
+    return result
 
 
 def _resolve_outline(comp: Component, packages: list[Package]):
@@ -386,8 +471,16 @@ def is_on_edge(comp_a: Component, comp_b: Component,
     if not pad_centers or outline_b is None:
         return False
 
-    # Extract corner vertices of comp_b's outline (exclude closing duplicate)
-    corners = list(outline_b.exterior.coords[:-1])
+    # Extract corner vertices of comp_b's outline (exclude closing duplicate).
+    # The outline may be a MultiPolygon when the package has multiple outline
+    # entries, so collect exterior coords from all constituent polygons.
+    corners: list[tuple[float, float]] = []
+    if hasattr(outline_b, "geoms"):
+        for g in outline_b.geoms:
+            if hasattr(g, "exterior"):
+                corners.extend(g.exterior.coords[:-1])
+    elif hasattr(outline_b, "exterior"):
+        corners = list(outline_b.exterior.coords[:-1])
 
     for cx, cy in corners:
         corner_region = ShapelyPoint(cx, cy).buffer(tolerance)
@@ -1999,23 +2092,35 @@ def _find_nearest_segment(
 
     Returns ``((x1, y1), (x2, y2))`` or ``None``.
     """
-    coords = list(outline_poly.exterior.coords[:-1])
-    if len(coords) < 2:
+    # Collect exterior coords from all constituent polygons when the outline
+    # is a MultiPolygon (multiple package outline entries).
+    all_rings: list[list[tuple[float, float]]] = []
+    if hasattr(outline_poly, "geoms"):
+        for g in outline_poly.geoms:
+            if hasattr(g, "exterior"):
+                all_rings.append(list(g.exterior.coords[:-1]))
+    elif hasattr(outline_poly, "exterior"):
+        all_rings.append(list(outline_poly.exterior.coords[:-1]))
+
+    if not all_rings:
         return None
 
     pt = ShapelyPoint(point)
     best_seg = None
     best_dist = float("inf")
 
-    n = len(coords)
-    for i in range(n):
-        p1 = coords[i]
-        p2 = coords[(i + 1) % n]
-        seg_line = LineString([p1, p2])
-        d = seg_line.distance(pt)
-        if d < best_dist:
-            best_dist = d
-            best_seg = (p1, p2)
+    for coords in all_rings:
+        n = len(coords)
+        if n < 2:
+            continue
+        for i in range(n):
+            p1 = coords[i]
+            p2 = coords[(i + 1) % n]
+            seg_line = LineString([p1, p2])
+            d = seg_line.distance(pt)
+            if d < best_dist:
+                best_dist = d
+                best_seg = (p1, p2)
 
     return best_seg
 
