@@ -568,6 +568,9 @@ def find_overlapping_components(
     comp: Component,
     candidates: Sequence[Component],
     packages: list[Package],
+    *,
+    is_bottom_primary: bool = False,
+    is_bottom_candidates: bool = False,
 ) -> list[Component]:
     """Return *candidates* whose footprints overlap *comp*'s footprint.
 
@@ -577,14 +580,14 @@ def find_overlapping_components(
     if not _HAS_SHAPELY:
         return []
 
-    fp_comp = _resolve_footprint(comp, packages)
+    fp_comp = _resolve_footprint(comp, packages, is_bottom=is_bottom_primary)
     if fp_comp is None:
         # Fallback: use a small box around the centre
         fp_comp = ShapelyPoint(comp.x, comp.y).buffer(0.1)
 
     overlapping: list[Component] = []
     for cand in candidates:
-        fp_cand = _resolve_footprint(cand, packages)
+        fp_cand = _resolve_footprint(cand, packages, is_bottom=is_bottom_candidates)
         if fp_cand is None:
             fp_cand = ShapelyPoint(cand.x, cand.y).buffer(0.1)
         if fp_comp.intersects(fp_cand):
@@ -596,6 +599,9 @@ def overlaps_component_outline(
     comp: Component,
     target: Component,
     packages: list[Package],
+    *,
+    is_bottom_comp: bool = False,
+    is_bottom_target: bool = False,
 ) -> bool:
     """Return True if *comp*'s footprint overlaps *target*'s component outline.
 
@@ -607,8 +613,8 @@ def overlaps_component_outline(
     if not _HAS_SHAPELY:
         return False
 
-    fp_comp = _resolve_footprint(comp, packages)
-    outline_target = _resolve_outline(target, packages)
+    fp_comp = _resolve_footprint(comp, packages, is_bottom=is_bottom_comp)
+    outline_target = _resolve_outline(target, packages, is_bottom=is_bottom_target)
 
     if fp_comp is None or outline_target is None:
         return False
@@ -706,7 +712,8 @@ def find_outermost_pin_indices(pins: list[Pin]) -> set[int]:
     return outermost
 
 
-def _get_outermost_pad_union(comp: Component, packages: list[Package]):
+def _get_outermost_pad_union(comp: Component, packages: list[Package],
+                             *, is_bottom: bool = False):
     """Build a union of only the **outermost** pad polygons for *comp*.
 
     Same as :func:`_get_pad_union` but restricted to pins whose indices
@@ -731,7 +738,7 @@ def _get_outermost_pad_union(comp: Component, packages: list[Package]):
             verts = _outline_vertices(outline)
             if not verts:
                 continue
-            board_verts = [transform_point(v[0], v[1], comp) for v in verts]
+            board_verts = [transform_point(v[0], v[1], comp, is_bottom=is_bottom) for v in verts]
             if len(board_verts) >= 3:
                 try:
                     poly = ShapelyPolygon(board_verts)
@@ -742,7 +749,7 @@ def _get_outermost_pad_union(comp: Component, packages: list[Package]):
                 except Exception:
                     pass
         if not placed:
-            bx, by = transform_point(pin.center.x, pin.center.y, comp)
+            bx, by = transform_point(pin.center.x, pin.center.y, comp, is_bottom=is_bottom)
             pad_polys.append(ShapelyPoint(bx, by).buffer(0.05))
 
     if not pad_polys:
@@ -755,6 +762,9 @@ def find_outermost_pad_overlapping_components(
     comp: Component,
     candidates: Sequence[Component],
     packages: list[Package],
+    *,
+    is_bottom_primary: bool = False,
+    is_bottom_candidates: bool = False,
 ) -> list[Component]:
     """Return *candidates* whose **outermost** pads overlap *comp*'s pads.
 
@@ -764,13 +774,13 @@ def find_outermost_pad_overlapping_components(
     if not _HAS_SHAPELY:
         return []
 
-    pad_union_comp = _get_pad_union(comp, packages)
+    pad_union_comp = _get_pad_union(comp, packages, is_bottom=is_bottom_primary)
     if pad_union_comp is None:
         pad_union_comp = ShapelyPoint(comp.x, comp.y).buffer(0.05)
 
     overlapping: list[Component] = []
     for cand in candidates:
-        outermost_union = _get_outermost_pad_union(cand, packages)
+        outermost_union = _get_outermost_pad_union(cand, packages, is_bottom=is_bottom_candidates)
         if outermost_union is None:
             outermost_union = ShapelyPoint(cand.x, cand.y).buffer(0.05)
         if pad_union_comp.intersects(outermost_union):

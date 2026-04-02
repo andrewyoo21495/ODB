@@ -47,6 +47,9 @@ class CKL03016(ChecklistRule):
             (find_oscillators(components_top), "Top", components_bot),
             (find_oscillators(components_bot), "Bottom", components_top),
         ]:
+            osc_is_bottom = (osc_layer == "Bottom")
+            opp_is_bottom = not osc_is_bottom
+
             opp_interposers = find_interposers(opp_comps)
             opp_shield_cans = find_shield_cans(opp_comps)
             opp_simsockets = find_simsockets(opp_comps)
@@ -68,7 +71,11 @@ class CKL03016(ChecklistRule):
                 continue
 
             for osc in oscs:
-                overlaps = find_overlapping_components(osc, opp_targets, packages)
+                overlaps = find_overlapping_components(
+                    osc, opp_targets, packages,
+                    is_bottom_primary=osc_is_bottom,
+                    is_bottom_candidates=opp_is_bottom,
+                )
 
                 overlap_items: list[dict] = []
                 if overlaps:
@@ -99,6 +106,8 @@ class CKL03016(ChecklistRule):
                         title="Opposite-side overlap on OSC",
                         layer_name=osc_layer,
                         primary_label="OSC",
+                        primary_is_bottom=osc_is_bottom,
+                        overlap_is_bottom=opp_is_bottom,
                     )
                     images.append({"path": img_path,
                                    "title": f"{osc.comp_name} ({osc_layer})",

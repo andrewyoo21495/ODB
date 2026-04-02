@@ -44,7 +44,8 @@ def _classify_opp_type(c, interposers, simsockets, shield_cans):
 
 
 def _check_overlaps(comp, comp_layer, interposers, full_pad_targets,
-                    opp_type_fn, packages, rows):
+                    opp_type_fn, packages, rows,
+                    *, comp_is_bottom=False, opp_is_bottom=False):
     """Run overlap checks for a single component against opposite-side targets.
 
     - Interposers: checked against outermost pads only
@@ -57,9 +58,16 @@ def _check_overlaps(comp, comp_layer, interposers, full_pad_targets,
 
     # --- Interposer checks (outermost pads) ---
     if interposers:
-        outline_ovl = find_overlapping_components(comp, interposers, packages)
+        outline_ovl = find_overlapping_components(
+            comp, interposers, packages,
+            is_bottom_primary=comp_is_bottom,
+            is_bottom_candidates=opp_is_bottom,
+        )
         pad_ovl = find_outermost_pad_overlapping_components(
-            comp, interposers, packages)
+            comp, interposers, packages,
+            is_bottom_primary=comp_is_bottom,
+            is_bottom_candidates=opp_is_bottom,
+        )
 
         if pad_ovl:
             for ovl in pad_ovl:
@@ -93,9 +101,15 @@ def _check_overlaps(comp, comp_layer, interposers, full_pad_targets,
     # --- Connector / SIM socket / Shield Can checks (all pads) ---
     if full_pad_targets:
         outline_ovl = find_overlapping_components(
-            comp, full_pad_targets, packages)
+            comp, full_pad_targets, packages,
+            is_bottom_primary=comp_is_bottom,
+            is_bottom_candidates=opp_is_bottom,
+        )
         pad_ovl = find_pad_overlapping_components(
-            comp, full_pad_targets, packages)
+            comp, full_pad_targets, packages,
+            is_bottom_primary=comp_is_bottom,
+            is_bottom_candidates=opp_is_bottom,
+        )
 
         if pad_ovl:
             for ovl in pad_ovl:
@@ -153,6 +167,9 @@ class CKL01001(ChecklistRule):
             (components_top, "Top", components_bot),
             (components_bot, "Bottom", components_top),
         ]:
+            comp_is_bottom = (layer == "Bottom")
+            opp_is_bottom = not comp_is_bottom
+
             opp_interposers = find_interposers(opp_comps)
             opp_connectors = find_connectors(opp_comps)
             opp_simsockets = find_simsockets(opp_comps)
@@ -169,6 +186,8 @@ class CKL01001(ChecklistRule):
                 items = _check_overlaps(
                     ic, layer, opp_interposers, ic_full_targets,
                     opp_type_fn, packages, rows,
+                    comp_is_bottom=comp_is_bottom,
+                    opp_is_bottom=opp_is_bottom,
                 )
                 if items:
                     safe = ic.comp_name.replace("/", "_")
@@ -179,6 +198,8 @@ class CKL01001(ChecklistRule):
                         title="Opposite-side overlap",
                         layer_name=layer,
                         primary_label="IC",
+                        primary_is_bottom=comp_is_bottom,
+                        overlap_is_bottom=opp_is_bottom,
                     )
                     images.append({"path": img_path,
                                    "title": f"{ic.comp_name} ({layer})",
@@ -191,6 +212,8 @@ class CKL01001(ChecklistRule):
                 items = _check_overlaps(
                     flt, layer, opp_interposers, filter_full_targets,
                     opp_type_fn, packages, rows,
+                    comp_is_bottom=comp_is_bottom,
+                    opp_is_bottom=opp_is_bottom,
                 )
                 if items:
                     safe = flt.comp_name.replace("/", "_")
@@ -201,6 +224,8 @@ class CKL01001(ChecklistRule):
                         title="Opposite-side overlap",
                         layer_name=layer,
                         primary_label="Filter",
+                        primary_is_bottom=comp_is_bottom,
+                        overlap_is_bottom=opp_is_bottom,
                     )
                     images.append({"path": img_path,
                                    "title": f"{flt.comp_name} ({layer})",

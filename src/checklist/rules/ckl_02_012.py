@@ -59,6 +59,9 @@ class CKL02012(ChecklistRule):
             (components_top, "Top", components_bot),
             (components_bot, "Bottom", components_top),
         ]:
+            ap_is_bottom = (ap_layer == "Bottom")
+            ind_is_bottom = not ap_is_bottom
+
             ap_comps = _find_ap_memory(ap_layer_comps)
             if not ap_comps:
                 continue
@@ -71,7 +74,9 @@ class CKL02012(ChecklistRule):
             for ap in ap_comps:
                 # Find inductors overlapping opposite side of AP/Memory
                 overlapping_inds = find_pad_overlapping_components(
-                    ap, opp_inductors, packages
+                    ap, opp_inductors, packages,
+                    is_bottom_primary=ap_is_bottom,
+                    is_bottom_candidates=ind_is_bottom,
                 )
                 # Filter to size >= 2012
                 filtered = filter_by_size(
@@ -84,7 +89,9 @@ class CKL02012(ChecklistRule):
                     # side of this inductor (i.e. same side as the AP/Memory)
                     same_side_shield_cans = find_shield_cans(ap_layer_comps)
                     sc_overlaps = find_pad_overlapping_components(
-                        ind, same_side_shield_cans, packages
+                        ind, same_side_shield_cans, packages,
+                        is_bottom_primary=ind_is_bottom,
+                        is_bottom_candidates=ap_is_bottom,
                     )
 
                     if sc_overlaps:
@@ -110,6 +117,8 @@ class CKL02012(ChecklistRule):
                         layer_name=ap_layer,
                         primary_label="AP/Memory",
                         overlap_label="Inductor",
+                        primary_is_bottom=ap_is_bottom,
+                        overlap_is_bottom=ind_is_bottom,
                     )
                     images.append({"path": img_path,
                                    "title": f"{ap.comp_name} ({ap_layer})",

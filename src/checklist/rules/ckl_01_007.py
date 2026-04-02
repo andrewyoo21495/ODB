@@ -59,6 +59,9 @@ class CKL01007(ChecklistRule):
             if not sensors:
                 continue
 
+            sensor_is_bottom = (sensor_layer == "Bottom")
+            opp_is_bottom = not sensor_is_bottom
+
             opp_ics = find_ics(opp_comps)
             opp_shield_cans = find_shield_cans(opp_comps)
             opp_connectors = find_connectors(opp_comps)
@@ -67,6 +70,8 @@ class CKL01007(ChecklistRule):
             for sensor in sensors:
                 overlaps = find_overlapping_components(
                     sensor, opp_targets, packages,
+                    is_bottom_primary=sensor_is_bottom,
+                    is_bottom_candidates=opp_is_bottom,
                 )
 
                 overlap_items: list[dict] = []
@@ -96,6 +101,8 @@ class CKL01007(ChecklistRule):
                         title="Sensing area overlap",
                         layer_name=sensor_layer,
                         primary_label="Air Pressure Sensor",
+                        primary_is_bottom=sensor_is_bottom,
+                        overlap_is_bottom=opp_is_bottom,
                     )
                     images.append({"path": img_path,
                                    "title": f"{sensor.comp_name} ({sensor_layer})",
