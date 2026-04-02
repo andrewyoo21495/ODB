@@ -119,7 +119,7 @@ class ChecklistGUI:
         thread.start()
 
     def _execute(self, odb_path: str, output_path: str):
-        cmd = [sys.executable, "main.py", "check", odb_path]
+        cmd = [sys.executable, "-u", "main.py", "check", odb_path]
         if output_path:
             cmd += ["--output", output_path]
 
