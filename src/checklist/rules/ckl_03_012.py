@@ -1,8 +1,11 @@
-"""CKL-03-012: OSC components — PCB edge and BOTHHOLE clearance.
+"""CKL-03-012: OSC components — PCB edge, BOTHHOLE clearance, and Shield Can check.
 
 Ensure Oscillator (OSC) component pads are placed at least 1mm away from
 the PCB edge and BOTHHOLE components.  Distances are measured from the
 actual pad geometry of the OSC component (not from its outline or centre).
+
+Additionally, record whether each OSC component is located inside a
+Shield Can region (inSC column: TRUE / FALSE).
 """
 
 from __future__ import annotations
@@ -10,10 +13,13 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-from src.checklist.component_classifier import find_bothholes, find_oscillators
+from src.checklist.component_classifier import (
+    find_bothholes, find_oscillators, find_shield_cans,
+)
 from src.checklist.engine import register_rule
 from src.checklist.geometry_utils import (
     build_board_polygon,
+    find_components_inside_outline,
     pad_distance_to_component,
     pad_distance_to_outline,
 )
@@ -45,7 +51,10 @@ class CKL03012(ChecklistRule):
         # Collect all BOTHHOLE components from both sides
         all_bothholes = find_bothholes(components_top) + find_bothholes(components_bot)
 
-        columns = ["comp", "cmp_layer", "to_pcb", "to_BTH", "status"]
+        # Collect all Shield Can components from both sides
+        all_shield_cans = find_shield_cans(components_top) + find_shield_cans(components_bot)
+
+        columns = ["comp", "cmp_layer", "to_pcb", "to_BTH", "inSC", "status"]
         rows: list[dict] = []
         images: list[dict] = []
         image_dir = Path(tempfile.mkdtemp(prefix="ckl_03_012_"))
@@ -72,6 +81,14 @@ class CKL03012(ChecklistRule):
                         dist_bth = d
                         nearest_bth = bth
 
+                # Check if OSC is inside any Shield Can outline
+                in_sc = False
+                for sc in all_shield_cans:
+                    inside = find_components_inside_outline(sc, [osc], packages)
+                    if inside:
+                        in_sc = True
+                        break
+
                 pcb_str = f"{dist_pcb:.3f}" if dist_pcb < float("inf") else "N/A"
                 bth_str = f"{dist_bth:.3f}" if dist_bth < float("inf") else "N/A"
 
@@ -86,6 +103,7 @@ class CKL03012(ChecklistRule):
                     "cmp_layer": layer_name,
                     "to_pcb": pcb_str,
                     "to_BTH": bth_str,
+                    "inSC": "TRUE" if in_sc else "FALSE",
                     "status": status,
                 })
 

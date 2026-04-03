@@ -16,7 +16,7 @@ from src.checklist.geometry_utils import (
     count_vias_at_pad,
     lookup_resolved_pads_for_pin,
 )
-from src.checklist.reference_loader import get_managed_part_names
+from src.checklist.reference_loader import load_reference_csv
 from src.checklist.rule_base import ChecklistRule
 from src.checklist.visualizers.via_check_viz import render_via_check_image
 from src.models import RuleResult
@@ -42,7 +42,13 @@ class CKL03008(ChecklistRule):
         layers_data = job_data.get("layers_data", {})
         packages = eda.packages if eda else []
 
-        sensor_parts = get_managed_part_names("regular_sensors")
+        # Load sensor parts, excluding IC-ACCEL./GYRO SENSOR type
+        _sensor_rows = load_reference_csv("regular_sensors")
+        sensor_parts = {
+            r["part_name"] for r in _sensor_rows
+            if r.get("part_name")
+            and r.get("type", "").strip() != "IC-ACCEL./GYRO SENSOR"
+        }
 
         # Build VIA position sets per layer
         via_top: set[tuple[float, float]] = set()

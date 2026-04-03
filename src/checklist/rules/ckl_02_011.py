@@ -1,8 +1,13 @@
 """CKL-02-011: Capacitor sandwiched between AP/Memory – outline overlap check.
 
-When a capacitor is placed in a tight gap between AP and Memory components
-(on the same layer), check whether it overlaps with either component's
-outline.  If even one side overlaps, the placement is flagged as FAIL.
+When a capacitor is placed in a tight gap between AP and Memory components,
+check whether it overlaps with either component's outline.  If even one
+side overlaps, the placement is flagged as FAIL.
+
+Checks are performed in two modes:
+  - Same-layer: cap and both AP/Memory components on the same layer
+  - Cross-layer: cap on one layer, AP/Memory pair on the opposite layer
+    (position projected in XY; outline overlap checked across layers)
 """
 
 from __future__ import annotations
@@ -54,8 +59,8 @@ def _is_between(cap: Component, am_a: Component, am_b: Component) -> bool:
 class CKL02011(ChecklistRule):
     rule_id = "CKL-02-011"
     description = (
-        "Capacitor sandwiched between AP/Memory: if overlapping an "
-        "outline, pads must be arranged horizontally"
+        "Capacitor sandwiched between AP/Memory (same or opposite layer): "
+        "if overlapping an outline, placement is flagged"
     )
     category = "Placement"
 
@@ -65,30 +70,39 @@ class CKL02011(ChecklistRule):
         eda = job_data.get("eda_data")
         packages = eda.packages if eda else []
 
-        columns = ["comp", "part_name", "overlapping_cmp", "status"]
+        columns = ["comp", "part_name", "cap_layer", "overlapping_cmp", "am_layer", "status"]
         rows: list[dict] = []
         image_dir = Path(tempfile.mkdtemp(prefix="ckl_02_011_"))
         images: list[dict] = []
 
-        for layer_comps, layer_name in [
-            (components_top, "Top"),
-            (components_bot, "Bottom"),
-        ]:
-            ap_mems = _find_ap_memory(layer_comps)
-            caps = find_capacitors(layer_comps)
+        # We check each cap against AP/Memory pairs on the SAME layer and the
+        # OPPOSITE layer.  Layer combinations:
+        #   cap_layer=Top,    am_layer=Top    (same)
+        #   cap_layer=Top,    am_layer=Bottom (cross)
+        #   cap_layer=Bottom, am_layer=Bottom (same)
+        #   cap_layer=Bottom, am_layer=Top    (cross)
+        layer_pairs = [
+            # (cap_comps, cap_layer, cap_is_bottom, am_comps, am_layer, am_is_bottom)
+            (components_top, "Top",    False, components_top, "Top",    False),
+            (components_top, "Top",    False, components_bot, "Bottom", True),
+            (components_bot, "Bottom", True,  components_bot, "Bottom", False),
+            (components_bot, "Bottom", True,  components_top, "Top",    False),
+        ]
+
+        # Track which (cap, am) pairs have already been reported to avoid
+        # double-counting when a cross-layer pair is symmetric.
+        reported: set[tuple[str, str, str]] = set()
+
+        for cap_comps, cap_layer, cap_is_bot, am_comps, am_layer, am_is_bot in layer_pairs:
+            ap_mems = _find_ap_memory(am_comps)
+            caps = find_capacitors(cap_comps)
 
             if len(ap_mems) < 2 or not caps:
                 continue
 
-            # Pre-compute AP/Memory pairs that are close enough for a
-            # capacitor to be sandwiched between them.  Use edge_distance
-            # so large components that are nearby in outline (not just
-            # centre) are included.
             close_pairs: list[tuple[Component, Component]] = []
             for am_a, am_b in combinations(ap_mems, 2):
                 dist = edge_distance(am_a, am_b, packages)
-                # If the outlines are more than 5 mm apart the gap is wide
-                # enough that a capacitor there is not "sandwiched".
                 if dist < 5.0:
                     close_pairs.append((am_a, am_b))
 
@@ -96,8 +110,6 @@ class CKL02011(ChecklistRule):
                 continue
 
             for cap in caps:
-                # Determine which close AP/Memory pairs this cap sits
-                # between (centre-projection test).
                 sandwiching_ams: set[str] = set()
                 for am_a, am_b in close_pairs:
                     if _is_between(cap, am_a, am_b):
@@ -107,13 +119,22 @@ class CKL02011(ChecklistRule):
                 if not sandwiching_ams:
                     continue
 
-                # Check outline overlap with each neighbouring AP/Memory.
                 overlapping_names: list[str] = []
                 overlap_items: list[dict] = []
                 for am in ap_mems:
                     if am.comp_name not in sandwiching_ams:
                         continue
-                    if overlaps_component_outline(cap, am, packages):
+
+                    report_key = (cap.comp_name, am.comp_name, f"{cap_layer}-{am_layer}")
+                    if report_key in reported:
+                        continue
+                    reported.add(report_key)
+
+                    if overlaps_component_outline(
+                        cap, am, packages,
+                        is_bottom_comp=cap_is_bot,
+                        is_bottom_target=am_is_bot,
+                    ):
                         overlapping_names.append(am.comp_name)
                         overlap_items.append({"comp": am, "status": "FAIL"})
                     else:
@@ -124,33 +145,38 @@ class CKL02011(ChecklistRule):
                         rows.append({
                             "comp": cap.comp_name,
                             "part_name": cap.part_name or "",
+                            "cap_layer": cap_layer,
                             "overlapping_cmp": am_name,
+                            "am_layer": am_layer,
                             "status": "FAIL",
                         })
-                else:
+                elif overlap_items:
                     # Sandwiched but no outline overlap – acceptable.
                     rows.append({
                         "comp": cap.comp_name,
                         "part_name": cap.part_name or "",
+                        "cap_layer": cap_layer,
                         "overlapping_cmp": "",
+                        "am_layer": am_layer,
                         "status": "PASS",
                     })
 
                 # --- visualisation ----------------------------------------
-                if overlap_items:
+                fail_items = [i for i in overlap_items if i["status"] == "FAIL"]
+                if fail_items:
                     safe = cap.comp_name.replace("/", "_")
-                    img_path = image_dir / f"{safe}_{layer_name}.png"
+                    img_path = image_dir / f"{safe}_{cap_layer}_vs_{am_layer}.png"
                     render_overlap_image(
-                        cap, packages, overlap_items, ap_mems, img_path,
+                        cap, packages, fail_items, ap_mems, img_path,
                         rule_id=self.rule_id,
-                        title="AP/Memory outline overlap",
-                        layer_name=layer_name,
+                        title=f"AP/Memory outline overlap ({cap_layer} cap vs {am_layer} AM)",
+                        layer_name=cap_layer,
                         primary_label="Capacitor",
                         overlap_label="AP/Memory",
                     )
                     images.append({
                         "path": img_path,
-                        "title": f"{cap.comp_name} ({layer_name})",
+                        "title": f"{cap.comp_name} ({cap_layer} vs {am_layer})",
                         "width": 500,
                     })
 

@@ -43,14 +43,14 @@ def _find_mcp_ics(components: list[Component]) -> list[Component]:
     ]
 
 
-def _find_corner_pin_indices(pins: list[Pin], n_per_corner: int = 2) -> set[int]:
+def _find_corner_pin_indices(pins: list[Pin], n_per_corner: int = 3) -> set[int]:
     """Return indices of the corner pins of the pad array.
 
     For each of the four bounding-box corners (top-left, top-right,
     bottom-left, bottom-right) the *n_per_corner* nearest pins by
-    Euclidean distance are selected.  This matches the two outermost pads
+    Euclidean distance are selected.  This matches the three outermost pads
     visible at each physical corner in the MCP layout (as illustrated in
-    data/mcp2.png).
+    data/mcp2.png), giving 12 specific pins total across all four corners.
 
     For packages with <= n_per_corner * 4 pins, all pins are returned.
     """

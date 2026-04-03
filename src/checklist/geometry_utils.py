@@ -629,88 +629,46 @@ def overlaps_component_outline(
 # 6b. Outermost Pin Detection
 # ---------------------------------------------------------------------------
 
-def _outermost_convex_hull(
-    points: list[tuple[float, float]],
-) -> list[tuple[float, float]]:
-    """Andrew's monotone chain convex hull.  Returns vertices in CCW order."""
-    pts = sorted(set(points))
-    if len(pts) <= 1:
-        return pts
-
-    lower: list[tuple[float, float]] = []
-    for p in pts:
-        while len(lower) >= 2 and _outermost_cross(lower[-2], lower[-1], p) <= 0:
-            lower.pop()
-        lower.append(p)
-
-    upper: list[tuple[float, float]] = []
-    for p in reversed(pts):
-        while len(upper) >= 2 and _outermost_cross(upper[-2], upper[-1], p) <= 0:
-            upper.pop()
-        upper.append(p)
-
-    return lower[:-1] + upper[:-1]
-
-
-def _outermost_cross(
-    o: tuple[float, float],
-    a: tuple[float, float],
-    b: tuple[float, float],
-) -> float:
-    return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
-
-
-def _outermost_point_on_segment(
-    px: float, py: float,
-    ax: float, ay: float,
-    bx: float, by: float,
-    tol: float,
-) -> bool:
-    """Check if point (px,py) lies on segment (ax,ay)-(bx,by) within tolerance."""
-    cross = abs((bx - ax) * (py - ay) - (by - ay) * (px - ax))
-    seg_len = ((bx - ax) ** 2 + (by - ay) ** 2) ** 0.5
-    if seg_len < 1e-9:
-        return False
-    dist = cross / seg_len
-    if dist > tol:
-        return False
-    dot = (px - ax) * (bx - ax) + (py - ay) * (by - ay)
-    return -tol <= dot <= seg_len * seg_len + tol
-
-
 def find_outermost_pin_indices(pins: list[Pin]) -> set[int]:
-    """Return indices of pins that lie on the outer perimeter (convex hull).
+    """Return indices of pins on the outer perimeter of the pad array.
 
-    For packages with <= 4 pins, all pins are considered outermost.
-    For larger packages, computes the convex hull of pin centres and
-    returns pins whose centres lie on or very near the hull boundary.
+    A pin is considered outermost when its centre lies at the global
+    extreme boundary of the pad arrangement in at least one of the four
+    cardinal directions (minimum/maximum X **or** minimum/maximum Y across
+    ALL pins in the package).
+
+    This correctly handles non-convex pad layouts such as cross or
+    T-shaped arrangements, where dense inner pad clusters might
+    coincidentally fall on the convex hull boundary despite not being
+    truly peripheral.  For simple rectangular arrays every pad in the
+    first/last row and first/last column is correctly identified.
+
+    For packages with <= 4 pins all pins are returned unconditionally.
     """
+    if not pins:
+        return set()
     if len(pins) <= 4:
         return set(range(len(pins)))
 
     centres = [(p.center.x, p.center.y) for p in pins]
+    xs = [c[0] for c in centres]
+    ys = [c[1] for c in centres]
 
-    xs = {c[0] for c in centres}
-    ys = {c[1] for c in centres}
-    if len(xs) <= 1 or len(ys) <= 1:
+    x_min, x_max = min(xs), max(xs)
+    y_min, y_max = min(ys), max(ys)
+
+    # Degenerate: all pads coincide
+    if x_min == x_max and y_min == y_max:
         return set(range(len(pins)))
 
-    hull_pts = _outermost_convex_hull(centres)
-    hull_set = set(hull_pts)
-
-    tol = 0.01
+    # Tolerance well below any realistic pad pitch (typically >= 0.4 mm)
+    tol = 0.01  # mm
 
     outermost: set[int] = set()
     for idx, (cx, cy) in enumerate(centres):
-        if (cx, cy) in hull_set:
+        if (cx <= x_min + tol or cx >= x_max - tol or
+                cy <= y_min + tol or cy >= y_max - tol):
             outermost.add(idx)
-        else:
-            for i in range(len(hull_pts)):
-                ax, ay = hull_pts[i]
-                bx, by = hull_pts[(i + 1) % len(hull_pts)]
-                if _outermost_point_on_segment(cx, cy, ax, ay, bx, by, tol):
-                    outermost.add(idx)
-                    break
 
     return outermost
 
