@@ -626,7 +626,58 @@ def overlaps_component_outline(
 
 
 # ---------------------------------------------------------------------------
-# 6b. Outermost Pin Detection
+# 6b. Sandwich Zone Detection
+# ---------------------------------------------------------------------------
+
+def is_sandwiched_between(
+    cap: Component,
+    am_a: Component,
+    am_b: Component,
+    packages: list[Package],
+    *,
+    is_bottom_cap: bool = False,
+    is_bottom_am: bool = False,
+) -> bool:
+    """Return True if *cap* is sandwiched between *am_a* and *am_b*.
+
+    A capacitor is sandwiched if any part of its footprint falls within the
+    corridor between the two AP/Memory components' footprints.  This includes
+    cases where the cap partially overlaps one of the components while
+    extending into the gap between them (not just when the cap centre is
+    strictly between the two component centres).
+
+    With Shapely: the corridor is ``convex_hull(am_a ∪ am_b) − (am_a ∪ am_b)``,
+    and we check whether *cap*'s footprint intersects this region.
+
+    Fallback (no Shapely / missing footprints): dot-product centre projection.
+    """
+    if _HAS_SHAPELY:
+        fp_a = _resolve_footprint(am_a, packages, is_bottom=is_bottom_am)
+        fp_b = _resolve_footprint(am_b, packages, is_bottom=is_bottom_am)
+        fp_cap = _resolve_footprint(cap, packages, is_bottom=is_bottom_cap)
+
+        if fp_a is not None and fp_b is not None and fp_cap is not None:
+            combined = unary_union([fp_a, fp_b])
+            corridor = combined.convex_hull.difference(combined)
+            if not corridor.is_empty:
+                return bool(fp_cap.intersects(corridor))
+
+    # Fallback: centre-based dot-product projection
+    ax, ay = am_a.x, am_a.y
+    bx, by = am_b.x, am_b.y
+    cx, cy = cap.x, cap.y
+
+    dx, dy = bx - ax, by - ay
+    length_sq = dx * dx + dy * dy
+    if length_sq < 1e-9:
+        return False
+
+    t = ((cx - ax) * dx + (cy - ay) * dy) / length_sq
+    return 0.0 < t < 1.0
+
+
+# ---------------------------------------------------------------------------
+# 6c. Outermost Pin Detection
 # ---------------------------------------------------------------------------
 
 def find_outermost_pin_indices(pins: list[Pin]) -> set[int]:

@@ -20,6 +20,7 @@ from src.checklist.component_classifier import find_capacitors
 from src.checklist.engine import register_rule
 from src.checklist.geometry_utils import (
     edge_distance,
+    is_sandwiched_between,
     overlaps_component_outline,
 )
 from src.checklist.reference_loader import get_managed_part_names
@@ -32,27 +33,6 @@ def _find_ap_memory(components: list[Component]) -> list[Component]:
     """Return components whose part_name is listed in ap_memory.csv."""
     ap_parts = get_managed_part_names("ap_memory")
     return [c for c in components if (c.part_name or "") in ap_parts]
-
-
-def _is_between(cap: Component, am_a: Component, am_b: Component) -> bool:
-    """Check if *cap* centre projects between the centres of *am_a* and *am_b*.
-
-    Uses a simple dot-product projection.  Returns True when the
-    projection parameter *t* falls strictly between 0 and 1, meaning the
-    capacitor centre lies between the two AP/Memory centres along the
-    line connecting them.
-    """
-    ax, ay = am_a.x, am_a.y
-    bx, by = am_b.x, am_b.y
-    cx, cy = cap.x, cap.y
-
-    dx, dy = bx - ax, by - ay
-    length_sq = dx * dx + dy * dy
-    if length_sq < 1e-9:
-        return False
-
-    t = ((cx - ax) * dx + (cy - ay) * dy) / length_sq
-    return 0.0 < t < 1.0
 
 
 @register_rule
@@ -112,7 +92,11 @@ class CKL02011(ChecklistRule):
             for cap in caps:
                 sandwiching_ams: set[str] = set()
                 for am_a, am_b in close_pairs:
-                    if _is_between(cap, am_a, am_b):
+                    if is_sandwiched_between(
+                        cap, am_a, am_b, packages,
+                        is_bottom_cap=cap_is_bot,
+                        is_bottom_am=am_is_bot,
+                    ):
                         sandwiching_ams.add(am_a.comp_name)
                         sandwiching_ams.add(am_b.comp_name)
 
