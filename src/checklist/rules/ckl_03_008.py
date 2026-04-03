@@ -42,12 +42,13 @@ class CKL03008(ChecklistRule):
         layers_data = job_data.get("layers_data", {})
         packages = eda.packages if eda else []
 
-        # Load sensor parts, excluding IC-ACCEL./GYRO SENSOR type
+        # Load sensor parts, excluding IC-ACCEL./GYRO SENSOR and IC-MAGNETIC SENSOR types
         _sensor_rows = load_reference_csv("regular_sensors")
+        _excluded_types = {"IC-ACCEL./GYRO SENSOR", "IC-MAGNETIC SENSOR"}
         sensor_parts = {
             r["part_name"] for r in _sensor_rows
             if r.get("part_name")
-            and r.get("type", "").strip() != "IC-ACCEL./GYRO SENSOR"
+            and r.get("type", "").strip() not in _excluded_types
         }
 
         # Build VIA position sets per layer

@@ -537,3 +537,5 @@ class RuleResult:
     details: dict = field(default_factory=dict)
     images: list[dict] = field(default_factory=list)
     # Each dict: {"path": Path, "title": str, "width": int (px, default 500)}
+    recommended: bool = False
+    # If True, failures are advisory ("FAIL (Recommended)") rather than hard fails

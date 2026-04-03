@@ -205,9 +205,18 @@ def _create_rule_sheet(wb: Workbook, result: RuleResult):
 
     ws["A4"] = "Status:"
     status_cell = ws["B4"]
-    status_cell.value = "PASS" if result.passed else "FAIL"
-    status_cell.fill = _PASS_FILL if result.passed else _FAIL_FILL
-    status_cell.font = _PASS_FONT if result.passed else _FAIL_FONT
+    if result.passed:
+        status_cell.value = "PASS"
+        status_cell.fill = _PASS_FILL
+        status_cell.font = _PASS_FONT
+    elif getattr(result, "recommended", False):
+        status_cell.value = "FAIL (Recommended)"
+        status_cell.fill = _FAIL_FILL
+        status_cell.font = _FAIL_FONT
+    else:
+        status_cell.value = "FAIL"
+        status_cell.fill = _FAIL_FILL
+        status_cell.font = _FAIL_FONT
 
     ws["A5"] = "Message:"
     ws["B5"] = result.message

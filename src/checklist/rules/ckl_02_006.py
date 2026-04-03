@@ -220,4 +220,5 @@ class CKL02006(ChecklistRule):
             ],
             details={"columns": columns, "rows": fail_rows},
             images=images,
+            recommended=True,
         )

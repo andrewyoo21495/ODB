@@ -135,4 +135,5 @@ class CKL02007(ChecklistRule):
                 r["neighbor_cmp"] for r in rows if r["status"] == "FAIL"
             ],
             details={"columns": columns, "rows": rows},
+            recommended=True,
         )

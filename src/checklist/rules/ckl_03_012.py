@@ -51,9 +51,6 @@ class CKL03012(ChecklistRule):
         # Collect all BOTHHOLE components from both sides
         all_bothholes = find_bothholes(components_top) + find_bothholes(components_bot)
 
-        # Collect all Shield Can components from both sides
-        all_shield_cans = find_shield_cans(components_top) + find_shield_cans(components_bot)
-
         columns = ["comp", "cmp_layer", "to_pcb", "to_BTH", "inSC", "status"]
         rows: list[dict] = []
         images: list[dict] = []
@@ -63,6 +60,8 @@ class CKL03012(ChecklistRule):
             (components_top, "Top"),
             (components_bot, "Bottom"),
         ]:
+            # Only check Shield Cans on the same layer as the OSC
+            layer_shield_cans = find_shield_cans(comps)
             oscs = find_oscillators(comps)
 
             for osc in oscs:
@@ -81,9 +80,9 @@ class CKL03012(ChecklistRule):
                         dist_bth = d
                         nearest_bth = bth
 
-                # Check if OSC is inside any Shield Can outline
+                # Check if OSC is inside any Shield Can outline on the same layer
                 in_sc = False
-                for sc in all_shield_cans:
+                for sc in layer_shield_cans:
                     inside = find_components_inside_outline(sc, [osc], packages)
                     if inside:
                         in_sc = True
