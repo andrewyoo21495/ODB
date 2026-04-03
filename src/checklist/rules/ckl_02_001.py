@@ -1,7 +1,8 @@
-"""CKL-02-001: Managed capacitors vs connectors — distance check.
+"""CKL-02-001: Managed capacitors vs connectors/interposers/shield cans — distance check.
 
 Verify placement and distance between 10 managed capacitor types and
-connector components on the opposite side.  Distance must be >= 1.5mm.
+connector, interposer, and shield can components on the opposite side.
+Distance must be >= 1.5mm.
 """
 
 from __future__ import annotations
@@ -9,7 +10,11 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-from src.checklist.component_classifier import find_connectors
+from src.checklist.component_classifier import (
+    find_connectors,
+    find_interposers,
+    find_shield_cans,
+)
 from src.checklist.engine import register_rule
 from src.checklist.geometry_utils import (
     edge_distance,
@@ -29,7 +34,7 @@ class CKL02001(ChecklistRule):
     rule_id = "CKL-02-001"
     description = (
         "10 managed capacitor types must be at least 1.5mm from "
-        "connectors on the opposite side"
+        "connectors, interposers, and shield cans on the opposite side"
     )
     category = "Spacing"
 
@@ -43,7 +48,7 @@ class CKL02001(ChecklistRule):
 
         columns = [
             "comp", "cmp_layer", "part_name",
-            "overlapping_con", "distance", "status",
+            "overlapping_cmp", "opp_type", "distance", "status",
         ]
         rows: list[dict] = []
         images: list[dict] = []
@@ -58,31 +63,44 @@ class CKL02001(ChecklistRule):
                 c for c in caps_layer_comps
                 if (c.part_name or "") in managed_parts
             ]
-            opp_connectors = find_connectors(opp_comps)
-            if not managed_caps or not opp_connectors:
+
+            # Collect opposite-side targets: connectors, interposers, shield cans
+            opp_targets: list[tuple[Component, str]] = [
+                (c, "Connector") for c in find_connectors(opp_comps)
+            ] + [
+                (c, "Interposer") for c in find_interposers(opp_comps)
+            ] + [
+                (c, "Shield Can") for c in find_shield_cans(opp_comps)
+            ]
+
+            if not managed_caps or not opp_targets:
                 continue
 
+            opp_all = [c for c, _ in opp_targets]
+            opp_type_map = {id(c): t for c, t in opp_targets}
+
             for cap in managed_caps:
-                # Find connectors overlapping on opposite side
                 overlaps = find_overlapping_components(
-                    cap, opp_connectors, packages
+                    cap, opp_all, packages
                 )
                 overlap_items: list[dict] = []
                 if overlaps:
-                    for conn in overlaps:
-                        dist = edge_distance(cap, conn, packages)
+                    for opp in overlaps:
+                        dist = edge_distance(cap, opp, packages)
                         dist_str = f"{dist:.3f}" if dist < float("inf") else "N/A"
                         status = "PASS" if dist >= _MIN_DISTANCE_MM else "FAIL"
+                        opp_type = opp_type_map.get(id(opp), "Unknown")
                         rows.append({
                             "comp": cap.comp_name,
                             "cmp_layer": cap_layer,
                             "part_name": cap.part_name or "",
-                            "overlapping_con": conn.comp_name,
+                            "overlapping_cmp": opp.comp_name,
+                            "opp_type": opp_type,
                             "distance": dist_str,
                             "status": status,
                         })
                         overlap_items.append({
-                            "comp": conn, "status": status,
+                            "comp": opp, "status": status,
                             "distance": dist if dist < float("inf") else None,
                             "min_distance": _MIN_DISTANCE_MM,
                         })
@@ -91,7 +109,8 @@ class CKL02001(ChecklistRule):
                         "comp": cap.comp_name,
                         "cmp_layer": cap_layer,
                         "part_name": cap.part_name or "",
-                        "overlapping_con": "-",
+                        "overlapping_cmp": "-",
+                        "opp_type": "-",
                         "distance": "-",
                         "status": "PASS",
                     })
@@ -102,10 +121,10 @@ class CKL02001(ChecklistRule):
                     render_overlap_image(
                         cap, packages, overlap_items, opp_comps, img_path,
                         rule_id=self.rule_id,
-                        title="Capacitor-connector distance",
+                        title="Capacitor clearance (connector/interposer/shield can)",
                         layer_name=cap_layer,
                         primary_label="Capacitor",
-                        overlap_label="Connector",
+                        overlap_label="Opp. Component",
                     )
                     images.append({"path": img_path,
                                    "title": f"{cap.comp_name} ({cap_layer})",
@@ -120,7 +139,8 @@ class CKL02001(ChecklistRule):
             category=self.category,
             passed=passed,
             message=(
-                f"{fail_count} capacitor(s) too close to opposite-side connector."
+                f"{fail_count} capacitor(s) too close to opposite-side "
+                "connector/interposer/shield can."
                 if not passed
                 else "All managed capacitors meet the 1.5mm distance requirement."
             ),

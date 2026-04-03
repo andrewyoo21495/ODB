@@ -1,8 +1,9 @@
-"""CKL-02-009: General Inductors (>=2012) vs connectors — edge/orientation check.
+"""CKL-02-009: General Inductors (>=2012) vs connectors/shield cans — edge/orientation/avoidance check.
 
 Verify placement between General Inductors (those NOT in
-inductors_2s_list.csv) of size 2012 or larger and connectors on the
-opposite side.
+inductors_2s_list.csv) of size 2012 or larger and:
+  1. Connectors on the opposite side (edge/orientation check).
+  2. Shield Cans on the opposite side (avoidance — any overlap is FAIL).
 """
 
 from __future__ import annotations
@@ -10,7 +11,11 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-from src.checklist.component_classifier import find_connectors, find_inductors
+from src.checklist.component_classifier import (
+    find_connectors,
+    find_inductors,
+    find_shield_cans,
+)
 from src.checklist.engine import register_rule
 from src.checklist.geometry_utils import (
     filter_by_size,
@@ -28,8 +33,8 @@ from src.models import RuleResult
 class CKL02009(ChecklistRule):
     rule_id = "CKL-02-009"
     description = (
-        "General inductors >=2012 (excluding 2S) overlapping connectors "
-        "on the opposite side: edge and orientation check"
+        "General inductors >=2012 (excluding 2S): edge/orientation check vs "
+        "opposite-side connectors, and avoidance check vs opposite-side shield cans"
     )
     category = "Placement"
 
@@ -44,19 +49,19 @@ class CKL02009(ChecklistRule):
         size_maps = [ind_size_map]
 
         columns = [
-            "comp", "cmp_layer", "overlapping_ind", "part_name",
+            "check_type", "comp", "cmp_layer", "overlapping_ind", "part_name",
             "edge", "hori/verti", "status",
         ]
         rows: list[dict] = []
         images: list[dict] = []
         image_dir = Path(tempfile.mkdtemp(prefix="ckl_02_009_"))
 
+        # ── 1. Connector check (edge / orientation) ──────────────────────────
         for conn_comps, conn_layer, opp_comps in [
             (components_top, "Top", components_bot),
             (components_bot, "Bottom", components_top),
         ]:
             connectors = find_connectors(conn_comps)
-            # General inductors: NOT in 2S list
             opp_all_ind = find_inductors(opp_comps)
             opp_general_ind = [
                 c for c in opp_all_ind
@@ -69,7 +74,6 @@ class CKL02009(ChecklistRule):
                 overlaps = find_pad_overlapping_components(
                     conn, opp_general_ind, packages
                 )
-                # Filter to size >= 2012
                 filtered = filter_by_size(overlaps, 2012, size_maps, packages)
 
                 overlap_items: list[dict] = []
@@ -83,6 +87,7 @@ class CKL02009(ChecklistRule):
                         else "FAIL"
                     )
                     rows.append({
+                        "check_type": "Connector",
                         "comp": conn.comp_name,
                         "cmp_layer": conn_layer,
                         "overlapping_ind": ind.comp_name,
@@ -101,17 +106,76 @@ class CKL02009(ChecklistRule):
 
                 if overlap_items:
                     safe = conn.comp_name.replace("/", "_")
-                    img_path = image_dir / f"{safe}_{conn_layer}.png"
+                    img_path = image_dir / f"{safe}_{conn_layer}_conn.png"
                     render_overlap_image(
                         conn, packages, overlap_items, opp_comps, img_path,
                         rule_id=self.rule_id,
-                        title="General inductor alignment",
+                        title="General inductor alignment (connector)",
                         layer_name=conn_layer,
                         primary_label="Connector",
                         overlap_label="General Inductor",
                     )
                     images.append({"path": img_path,
-                                   "title": f"{conn.comp_name} ({conn_layer})",
+                                   "title": f"{conn.comp_name} ({conn_layer}) – Connector",
+                                   "width": 500})
+
+        # ── 2. Shield Can avoidance check ─────────────────────────────────────
+        for sc_comps, sc_layer, opp_comps in [
+            (components_top, "Top", components_bot),
+            (components_bot, "Bottom", components_top),
+        ]:
+            sc_is_bottom = (sc_layer == "Bottom")
+            ind_is_bottom = not sc_is_bottom
+
+            shield_cans = find_shield_cans(sc_comps)
+            opp_all_ind = find_inductors(opp_comps)
+            opp_general_ind = [
+                c for c in opp_all_ind
+                if (c.part_name or "") not in ind_2s_parts
+            ]
+            if not shield_cans or not opp_general_ind:
+                continue
+
+            for sc in shield_cans:
+                overlaps = find_pad_overlapping_components(
+                    sc, opp_general_ind, packages,
+                    is_bottom_primary=sc_is_bottom,
+                    is_bottom_candidates=ind_is_bottom,
+                )
+                filtered = filter_by_size(overlaps, 2012, size_maps, packages)
+
+                overlap_items: list[dict] = []
+                for ind, sz in filtered:
+                    rows.append({
+                        "check_type": "Shield Can",
+                        "comp": sc.comp_name,
+                        "cmp_layer": sc_layer,
+                        "overlapping_ind": ind.comp_name,
+                        "part_name": ind.part_name or "",
+                        "edge": "-",
+                        "hori/verti": "-",
+                        "status": "FAIL",
+                    })
+                    overlap_items.append({
+                        "comp": ind, "status": "FAIL",
+                        "detail": "Avoidance",
+                    })
+
+                if overlap_items:
+                    safe = sc.comp_name.replace("/", "_")
+                    img_path = image_dir / f"{safe}_{sc_layer}_sc.png"
+                    render_overlap_image(
+                        sc, packages, overlap_items, opp_comps, img_path,
+                        rule_id=self.rule_id,
+                        title="General inductor avoidance (shield can)",
+                        layer_name=sc_layer,
+                        primary_label="Shield Can",
+                        overlap_label="General Inductor",
+                        primary_is_bottom=sc_is_bottom,
+                        overlap_is_bottom=ind_is_bottom,
+                    )
+                    images.append({"path": img_path,
+                                   "title": f"{sc.comp_name} ({sc_layer}) – Shield Can",
                                    "width": 500})
 
         fail_count = sum(1 for r in rows if r["status"] == "FAIL")
@@ -123,9 +187,10 @@ class CKL02009(ChecklistRule):
             category=self.category,
             passed=passed,
             message=(
-                f"{fail_count} general inductor placement issue(s) near connectors."
+                f"{fail_count} general inductor placement issue(s) "
+                "(connector edge/orientation or shield can avoidance)."
                 if not passed
-                else "All general inductors near connectors are properly placed."
+                else "All general inductors near connectors/shield cans are properly placed."
             ),
             affected_components=[
                 r["overlapping_ind"] for r in rows if r["status"] == "FAIL"
