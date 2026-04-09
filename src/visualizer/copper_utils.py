@@ -27,6 +27,40 @@ from src.visualizer.renderer import _draw_profile
 from src.visualizer.symbol_renderer import contour_to_vertices
 
 
+# Supersample factor for the measurement raster.  We render at SS× the
+# final measurement resolution and then downsample with a strict AND rule:
+# a measurement pixel is only counted as copper when *every* sub-pixel
+# under it is copper.  This deliberately biases the copper count slightly
+# downward to cancel any residual anti-alias fringe that matplotlib still
+# produces on polygon edges despite `patch.antialiased=False`.
+_SUPERSAMPLE = 2
+
+# Pure green is used as the measurement color so copper detection is a
+# strict equality test in one channel — no "non-black" threshold, no
+# ambiguity from dim fringe pixels.
+_MEAS_COLOR = "#00FF00"
+
+
+def _downsample_and(mask: np.ndarray, s: int) -> np.ndarray:
+    """Block-downsample by factor ``s`` using logical AND (erosion-like)."""
+    if s == 1:
+        return mask
+    h, w = mask.shape
+    h2, w2 = (h // s) * s, (w // s) * s
+    m = mask[:h2, :w2].reshape(h2 // s, s, w2 // s, s)
+    return m.all(axis=(1, 3))
+
+
+def _downsample_or(mask: np.ndarray, s: int) -> np.ndarray:
+    """Block-downsample by factor ``s`` using logical OR (dilation-like)."""
+    if s == 1:
+        return mask
+    h, w = mask.shape
+    h2, w2 = (h // s) * s, (w // s) * s
+    m = mask[:h2, :w2].reshape(h2 // s, s, w2 // s, s)
+    return m.any(axis=(1, 3))
+
+
 def rasterize_layer(
     layer_name: str,
     profile: Profile,
@@ -34,13 +68,19 @@ def rasterize_layer(
     user_symbols: dict[str, UserSymbol],
     font: StrokeFont,
 ) -> Optional[dict]:
-    """Render a layer off-screen and return pixel data.
+    """Render a layer off-screen and return pre-computed copper/PCB masks.
+
+    The layer is rendered at ``_SUPERSAMPLE``× the final measurement
+    resolution into a pure-green off-screen buffer, then a strict equality
+    test classifies copper pixels and the result is downsampled with a
+    logical-AND rule.  The returned masks are therefore unaffected by
+    anti-alias fringe and slightly *under*-count rather than over-count.
 
     Returns a dict with keys:
-        rgb       – np.ndarray (H, W, 3) uint8 rendered image
+        is_copper – np.ndarray (H, W) bool, True where the pixel is copper
         pcb_mask  – np.ndarray (H, W) bool, True inside PCB outline
         xmin, xmax, ymin, ymax  – bounding box in data coords (mm)
-        img_w, img_h            – image dimensions in pixels
+        img_w, img_h            – image dimensions in pixels (post-downsample)
 
     Returns None if the profile or layer is unavailable.
     """
@@ -69,8 +109,10 @@ def rasterize_layer(
     if board_w <= 0 or board_h <= 0:
         return None
 
-    # Build a fixed-resolution off-screen figure
-    _DPI = 400
+    # Build a fixed-resolution off-screen figure.  Effective measurement
+    # resolution is _DPI; we render at _DPI * _SUPERSAMPLE and then AND-
+    # downsample the copper mask back to _DPI.
+    _DPI = 400 * _SUPERSAMPLE
     _LONG = 10.0
     if board_w >= board_h:
         fig_w, fig_h = _LONG, _LONG * board_h / board_w
@@ -95,10 +137,12 @@ def rasterize_layer(
         "text.antialiased": False,
     }
     features, matrix_layer = layers_data[layer_name]
-    color = LAYER_COLORS.get(matrix_layer.type, "#00CC00")
+    # Render with a pure, unambiguous measurement color — not the display
+    # color — so the copper/background test is a strict equality and dim
+    # fringe pixels can never be misclassified as copper.
     with matplotlib.rc_context(_no_aa):
         render_layer(
-            calc_ax, features, color=color,
+            calc_ax, features, color=_MEAS_COLOR,
             layer_type=matrix_layer.type,
             alpha=1.0, user_symbols=user_symbols,
             font=font
@@ -108,25 +152,40 @@ def rasterize_layer(
     agg = FigureCanvasAgg(calc_fig)
     agg.draw()
     buf = agg.buffer_rgba()
-    w, h = agg.get_width_height()
-    img = np.frombuffer(buf, dtype=np.uint8).reshape(h, w, 4)
+    w_hi, h_hi = agg.get_width_height()
+    img = np.frombuffer(buf, dtype=np.uint8).reshape(h_hi, w_hi, 4)
     rgb = img[:, :, :3]
 
-    # Map outline → image-pixel coordinates
+    # Strict copper detection on the green channel.  Only pixels rendered
+    # at full measurement intensity count — anti-alias fringe is rejected.
+    is_copper_hi = (
+        (rgb[:, :, 1] >= 250) &
+        (rgb[:, :, 0] <= 10) &
+        (rgb[:, :, 2] <= 10)
+    )
+
+    # Map outline → high-res image-pixel coordinates and build PCB mask.
     display_pts = calc_ax.transData.transform(outline_verts)
     img_pts = np.column_stack([
         display_pts[:, 0],
-        h - display_pts[:, 1],
+        h_hi - display_pts[:, 1],
     ])
-
-    # Build inside-PCB mask
     path = MplPath(img_pts)
-    ys, xs = np.mgrid[0:h, 0:w]
+    ys, xs = np.mgrid[0:h_hi, 0:w_hi]
     pts = np.column_stack([xs.ravel() + 0.5, ys.ravel() + 0.5])
-    pcb_mask = path.contains_points(pts).reshape(h, w)
+    pcb_mask_hi = path.contains_points(pts).reshape(h_hi, w_hi)
+
+    # Downsample to the measurement resolution.
+    #   copper mask: AND — a measurement pixel only counts as copper when
+    #                every sub-pixel under it is copper (bias slightly low)
+    #   pcb mask:    OR  — keep the board the same nominal size so the
+    #                      denominator isn't shrunk
+    is_copper = _downsample_and(is_copper_hi, _SUPERSAMPLE)
+    pcb_mask = _downsample_or(pcb_mask_hi, _SUPERSAMPLE)
+    h, w = is_copper.shape
 
     return {
-        "rgb": rgb,
+        "is_copper": is_copper,
         "pcb_mask": pcb_mask,
         "xmin": xmin, "xmax": xmax,
         "ymin": ymin, "ymax": ymax,
@@ -146,20 +205,12 @@ def calculate_copper_ratio(
     if data is None:
         return None
 
-    rgb = data["rgb"]
     inside_mask = data["pcb_mask"]
     total_inside = int(inside_mask.sum())
     if total_inside == 0:
         return None
 
-    # "copper" = non-black AND not the red profile-outline colour
-    is_nonblack = np.any(rgb > 20, axis=2)
-    is_red = (
-        (rgb[:, :, 0] > 180) &
-        (rgb[:, :, 1] < 60) &
-        (rgb[:, :, 2] < 60)
-    )
-    is_copper = is_nonblack & ~is_red
+    is_copper = data["is_copper"]
     copper_inside = int((inside_mask & is_copper).sum())
     return copper_inside / total_inside
 
@@ -185,18 +236,9 @@ def calculate_subsection_ratios(
     if data is None:
         return None
 
-    rgb = data["rgb"]
+    is_copper = data["is_copper"]
     pcb_mask = data["pcb_mask"]
     h, w = data["img_h"], data["img_w"]
-
-    # Copper pixel classification (same thresholds as calculate_copper_ratio)
-    is_nonblack = np.any(rgb > 20, axis=2)
-    is_red = (
-        (rgb[:, :, 0] > 180) &
-        (rgb[:, :, 1] < 60) &
-        (rgb[:, :, 2] < 60)
-    )
-    is_copper = is_nonblack & ~is_red
 
     ratios = np.full((n_rows, n_cols), np.nan)
     for i in range(n_rows):
