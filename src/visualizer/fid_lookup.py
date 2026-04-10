@@ -222,9 +222,13 @@ def _find_top_bottom_signal_layers(
 ) -> tuple[Optional[str], Optional[str]]:
     """Return (top_signal_name, bottom_signal_name) from the matrix stackup.
 
-    The signal layer with the lowest row number is the top; the one with the
-    highest row number is the bottom.  Returns ``(None, None)`` if fewer than
-    two signal layers exist.
+    Priority:
+      1. If a SIGNAL layer is named exactly ``sigt``, it is the top layer.
+         If a SIGNAL layer is named exactly ``sigb``, it is the bottom layer.
+      2. Otherwise fall back to matrix row ordering: the SIGNAL layer with the
+         lowest row number is top; the one with the highest row number is bottom.
+
+    Returns ``(None, None)`` if fewer than two signal layers exist.
     """
     signal_layers: list[tuple[int, str]] = [
         (ml.row, name)
@@ -233,8 +237,21 @@ def _find_top_bottom_signal_layers(
     ]
     if len(signal_layers) < 2:
         return None, None
-    signal_layers.sort()
-    return signal_layers[0][1], signal_layers[-1][1]
+
+    # 1. Explicit sigt / sigb names take priority
+    names = {name for _, name in signal_layers}
+    top = "sigt" if "sigt" in names else None
+    bot = "sigb" if "sigb" in names else None
+
+    # 2. Fall back to row ordering for whichever side wasn't found by name
+    if top is None or bot is None:
+        signal_layers.sort()
+        if top is None:
+            top = signal_layers[0][1]
+        if bot is None:
+            bot = signal_layers[-1][1]
+
+    return top, bot
 
 
 def collect_via_pads_by_attribute(
