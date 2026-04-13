@@ -75,38 +75,14 @@ def render_board(profile: Profile,
             font=font,
         )
 
-    # Extract component-layer features for pad rendering fallback.
-    comp_layer_top = next(
-        (lf for name, (lf, _) in layers_data.items() if "comp_+_top" in name),
-        None,
-    )
-    comp_layer_bot = next(
-        (lf for name, (lf, _) in layers_data.items() if "comp_+_bot" in name),
-        None,
-    )
-
-    # Build FID-based pin-to-feature lookup for accurate pad rendering.
-    fid_resolved = {}
-    if eda_data and eda_data.layer_names:
-        from src.visualizer.fid_lookup import build_fid_map, resolve_fid_features
-        fid_map = build_fid_map(eda_data)
-        if fid_map:
-            fid_resolved = resolve_fid_features(
-                fid_map, eda_data.layer_names, layers_data,
-            )
-
-    # Draw component overlays
+    # Draw component overlays (pad geometry comes from Toeprint.geom)
     packages = eda_data.packages if eda_data else None
     if components_top:
         draw_components(ax, components_top, packages, color="#00CCCC", alpha=0.4,
-                        comp_layer_features=comp_layer_top,
-                        user_symbols=user_symbols,
-                        fid_resolved=fid_resolved, comp_side="T")
+                        user_symbols=user_symbols, comp_side="T")
     if components_bot:
         draw_components(ax, components_bot, packages, color="#CCCC00", alpha=0.4,
-                        comp_layer_features=comp_layer_bot,
-                        user_symbols=user_symbols,
-                        fid_resolved=fid_resolved, comp_side="B")
+                        user_symbols=user_symbols, comp_side="B")
 
     # Set axis labels
     ax.set_xlabel("X")

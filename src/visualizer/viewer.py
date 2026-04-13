@@ -220,28 +220,6 @@ class PcbViewer:
         self.user_symbols   = user_symbols or {}
         self.font           = font
 
-        # Extract component-layer features for accurate pad rendering.
-        # comp_+_top / comp_+_bot layers are loaded but not shown as layers;
-        # we pull them here so draw_components can use the real pad shapes.
-        self._comp_layer_top: Optional[LayerFeatures] = next(
-            (lf for name, (lf, _) in layers_data.items() if "comp_+_top" in name),
-            None,
-        )
-        self._comp_layer_bot: Optional[LayerFeatures] = next(
-            (lf for name, (lf, _) in layers_data.items() if "comp_+_bot" in name),
-            None,
-        )
-
-        # Build FID-based pin-to-feature lookup (primary pad rendering path).
-        self._fid_resolved: dict = {}
-        if eda_data and eda_data.layer_names:
-            from src.visualizer.fid_lookup import build_fid_map, resolve_fid_features
-            fid_map = build_fid_map(eda_data)
-            if fid_map:
-                self._fid_resolved = resolve_fid_features(
-                    fid_map, eda_data.layer_names, layers_data,
-                )
-
         self._selected_comp:     Optional[Component] = None
         self._selected_pin_name: str               = ""
         self._visible_set:       set[str]          = set()
@@ -379,16 +357,14 @@ class PcbViewer:
             draw_components(self.ax, self.components_top, packages,
                             color="#2BFFF4", alpha=0.99,
                             show_pads=True, show_pkg_outlines=False,
-                            comp_layer_features=self._comp_layer_top,
                             user_symbols=self.user_symbols,
-                            fid_resolved=self._fid_resolved, comp_side="T")
+                            comp_side="T")
         if COMP_BOT_KEY in self._visible_set and self.components_bot:
             draw_components(self.ax, self.components_bot, packages,
                             color="#FC5BA1", alpha=0.99,
                             show_pads=True, show_pkg_outlines=False,
-                            comp_layer_features=self._comp_layer_bot,
                             user_symbols=self.user_symbols,
-                            fid_resolved=self._fid_resolved, comp_side="B")
+                            comp_side="B")
         if COMP_OUTLINE_KEY in self._visible_set:
             self._draw_outlines(packages)
 
@@ -404,11 +380,7 @@ class PcbViewer:
                 draw_components(self.ax, [self._selected_comp], packages,
                                 color="#FF0000", alpha=1.0,
                                 show_pads=True, show_pkg_outlines=True,
-                                comp_layer_features=(self._comp_layer_bot
-                                                     if is_bot
-                                                     else self._comp_layer_top),
                                 user_symbols=self.user_symbols,
-                                fid_resolved=self._fid_resolved,
                                 comp_side="B" if is_bot else "T")
 
         self.ax.set_xlabel("X", color="#000000")
@@ -435,16 +407,14 @@ class PcbViewer:
             draw_components(self.ax, self.components_top, packages,
                             color="#FFFF00", alpha=0.95,
                             show_pads=False, show_pkg_outlines=True,
-                            comp_layer_features=self._comp_layer_top,
                             user_symbols=self.user_symbols,
-                            fid_resolved=self._fid_resolved, comp_side="T")
+                            comp_side="T")
         if drew_bot and self.components_bot:
             draw_components(self.ax, self.components_bot, packages,
                             color="#FFFF00", alpha=0.95,
                             show_pads=False, show_pkg_outlines=True,
-                            comp_layer_features=self._comp_layer_bot,
                             user_symbols=self.user_symbols,
-                            fid_resolved=self._fid_resolved, comp_side="B")
+                            comp_side="B")
         if not drew_top and not drew_bot:
             all_comps = self.components_top + self.components_bot
             if all_comps:
@@ -539,24 +509,6 @@ class ComponentViewer:
         self.eda_data        = eda_data
         self.user_symbols    = user_symbols or {}
         layers_data          = layers_data or {}
-
-        self._comp_layer_top: Optional[LayerFeatures] = next(
-            (lf for name, (lf, _) in layers_data.items() if "comp_+_top" in name),
-            None,
-        )
-        self._comp_layer_bot: Optional[LayerFeatures] = next(
-            (lf for name, (lf, _) in layers_data.items() if "comp_+_bot" in name),
-            None,
-        )
-
-        self._fid_resolved: dict = {}
-        if eda_data and eda_data.layer_names and layers_data:
-            from src.visualizer.fid_lookup import build_fid_map, resolve_fid_features
-            fid_map = build_fid_map(eda_data)
-            if fid_map:
-                self._fid_resolved = resolve_fid_features(
-                    fid_map, eda_data.layer_names, layers_data,
-                )
 
         # Resolve VIA features — prefer .pad_usage attribute, fall back to
         # EDA subnet FID resolution when the attribute is not present.
@@ -798,34 +750,26 @@ class ComponentViewer:
                     draw_components(self.ax, top_comps, packages,
                                     color="#2BFFF4", alpha=0.99,
                                     show_pads=True, show_pkg_outlines=False,
-                                    comp_layer_features=self._comp_layer_top,
                                     user_symbols=self.user_symbols,
-                                    fid_resolved=self._fid_resolved,
                                     comp_side="T")
                 if bot_comps:
                     draw_components(self.ax, bot_comps, packages,
                                     color="#FC5BA1", alpha=0.99,
                                     show_pads=True, show_pkg_outlines=False,
-                                    comp_layer_features=self._comp_layer_bot,
                                     user_symbols=self.user_symbols,
-                                    fid_resolved=self._fid_resolved,
                                     comp_side="B")
             if show_outline:
                 if top_comps:
                     draw_components(self.ax, top_comps, packages,
                                     color="#FFFF00", alpha=0.99,
                                     show_pads=False, show_pkg_outlines=True,
-                                    comp_layer_features=self._comp_layer_top,
                                     user_symbols=self.user_symbols,
-                                    fid_resolved=self._fid_resolved,
                                     comp_side="T")
                 if bot_comps:
                     draw_components(self.ax, bot_comps, packages,
                                     color="#FFFF00", alpha=0.99,
                                     show_pads=False, show_pkg_outlines=True,
-                                    comp_layer_features=self._comp_layer_bot,
                                     user_symbols=self.user_symbols,
-                                    fid_resolved=self._fid_resolved,
                                     comp_side="B")
 
         # Selection highlight – draw selected component in red on top
@@ -834,11 +778,7 @@ class ComponentViewer:
             draw_components(self.ax, [self._selected_comp], packages,
                             color="#FF0000", alpha=1.0,
                             show_pads=True, show_pkg_outlines=True,
-                            comp_layer_features=(self._comp_layer_bot
-                                                 if is_bot
-                                                 else self._comp_layer_top),
                             user_symbols=self.user_symbols,
-                            fid_resolved=self._fid_resolved,
                             comp_side="B" if is_bot else "T")
 
         # Draw vias on top of all component/selection graphics

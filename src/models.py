@@ -451,6 +451,24 @@ class EdaData:
 # --- Components ---
 
 @dataclass
+class PinGeometry:
+    """FID-resolved pad geometry — everything needed to render one pin pad.
+
+    Built during cache creation by resolving FID cross-references from
+    EDA/data SNT→FID records to actual layer feature PadRecords.
+    """
+    symbol_name: str            # Symbol name (e.g. "rect60x40", "r50")
+    x: float                    # Board coordinate X (from PadRecord)
+    y: float                    # Board coordinate Y
+    rotation: float = 0.0       # Pad rotation angle
+    mirror: bool = False        # Pad mirror flag
+    units: str = "INCH"         # Symbol interpretation units
+    resize_factor: Optional[float] = None
+    unit_override: Optional[str] = None   # Symbol unit override ('I' or 'M')
+    is_user_symbol: bool = False          # Whether this is a user-defined symbol
+
+
+@dataclass
 class Toeprint:
     pin_num: int
     x: float
@@ -460,6 +478,7 @@ class Toeprint:
     net_num: int = -1
     subnet_num: int = -1
     name: str = ""
+    geom: Optional[PinGeometry] = None    # FID-resolved pad geometry
 
 
 @dataclass

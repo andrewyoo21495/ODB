@@ -52,7 +52,7 @@ from matplotlib.patches import Circle, Polygon, Rectangle
 
 from src.models import BBox, Component, LayerFeatures, Package, PinOutline, UserSymbol
 from src.visualizer.symbol_renderer import (
-    contour_to_vertices, get_line_width_for_symbol, symbol_to_patch,
+    contour_to_vertices, symbol_to_patch,
     user_symbol_to_patches,
 )
 
@@ -71,72 +71,29 @@ def draw_components(ax: Axes, components: list[Component],
 
     All coordinates are expected to be pre-normalised to the same unit (MM).
 
-    Pin pad rendering priority (highest to lowest):
-      0. *fid_resolved* — FID-based lookup from EDA/data SNT→FID records.
-         Deterministic mapping via (side, comp_num, pin_num) → feature.
-         Only ONE pad shape is drawn per pin (first successful layer match)
-         to avoid overlapping shapes from multiple copper/mask layers.
-      1. *comp_layer_features* — spatial matching by toeprint (x, y) in the
-         comp_+_top or comp_+_bot layer (legacy fallback).
-      2. EDA package pin outlines (RC/CR/SQ/CONTOUR).
-      3. Small circle at the pin centre (last-resort fallback).
+    Pin pad rendering uses pre-resolved ``Toeprint.geom`` (PinGeometry)
+    which is populated during cache build via FID cross-reference resolution.
+    If ``geom`` is None for a toeprint, that pin is skipped.
+
+    Legacy parameters ``comp_layer_features`` and ``fid_resolved`` are
+    accepted for API compatibility but are no longer used — pad geometry
+    comes exclusively from ``Toeprint.geom``.
 
     Args:
-        fid_resolved: Pre-resolved FID features — a dict mapping
-            ``(side, comp_num, pin_num)`` to a list of
-            :class:`~src.visualizer.fid_lookup.ResolvedPadFeature`.
-            Built by :func:`~src.visualizer.fid_lookup.resolve_fid_features`.
         comp_side: "T" for top components, "B" for bottom.
     """
     pkg_lookup: dict[int, Package] = (
         {i: pkg for i, pkg in enumerate(packages)} if packages else {}
     )
-    fid_resolved = fid_resolved or {}
     is_bottom = (comp_side == "B")
-
-    # Pre-parse the component layer once: build a global position → pad map.
-    # Per-component filtering (to only the pads that belong to each
-    # component's own toeprints) is done inside the loop so that pads from
-    # other components are never accidentally matched.
-    _all_pad_by_pos: dict[tuple[float, float], object] = {}
-    pad_sym_lookup: dict[int, object] = {}
-    pad_units: str = "INCH"
-    line_features: list = []
-    if comp_layer_features is not None:
-        from src.models import LineRecord, PadRecord
-        pad_units = comp_layer_features.units
-        pad_sym_lookup = {s.index: s for s in comp_layer_features.symbols}
-        for feat in comp_layer_features.features:
-            if isinstance(feat, PadRecord):
-                key = (round(feat.x, 4), round(feat.y, 4))
-                _all_pad_by_pos[key] = feat
-            elif isinstance(feat, LineRecord):
-                line_features.append(feat)
 
     for comp in components:
         pkg = pkg_lookup.get(comp.pkg_ref)
 
-        # Build a component-specific pad lookup restricted to this component's
-        # own toeprint positions so that pads belonging to other components are
-        # never drawn here, even if their board positions happen to round to the
-        # same grid key.
-        if _all_pad_by_pos:
-            toep_keys = {(round(tp.x, 4), round(tp.y, 4)) for tp in comp.toeprints}
-            pad_by_pos = {k: v for k, v in _all_pad_by_pos.items() if k in toep_keys}
-        else:
-            pad_by_pos = {}
-
         drew = _draw_component_geometry(ax, comp, pkg, color, alpha,
                                         draw_pads=show_pads,
                                         draw_pkg_outlines=show_pkg_outlines,
-                                        pad_by_pos=pad_by_pos,
-                                        pad_sym_lookup=pad_sym_lookup,
-                                        pad_units=pad_units,
                                         user_symbols=user_symbols or {},
-                                        fid_resolved=fid_resolved,
-                                        comp_side=comp_side,
-                                        comp_idx=comp.comp_index,
-                                        line_features=line_features,
                                         is_bottom=is_bottom)
 
         if not drew:
@@ -167,119 +124,51 @@ def _draw_component_geometry(ax: Axes, comp: Component,
                               color: str, alpha: float,
                               draw_pads: bool = True,
                               draw_pkg_outlines: bool = True,
-                              pad_by_pos: dict = None,
-                              pad_sym_lookup: dict = None,
-                              pad_units: str = "INCH",
                               user_symbols: dict = None,
-                              fid_resolved: dict = None,
-                              comp_side: str = "T",
-                              comp_idx: int = 0,
-                              line_features: list = None,
                               is_bottom: bool = False) -> bool:
     """Render pin pads and/or package outlines for one component.
 
     Returns True when at least one patch was added to *ax*.
 
-    Pin pad rendering priority:
-      0. FID-based lookup — deterministic mapping via EDA/data SNT→FID records.
-         Only one pad drawn per pin to avoid overlapping shapes.
-      1. Component-layer pad feature at the toeprint position (spatial fallback).
-      2. EDA package pin outline (RC / CR / SQ / CONTOUR).
-      3. Small circle at the pin centre (last-resort fallback).
+    Pin pads are rendered from pre-resolved ``Toeprint.geom`` (PinGeometry).
+    If a toeprint has no ``geom``, that pin is simply skipped.
     """
     if pkg is None:
         return False
 
     drew_any = False
-    pad_by_pos = pad_by_pos or {}
-    pad_sym_lookup = pad_sym_lookup or {}
     user_symbols = user_symbols or {}
-    fid_resolved = fid_resolved or {}
 
     # -- Pin-level pad shapes ------------------------------------------------
     if draw_pads:
-        # Shield cans: draw their outline by sweeping each comp-layer line
-        # that belongs to this component.  Suppresses individual pin-pad
-        # shapes; if no lines are found the outer fallback draws a bbox.
-        sc_drawn = False
-        if _is_shield_can(comp) and line_features:
-            sc_drawn = _draw_sc_lines(ax, comp, line_features,
-                                      pad_sym_lookup, pad_units,
-                                      color, alpha)
-            if sc_drawn:
-                drew_any = True
-
-        # Build a quick lookup from pin index → toeprint board position
-        toep_by_pin: dict[int, object] = {}
         for tp in comp.toeprints:
-            toep_by_pin[tp.pin_num] = tp
+            if tp.geom is None:
+                continue
 
-        for pin_idx, pin in enumerate(pkg.pins if not sc_drawn else []):
-            drew_pin = False
-            tp = toep_by_pin.get(pin_idx) or toep_by_pin.get(pin_idx + 1)
+            geom = tp.geom
+            pad_rot = -geom.rotation if is_bottom else geom.rotation
 
-            # 0. FID-based lookup (highest priority — deterministic)
-            if not drew_pin and fid_resolved:
-                drew_pin = _draw_pin_from_fid(
-                    ax, comp, comp_side, comp_idx, pin_idx, tp,
-                    fid_resolved, user_symbols, color, alpha,
+            if geom.is_user_symbol and geom.symbol_name in user_symbols:
+                patches = user_symbol_to_patches(
+                    user_symbols[geom.symbol_name],
+                    geom.x, geom.y,
+                    pad_rot, geom.mirror,
+                    color, alpha,
                 )
-
-            # 1. Try component-layer pad at the toeprint position (spatial)
-            if not drew_pin and tp is not None and pad_by_pos:
-                key = (round(tp.x, 4), round(tp.y, 4))
-                pad_feat = pad_by_pos.get(key)
-                if pad_feat is not None:
-                    sym_ref = pad_sym_lookup.get(pad_feat.symbol_idx)
-                    if sym_ref is not None:
-                        # Bottom-layer pad rotations are stored relative to
-                        # the component's bottom-side view; negate for top-view.
-                        pad_rot = -pad_feat.rotation if is_bottom else pad_feat.rotation
-                        if sym_ref.name in user_symbols:
-                            patches = user_symbol_to_patches(
-                                user_symbols[sym_ref.name],
-                                tp.x, tp.y,
-                                pad_rot, pad_feat.mirror,
-                                color, alpha,
-                            )
-                            for p in patches:
-                                ax.add_patch(p)
-                            if patches:
-                                drew_pin = True
-                        else:
-                            patch = symbol_to_patch(
-                                sym_ref.name, tp.x, tp.y,
-                                pad_rot, pad_feat.mirror,
-                                pad_units, sym_ref.unit_override,
-                                color, alpha, pad_feat.resize_factor,
-                            )
-                            if patch is not None:
-                                ax.add_patch(patch)
-                                drew_pin = True
-
-            # 2. Fall back to EDA package pin outlines
-            if not drew_pin and pin.outlines:
-                for outline in pin.outlines:
-                    patch = _outline_to_patch(outline, comp, color, alpha,
-                                              is_bottom=is_bottom)
-                    if patch is not None:
-                        ax.add_patch(patch)
-                        drew_pin = True
-                        break  # one outline per pin is enough
-
-            # 3. Last-resort: small circle at the transformed pin centre
-            if not drew_pin:
-                bx, by = _transform_point(pin.center.x, pin.center.y, comp,
-                                          is_bottom=is_bottom)
-                fhs = pin.finished_hole_size
-                r = fhs / 2 if fhs > 0 else 0.1
-                ax.add_patch(Circle((bx, by), r,
-                                    facecolor=color, edgecolor=color,
-                                    alpha=alpha * 0.7, linewidth=0))
-                drew_pin = True
-
-            if drew_pin:
-                drew_any = True
+                for p in patches:
+                    ax.add_patch(p)
+                if patches:
+                    drew_any = True
+            else:
+                patch = symbol_to_patch(
+                    geom.symbol_name, geom.x, geom.y,
+                    pad_rot, geom.mirror,
+                    geom.units, geom.unit_override,
+                    color, alpha, geom.resize_factor,
+                )
+                if patch is not None:
+                    ax.add_patch(patch)
+                    drew_any = True
 
     # -- Package-level courtyard / silkscreen outlines -----------------------
     if draw_pkg_outlines:
@@ -293,154 +182,6 @@ def _draw_component_geometry(ax: Axes, comp: Component,
                 drew_any = True
 
     return drew_any
-
-
-def _draw_pin_from_fid(ax: Axes, comp: Component,
-                        comp_side: str, comp_idx: int,
-                        pin_idx: int, tp,
-                        fid_resolved: dict,
-                        user_symbols: dict,
-                        color: str, alpha: float) -> bool:
-    """Try to draw a pin pad using FID-resolved features.
-
-    Looks up (side, comp_idx, pin_num) in *fid_resolved* and renders the
-    geometry from the resolved symbol at the toeprint's board position.
-    The toeprint position (from components_top/bot) is authoritative for
-    WHERE to draw; the FID feature supplies only the geometry (symbol name,
-    rotation, mirror).  If no toeprint is available the function returns
-    False immediately.
-
-    Only ONE pad shape is drawn per pin (the first successfully resolved
-    feature) to avoid overlapping shapes from multiple copper/mask layers.
-
-    Returns True if a patch was drawn.
-    """
-    if tp is None:
-        return False
-
-    # Bottom-layer pad rotations are stored relative to the component's
-    # bottom-side view; negate for top-view rendering.
-    is_bottom = (comp_side == "B")
-
-    # Try both pin_idx (0-based) and pin_idx+1 (1-based) as the spec
-    # can use either convention depending on the design tool.
-    for pnum in (pin_idx, pin_idx + 1):
-        key = (comp_side, comp_idx, pnum)
-        pad_features = fid_resolved.get(key)
-        if not pad_features:
-            continue
-
-        # Draw only the FIRST successfully resolved feature to avoid
-        # overlapping pads from multiple layers (e.g. signal + solder mask).
-        for rpf in pad_features:
-            pad = rpf.pad
-            sym = rpf.symbol
-            pad_rot = -pad.rotation if is_bottom else pad.rotation
-
-            px, py = pad.x, pad.y
-
-            if sym.name in user_symbols:
-                patches = user_symbol_to_patches(
-                    user_symbols[sym.name],
-                    px, py,
-                    pad_rot, pad.mirror,
-                    color, alpha,
-                )
-                for p in patches:
-                    ax.add_patch(p)
-                if patches:
-                    return True
-            else:
-                patch = symbol_to_patch(
-                    sym.name, px, py,
-                    pad_rot, pad.mirror,
-                    rpf.units, sym.unit_override,
-                    color, alpha, pad.resize_factor,
-                )
-                if patch is not None:
-                    ax.add_patch(patch)
-                    return True
-
-    return False
-
-
-def _is_shield_can(comp: Component) -> bool:
-    """Return True when *comp* looks like a shield-can (ref-des starts with SC)."""
-    return comp.comp_name.upper().startswith("SC")
-
-
-def _draw_sc_lines(ax: Axes, comp: Component,
-                   line_features: list, sym_lookup: dict,
-                   units: str, color: str, alpha: float) -> bool:
-    """Draw a shield-can outline from comp-layer LineRecord features.
-
-    Filters lines where either endpoint falls on one of the component's
-    toeprint positions, then renders each as a stadium polygon (rectangle
-    body + semicircular end-caps) matching the aperture width — identical
-    geometry to ``_draw_line`` in the layer renderer.
-
-    Returns True if at least one line was drawn.
-    """
-    from src.models import LineRecord
-
-    toep_set: set[tuple[float, float]] = {
-        (round(tp.x, 4), round(tp.y, 4)) for tp in comp.toeprints
-    }
-    if not toep_set:
-        return False
-
-    n_cap = 16
-    drew = False
-
-    for feat in line_features:
-        if not isinstance(feat, LineRecord):
-            continue
-        s = (round(feat.xs, 4), round(feat.ys, 4))
-        e = (round(feat.xe, 4), round(feat.ye, 4))
-        if s not in toep_set and e not in toep_set:
-            continue
-
-        sym_ref = sym_lookup.get(feat.symbol_idx)
-        width = get_line_width_for_symbol(
-            sym_ref.name, units, sym_ref.unit_override
-        ) if sym_ref else 0.0
-        if width <= 0:
-            width = 0.001
-
-        radius = width / 2
-        dx = feat.xe - feat.xs
-        dy = feat.ye - feat.ys
-        length = math.sqrt(dx * dx + dy * dy)
-
-        if length < 1e-10:
-            ax.add_patch(Circle((feat.xs, feat.ys), radius,
-                                color=color, alpha=alpha, edgecolor="none"))
-            drew = True
-            continue
-
-        nx = -dy / length * radius
-        ny =  dx / length * radius
-        angle = math.atan2(dy, dx)
-
-        pts: list[tuple[float, float]] = []
-        pts.append((feat.xs + nx, feat.ys + ny))
-        pts.append((feat.xe + nx, feat.ye + ny))
-        for k in range(1, n_cap):
-            theta = (angle + math.pi / 2) - k * math.pi / n_cap
-            pts.append((feat.xe + radius * math.cos(theta),
-                        feat.ye + radius * math.sin(theta)))
-        pts.append((feat.xe - nx, feat.ye - ny))
-        pts.append((feat.xs - nx, feat.ys - ny))
-        for k in range(1, n_cap):
-            theta = (angle - math.pi / 2) - k * math.pi / n_cap
-            pts.append((feat.xs + radius * math.cos(theta),
-                        feat.ys + radius * math.sin(theta)))
-
-        ax.add_patch(Polygon(pts, closed=True, color=color,
-                             alpha=alpha, edgecolor="none"))
-        drew = True
-
-    return drew
 
 
 # ---------------------------------------------------------------------------

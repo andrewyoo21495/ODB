@@ -13,9 +13,9 @@ from src.models import (
     ArcRecord, ArcSegment, BarcodeRecord, BBox, BomData, Component, Contour,
     EdaData, FeatureIdRef, FeaturePolarity, FontChar, FontStroke, JobInfo,
     LayerFeatures, LineRecord, LineSegment, MatrixLayer, MatrixStep, Net,
-    Netlist, Package, PadRecord, Pin, PinOutline, Point, Profile, StepHeader,
-    StrokeFont, Subnet, Surface, SurfaceRecord, SymbolRef, TextRecord,
-    Toeprint, UserSymbol,
+    Netlist, Package, PadRecord, Pin, PinGeometry, PinOutline, Point, Profile,
+    StepHeader, StrokeFont, Subnet, Surface, SurfaceRecord, SymbolRef,
+    TextRecord, Toeprint, UserSymbol,
 )
 
 # Type discriminators added during serialization so features can be
@@ -435,15 +435,27 @@ def reconstruct_components(data: list) -> list:
 
 def _reconstruct_single_component(data: dict) -> Component:
     """Reconstruct a single Component from cached JSON data."""
-    toeprints = [
-        Toeprint(
+    toeprints = []
+    for td in data.get("toeprints", []):
+        geom = None
+        gd = td.get("geom")
+        if gd:
+            geom = PinGeometry(
+                symbol_name=gd["symbol_name"],
+                x=gd["x"], y=gd["y"],
+                rotation=gd.get("rotation", 0.0),
+                mirror=gd.get("mirror", False),
+                units=gd.get("units", "INCH"),
+                resize_factor=gd.get("resize_factor"),
+                unit_override=gd.get("unit_override"),
+                is_user_symbol=gd.get("is_user_symbol", False),
+            )
+        toeprints.append(Toeprint(
             pin_num=td["pin_num"], x=td["x"], y=td["y"],
             rotation=td.get("rotation", 0.0), mirror=td.get("mirror", False),
             net_num=td.get("net_num", -1), subnet_num=td.get("subnet_num", -1),
-            name=td.get("name", ""),
-        )
-        for td in data.get("toeprints", [])
-    ]
+            name=td.get("name", ""), geom=geom,
+        ))
     bom_data = None
     if data.get("bom_data"):
         bd = data["bom_data"]

@@ -333,6 +333,78 @@ def _parse_attrlist_value(attrlist_path: Path, key: str) -> float | None:
     return None
 
 
+def _resolve_pin_geometries(data: dict):
+    """Resolve FID cross-references and store pad geometry in Toeprint.geom.
+
+    Called during cache build after all unit normalisation is complete.
+    This resolves each component pin's pad shape once so the viewer can
+    render directly without re-resolving FID references at runtime.
+    """
+    from src.models import PinGeometry
+    from src.visualizer.fid_lookup import build_fid_map, resolve_fid_features
+
+    eda = data["eda_data"]
+
+    # Build temporary layers_data dict for FID resolution
+    matrix_layers = data.get("matrix_layers", [])
+    layer_lookup = {ml.name: ml for ml in matrix_layers}
+    layers_data = {}
+    for key in data:
+        if key.startswith("layer_features:"):
+            layer_name = key[len("layer_features:"):]
+            ml = layer_lookup.get(layer_name)
+            if ml:
+                layers_data[layer_name] = (data[key], ml)
+
+    if not layers_data:
+        return
+
+    fid_map = build_fid_map(eda)
+    if not fid_map:
+        return
+
+    resolved = resolve_fid_features(fid_map, eda.layer_names, layers_data)
+    if not resolved:
+        return
+
+    # Collect user-defined symbol names for the is_user_symbol flag
+    user_sym_names: set[str] = set()
+    symbols = data.get("symbols")
+    if symbols:
+        if isinstance(symbols, dict):
+            user_sym_names = set(symbols.keys())
+
+    # Populate Toeprint.geom for each component
+    populated = 0
+    for side_key, side_char in (("components_top", "T"), ("components_bot", "B")):
+        comps = data.get(side_key, [])
+        for comp in comps:
+            for tp in comp.toeprints:
+                # Try both pin_num directly and as 0-based index
+                for pnum in (tp.pin_num, tp.pin_num - 1, tp.pin_num + 1):
+                    key = (side_char, comp.comp_index, pnum)
+                    pad_features = resolved.get(key)
+                    if not pad_features:
+                        continue
+                    # Use the first successfully resolved feature
+                    rpf = pad_features[0]
+                    tp.geom = PinGeometry(
+                        symbol_name=rpf.symbol.name,
+                        x=rpf.pad.x,
+                        y=rpf.pad.y,
+                        rotation=rpf.pad.rotation,
+                        mirror=rpf.pad.mirror,
+                        units=rpf.units,
+                        resize_factor=rpf.pad.resize_factor,
+                        unit_override=rpf.symbol.unit_override,
+                        is_user_symbol=rpf.symbol.name in user_sym_names,
+                    )
+                    populated += 1
+                    break  # stop trying alternative pin numbers
+
+    print(f"  FID: resolved pad geometry for {populated} toeprints")
+
+
 def cmd_cache(args):
     """Parse ODB++ data and cache to JSON files."""
     print(f"Loading ODB++ from: {args.odb_path}")
@@ -528,6 +600,14 @@ def cmd_cache(args):
     if data.get("symbols"):
         _scale_user_symbols(data["symbols"], _INCH_TO_MM)
         print(f"  Units: scaled user-defined symbol coordinates INCH -> MM (x25.4)")
+
+    # ------------------------------------------------------------------
+    # Resolve FID cross-references and populate Toeprint.geom so that
+    # the viewer can render pin pads without re-resolving at runtime.
+    # ------------------------------------------------------------------
+    eda = data.get("eda_data")
+    if eda and eda.layer_names:
+        _resolve_pin_geometries(data)
 
     # Write cache
     print(f"\nWriting cache...")
