@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import math
 import re
+from functools import lru_cache
 from typing import Optional
 
 from src.models import StandardSymbol
@@ -81,6 +82,7 @@ _PATTERNS = [
 _COMPILED_PATTERNS = [(re.compile(p), t) for p, t in _PATTERNS]
 
 
+@lru_cache(maxsize=512)
 def resolve_symbol(name: str) -> StandardSymbol:
     """Parse a standard symbol name and return its geometric parameters.
 

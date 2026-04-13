@@ -199,9 +199,16 @@ def calculate_copper_ratio(
     layers_data: dict[str, tuple[LayerFeatures, MatrixLayer]],
     user_symbols: dict[str, UserSymbol],
     font: StrokeFont,
+    raster_data: Optional[dict] = None,
 ) -> Optional[float]:
-    """Copper fill ratio for the entire layer (0 – 1)."""
-    data = rasterize_layer(layer_name, profile, layers_data, user_symbols, font)
+    """Copper fill ratio for the entire layer (0 – 1).
+
+    If *raster_data* is supplied (the dict returned by
+    :func:`rasterize_layer`), the expensive rasterization step is
+    skipped and the pre-computed masks are reused directly.
+    """
+    data = raster_data or rasterize_layer(
+        layer_name, profile, layers_data, user_symbols, font)
     if data is None:
         return None
 
@@ -223,6 +230,7 @@ def calculate_subsection_ratios(
     font: StrokeFont,
     n_rows: int = 5,
     n_cols: int = 5,
+    raster_data: Optional[dict] = None,
 ) -> Optional[np.ndarray]:
     """Copper fill ratio for each cell of an n_rows × n_cols grid.
 
@@ -231,8 +239,12 @@ def calculate_subsection_ratios(
     Returns None if rasterization fails.
 
     Grid orientation: Row 0 is the top of the PCB (y=ymax), column 0 is left (x=xmin).
+
+    If *raster_data* is supplied, the expensive rasterization step is
+    skipped and the pre-computed masks are reused directly.
     """
-    data = rasterize_layer(layer_name, profile, layers_data, user_symbols, font)
+    data = raster_data or rasterize_layer(
+        layer_name, profile, layers_data, user_symbols, font)
     if data is None:
         return None
 

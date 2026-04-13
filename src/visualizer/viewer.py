@@ -1119,10 +1119,16 @@ class CopperRatioViewer:
         if self._root:
             self._root.update_idletasks()
 
+        # Rasterize once and reuse for all calculations
+        raster = self._rasterize_layer()
+        if raster is None:
+            self._result_var.set("Calculation failed.")
+            return
+
         if self._subsection_mode and self._subsection_mode.get():
             # ---- Grid-based calculation -----------------------------------
             self._ratio_result = None
-            ratios = self._calculate_subsection_ratios()
+            ratios = self._calculate_subsection_ratios(raster_data=raster)
             if ratios is not None:
                 self._subsection_ratios = ratios
                 valid = ratios[~np.isnan(ratios)]
@@ -1144,7 +1150,7 @@ class CopperRatioViewer:
             # ---- Whole-board calculation (existing) -----------------------
             self._subsection_ratios = None
             self._clear_subsection_display()
-            ratio = self._calculate_ratio()
+            ratio = self._calculate_ratio(raster_data=raster)
             if ratio is not None:
                 self._ratio_result = ratio
                 self._result_var.set(
@@ -1223,26 +1229,32 @@ class CopperRatioViewer:
     # Ratio calculation
     # ------------------------------------------------------------------
 
-    def _calculate_ratio(self) -> Optional[float]:
-        """Copper fill ratio for the entire selected layer (0 – 1)."""
+    def _calculate_ratio(self, raster_data: dict = None) -> Optional[float]:
+        """Copper fill ratio for the entire selected layer (0 – 1).
+
+        If *raster_data* is supplied, the expensive rasterization step
+        is skipped and the pre-computed masks are reused directly.
+        """
         if self._selected_layer is None:
             return None
         return copper_utils.calculate_copper_ratio(
             self._selected_layer, self.profile, self.layers_data,
-            self.user_symbols, self.font
+            self.user_symbols, self.font, raster_data=raster_data,
         )
 
-    def _calculate_subsection_ratios(self):
+    def _calculate_subsection_ratios(self, raster_data: dict = None):
         """Copper fill ratio for each cell of an n_rows × n_cols grid.
 
-        Delegates to copper_utils.calculate_subsection_ratios.
+        If *raster_data* is supplied, the expensive rasterization step
+        is skipped and the pre-computed masks are reused directly.
         """
         if self._selected_layer is None:
             return None
         return copper_utils.calculate_subsection_ratios(
             self._selected_layer, self.profile, self.layers_data,
             self.user_symbols, self.font,
-            n_rows=self._n_rows, n_cols=self._n_cols
+            n_rows=self._n_rows, n_cols=self._n_cols,
+            raster_data=raster_data,
         )
 
     # ------------------------------------------------------------------
@@ -1519,15 +1531,22 @@ class CopperCalculateViewer:
             for i, layer_name in enumerate(signal_layers):
                 self._log(f"[{i + 1}/{len(signal_layers)}] Processing {layer_name}...")
 
+                self._log(f"  Rasterizing layer...")
+                raster = copper_utils.rasterize_layer(
+                    layer_name, profile, layers_data, user_symbols, font
+                )
+
                 self._log(f"  Calculating copper ratio...")
                 total_ratio = copper_utils.calculate_copper_ratio(
-                    layer_name, profile, layers_data, user_symbols, font
+                    layer_name, profile, layers_data, user_symbols, font,
+                    raster_data=raster,
                 )
 
                 self._log(f"  Calculating sub-section ratios ({n_rows}×{n_cols})...")
                 sub_ratios = copper_utils.calculate_subsection_ratios(
                     layer_name, profile, layers_data, user_symbols, font,
                     n_rows=n_rows, n_cols=n_cols,
+                    raster_data=raster,
                 )
 
                 self._log(f"  Saving image...")
