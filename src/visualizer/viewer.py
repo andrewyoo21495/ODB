@@ -39,6 +39,7 @@ from src.visualizer.layer_renderer import LAYER_COLORS, render_layer
 from src.visualizer.component_overlay import draw_components
 from src.visualizer.renderer import _draw_profile
 from src.visualizer import copper_utils
+from src.visualizer import copper_vector
 
 # Sentinel keys used in the layer list
 COMP_TOP_KEY     = "__components_top__"
@@ -946,6 +947,7 @@ class CopperRatioViewer:
         self._n_cols: int = 5
         self._colorbar = None            # matplotlib Colorbar or None
         self._subsection_mode = None     # tk.BooleanVar, set in show()
+        self._vector_mode = None         # tk.BooleanVar, set in show()
         self._subsection_text = None     # tk.Text widget for grid results
         self._root: Optional[tk.Tk] = None
 
@@ -1002,6 +1004,17 @@ class CopperRatioViewer:
             font=("Segoe UI", 9),
             activebackground=_BG,
             command=self._on_subsection_toggle,
+        ).pack(anchor="w", padx=2, pady=(0, 2))
+
+        # Vector method checkbox
+        self._vector_mode = tk.BooleanVar(value=False)
+        tk.Checkbutton(
+            left, text="Use Vector Method",
+            variable=self._vector_mode,
+            bg=_BG, fg="#333333",
+            font=("Segoe UI", 9),
+            activebackground=_BG,
+            command=self._on_method_toggle,
         ).pack(anchor="w", padx=2, pady=(0, 6))
 
         # Result label
@@ -1109,56 +1122,111 @@ class CopperRatioViewer:
         self._clear_subsection_display()
         self._redraw()
 
+    def _on_method_toggle(self):
+        """Clear results when the calculation method is toggled."""
+        self._ratio_result = None
+        self._subsection_ratios = None
+        self._result_var.set("")
+        self._clear_subsection_display()
+        self._redraw()
+
     def _on_calculate(self):
         import numpy as np
 
         if self._selected_layer is None:
             self._result_var.set("Select a layer first.")
             return
-        self._result_var.set("Calculating\u2026")
+
+        use_vector = self._vector_mode and self._vector_mode.get()
+        method_label = " [vector]" if use_vector else " [raster]"
+        self._result_var.set("Calculating\u2026" + method_label)
         if self._root:
             self._root.update_idletasks()
 
-        # Rasterize once and reuse for all calculations
-        raster = self._rasterize_layer()
-        if raster is None:
-            self._result_var.set("Calculation failed.")
-            return
-
-        if self._subsection_mode and self._subsection_mode.get():
-            # ---- Grid-based calculation -----------------------------------
-            self._ratio_result = None
-            ratios = self._calculate_subsection_ratios(raster_data=raster)
-            if ratios is not None:
-                self._subsection_ratios = ratios
-                valid = ratios[~np.isnan(ratios)]
-                if len(valid):
-                    avg = float(valid.mean())
-                    lo  = float(valid.min())
-                    hi  = float(valid.max())
-                    self._result_var.set(
-                        f"Avg: {avg*100:.2f}%  "
-                        f"[{lo*100:.1f}% – {hi*100:.1f}%]"
-                    )
-                else:
-                    self._result_var.set("No PCB area found.")
-                self._update_subsection_display()
-                self._redraw()
-            else:
-                self._result_var.set("Calculation failed.")
-        else:
-            # ---- Whole-board calculation (existing) -----------------------
-            self._subsection_ratios = None
-            self._clear_subsection_display()
-            ratio = self._calculate_ratio(raster_data=raster)
-            if ratio is not None:
-                self._ratio_result = ratio
-                self._result_var.set(
-                    f"Ratio: {ratio:.4f}  ({ratio * 100:.2f}%)"
+        if use_vector:
+            # ---- Vector-based calculation --------------------------------
+            if self._subsection_mode and self._subsection_mode.get():
+                self._ratio_result = None
+                ratios = copper_vector.calculate_subsection_ratios(
+                    self._selected_layer, self.profile, self.layers_data,
+                    self.user_symbols, self.font,
+                    n_rows=self._n_rows, n_cols=self._n_cols,
                 )
-                self._redraw()
+                if ratios is not None:
+                    self._subsection_ratios = ratios
+                    valid = ratios[~np.isnan(ratios)]
+                    if len(valid):
+                        avg = float(valid.mean())
+                        lo  = float(valid.min())
+                        hi  = float(valid.max())
+                        self._result_var.set(
+                            f"Avg: {avg*100:.2f}%  "
+                            f"[{lo*100:.1f}% – {hi*100:.1f}%]"
+                            + method_label
+                        )
+                    else:
+                        self._result_var.set("No PCB area found.")
+                    self._update_subsection_display()
+                    self._redraw()
+                else:
+                    self._result_var.set("Calculation failed.")
             else:
+                self._subsection_ratios = None
+                self._clear_subsection_display()
+                ratio = copper_vector.calculate_copper_ratio(
+                    self._selected_layer, self.profile, self.layers_data,
+                    self.user_symbols, self.font,
+                )
+                if ratio is not None:
+                    self._ratio_result = ratio
+                    self._result_var.set(
+                        f"Ratio: {ratio:.4f}  ({ratio * 100:.2f}%)"
+                        + method_label
+                    )
+                    self._redraw()
+                else:
+                    self._result_var.set("Calculation failed.")
+        else:
+            # ---- Raster-based calculation (existing) ---------------------
+            raster = self._rasterize_layer()
+            if raster is None:
                 self._result_var.set("Calculation failed.")
+                return
+
+            if self._subsection_mode and self._subsection_mode.get():
+                self._ratio_result = None
+                ratios = self._calculate_subsection_ratios(raster_data=raster)
+                if ratios is not None:
+                    self._subsection_ratios = ratios
+                    valid = ratios[~np.isnan(ratios)]
+                    if len(valid):
+                        avg = float(valid.mean())
+                        lo  = float(valid.min())
+                        hi  = float(valid.max())
+                        self._result_var.set(
+                            f"Avg: {avg*100:.2f}%  "
+                            f"[{lo*100:.1f}% – {hi*100:.1f}%]"
+                            + method_label
+                        )
+                    else:
+                        self._result_var.set("No PCB area found.")
+                    self._update_subsection_display()
+                    self._redraw()
+                else:
+                    self._result_var.set("Calculation failed.")
+            else:
+                self._subsection_ratios = None
+                self._clear_subsection_display()
+                ratio = self._calculate_ratio(raster_data=raster)
+                if ratio is not None:
+                    self._ratio_result = ratio
+                    self._result_var.set(
+                        f"Ratio: {ratio:.4f}  ({ratio * 100:.2f}%)"
+                        + method_label
+                    )
+                    self._redraw()
+                else:
+                    self._result_var.set("Calculation failed.")
 
     # ------------------------------------------------------------------
     # Rendering
@@ -1371,6 +1439,7 @@ class CopperCalculateViewer:
         self._odb_var = tk.StringVar(value="")
         self._excel_var = tk.StringVar(value="")
         self._grid_var = tk.StringVar(value="5x5")
+        self._vector_var = tk.BooleanVar(value=False)
 
         # ---- Main layout ----
         main_frame = tk.Frame(self._root, bg=_BG)
@@ -1410,6 +1479,17 @@ class CopperCalculateViewer:
                  font=_FONT, width=8).pack(side=tk.LEFT, padx=(0, 6))
         tk.Label(row_grid, text="(rows x cols, e.g. 4x5)", bg=_BG, fg="#888888",
                  font=("Segoe UI", 9)).pack(side=tk.LEFT)
+
+        # Vector method checkbox
+        row_vec = tk.Frame(main_frame, bg=_BG)
+        row_vec.pack(fill=tk.X, pady=(0, 6))
+        tk.Checkbutton(
+            row_vec, text="Use Vector Method (exact geometry, no rasterization)",
+            variable=self._vector_var,
+            bg=_BG, fg="#333333",
+            font=("Segoe UI", 9),
+            activebackground=_BG,
+        ).pack(anchor="w")
 
         # Button row
         row3 = tk.Frame(main_frame, bg=_BG)
@@ -1484,25 +1564,31 @@ class CopperCalculateViewer:
             return
         n_rows, n_cols = int(m.group(1)), int(m.group(2))
 
+        use_vector = self._vector_var.get()
+
         self._calc_btn.config(state=tk.DISABLED)
         self._status_text.config(state=tk.NORMAL)
         self._status_text.delete("1.0", tk.END)
         self._status_text.config(state=tk.DISABLED)
 
         t = threading.Thread(target=self._run_calculation,
-                             args=(odb_path, excel_path, n_rows, n_cols),
+                             args=(odb_path, excel_path, n_rows, n_cols,
+                                   use_vector),
                              daemon=True)
         t.start()
 
     def _run_calculation(self, odb_path: str, excel_path: str,
-                         n_rows: int = 5, n_cols: int = 5):
+                         n_rows: int = 5, n_cols: int = 5,
+                         use_vector: bool = False):
         """Run the full calculation loop (background thread)."""
         import numpy as np
         from pathlib import Path
         from src.copper_reporter import generate_copper_report
 
+        method_label = "vector" if use_vector else "raster"
+
         try:
-            self._log(f"Loading ODB++ data... (grid: {n_rows}×{n_cols})")
+            self._log(f"Loading ODB++ data... (grid: {n_rows}×{n_cols}, method: {method_label})")
             data = self._load_data_fn(odb_path)
 
             profile = data.get("profile")
@@ -1529,38 +1615,64 @@ class CopperCalculateViewer:
 
             layer_results = []
             for i, layer_name in enumerate(signal_layers):
-                self._log(f"[{i + 1}/{len(signal_layers)}] Processing {layer_name}...")
+                self._log(f"[{i + 1}/{len(signal_layers)}] Processing {layer_name} ({method_label})...")
 
-                self._log(f"  Rasterizing layer...")
-                raster = copper_utils.rasterize_layer(
-                    layer_name, profile, layers_data, user_symbols, font
-                )
+                if use_vector:
+                    self._log(f"  Calculating copper ratio (vector)...")
+                    total_ratio = copper_vector.calculate_copper_ratio(
+                        layer_name, profile, layers_data, user_symbols, font,
+                    )
 
-                self._log(f"  Calculating copper ratio...")
-                total_ratio = copper_utils.calculate_copper_ratio(
-                    layer_name, profile, layers_data, user_symbols, font,
-                    raster_data=raster,
-                )
+                    self._log(f"  Calculating sub-section ratios ({n_rows}×{n_cols}, vector)...")
+                    sub_ratios = copper_vector.calculate_subsection_ratios(
+                        layer_name, profile, layers_data, user_symbols, font,
+                        n_rows=n_rows, n_cols=n_cols,
+                    )
 
-                self._log(f"  Calculating sub-section ratios ({n_rows}×{n_cols})...")
-                sub_ratios = copper_utils.calculate_subsection_ratios(
-                    layer_name, profile, layers_data, user_symbols, font,
-                    n_rows=n_rows, n_cols=n_cols,
-                    raster_data=raster,
-                )
+                    # Still use raster for the PNG visualization
+                    self._log(f"  Saving image...")
+                    safe_name = (
+                        layer_name
+                        .replace("/", "_").replace("\\", "_").replace(":", "_")
+                        .replace("[", "_").replace("]", "_").replace("*", "_").replace("?", "_")
+                    )
+                    img_path = images_dir / f"{safe_name}.png"
+                    copper_utils.save_layer_image(
+                        layer_name, profile, layers_data, user_symbols, font,
+                        sub_ratios, img_path,
+                        n_rows=n_rows, n_cols=n_cols,
+                    )
+                else:
+                    self._log(f"  Rasterizing layer...")
+                    raster = copper_utils.rasterize_layer(
+                        layer_name, profile, layers_data, user_symbols, font
+                    )
 
-                self._log(f"  Saving image...")
-                safe_name = (
-                    layer_name
-                    .replace("/", "_").replace("\\", "_").replace(":", "_")
-                    .replace("[", "_").replace("]", "_").replace("*", "_").replace("?", "_")
-                )
-                img_path = images_dir / f"{safe_name}.png"
-                copper_utils.save_layer_image(
-                    layer_name, profile, layers_data, user_symbols, font,
-                    sub_ratios, img_path,
-                    n_rows=n_rows, n_cols=n_cols,
-                )
+                    self._log(f"  Calculating copper ratio (raster)...")
+                    total_ratio = copper_utils.calculate_copper_ratio(
+                        layer_name, profile, layers_data, user_symbols, font,
+                        raster_data=raster,
+                    )
+
+                    self._log(f"  Calculating sub-section ratios ({n_rows}×{n_cols}, raster)...")
+                    sub_ratios = copper_utils.calculate_subsection_ratios(
+                        layer_name, profile, layers_data, user_symbols, font,
+                        n_rows=n_rows, n_cols=n_cols,
+                        raster_data=raster,
+                    )
+
+                    self._log(f"  Saving image...")
+                    safe_name = (
+                        layer_name
+                        .replace("/", "_").replace("\\", "_").replace(":", "_")
+                        .replace("[", "_").replace("]", "_").replace("*", "_").replace("?", "_")
+                    )
+                    img_path = images_dir / f"{safe_name}.png"
+                    copper_utils.save_layer_image(
+                        layer_name, profile, layers_data, user_symbols, font,
+                        sub_ratios, img_path,
+                        n_rows=n_rows, n_cols=n_cols,
+                    )
 
                 _, ml = layers_data[layer_name]
                 thickness = copper_data.get(layer_name)

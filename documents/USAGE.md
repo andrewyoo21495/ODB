@@ -349,13 +349,25 @@ Rule tabs are automatically sorted so that they appear in numerical order (e.g. 
 
 ## 6. Copper Ratio Batch Calculator (`copper-calculate`)
 
-The copper ratio batch calculator processes all signal layers in an ODB++ file, computes full-layer and 5×5 sub-section copper ratios, saves PNG visualizations for each layer, and exports the results to a structured Excel file.
+The copper ratio batch calculator processes all signal layers in an ODB++ file, computes full-layer and sub-section copper ratios, saves PNG visualizations for each layer, and exports the results to a structured Excel file.
 
 Unlike `view` and `check`, this command takes no ODB++ path argument — file selection is done through the GUI.
 
 ```bash
 python main.py copper-calculate
 ```
+
+### Calculation Methods
+
+The calculator supports two calculation methods, selectable via the **Use Vector Method** checkbox:
+
+| Method | How it works | Strengths |
+|--------|-------------|-----------|
+| **Raster** (default) | Renders the layer to a pixel image at 400 DPI, then counts copper vs. background pixels. | Fast for simple layers; visual confirmation via rendered image. |
+| **Vector** | Converts every feature (line, pad, arc, surface) directly to mathematical polygons and computes area with boolean geometry operations (Shapely). No image is rendered for measurement. | **Mathematically exact** — immune to resolution limits. Fine traces that appear merged in raster mode are measured with their true geometry. Sub-section ratios come from cheap polygon intersection rather than re-rendering. |
+
+**When to use Vector mode:**  
+Use Vector mode when the board has dense, fine-pitch routing where the raster method over-counts copper because adjacent traces merge into a solid block of pixels. Vector mode eliminates this resolution artefact entirely.
 
 ### GUI Layout
 
@@ -365,6 +377,8 @@ When launched, a small window appears with the following controls:
 |---------|-------------|
 | **ODB++ File** | Path to the input `.tgz`, `.tar.gz`, or `.zip` archive. Click **Browse…** to select. |
 | **Excel Output** | Path for the generated `.xlsx` report. Click **Save As…** to choose the destination. |
+| **Sub-section Grid** | Grid size for sub-section ratios (e.g. `5x5`, `4x5`). |
+| **Use Vector Method** | Checkbox. When checked, uses vector-based polygon geometry instead of rasterization for copper ratio calculation. |
 | **Calculate** | Starts batch processing. The button disables itself while running. |
 | **Status area** | Scrollable log showing per-layer progress messages. Displays "Done!" on completion. |
 
@@ -375,9 +389,8 @@ When **Calculate** is clicked the tool:
 1. Loads ODB++ data from the JSON cache (auto-builds if missing, same cache as `view`/`check`)
 2. Iterates over all signal layers in stackup order
 3. For each signal layer:
-   - Renders the layer off-screen at 200 DPI to a pixel image
-   - Computes the **total copper ratio** (copper pixels ÷ PCB-area pixels)
-   - Computes a **5×5 sub-section grid** of copper ratios across the board
+   - **Raster mode:** Renders the layer off-screen at 400 DPI, counts copper pixels vs. PCB-area pixels, and partitions the image into the grid.
+   - **Vector mode:** Converts all features to Shapely polygons, applies polarity rules (positive = add copper, negative = remove copper), clips to the PCB outline, and computes areas. Sub-section ratios are calculated by intersecting the copper polygon with each grid cell.
    - Saves a PNG visualization with the colour-coded heatmap overlay to `images/<layer_name>.png` next to the Excel file
 4. Generates the Excel report
 
@@ -386,9 +399,9 @@ When **Calculate** is clicked the tool:
 | Sheet | Content |
 |-------|---------|
 | **Summary** | **Table A** — one row per signal layer: Layer Name and Total Copper (%). **Table B** — all layers from the stackup in row order with Name, Type, and Thickness (mm). |
-| **\<layer_name\>** | One sheet per signal layer. Contains a header block (layer name, copper ratio, thickness), the 5×5 sub-section grid with conditional colour fills, and the embedded PNG visualization. |
+| **\<layer_name\>** | One sheet per signal layer. Contains a header block (layer name, copper ratio, thickness), the sub-section grid with conditional colour fills, and the embedded PNG visualization. |
 
-Sub-section grid colour coding (applied to each cell of the 5×5 table):
+Sub-section grid colour coding (applied to each cell of the grid table):
 
 | Fill colour | Copper ratio |
 |-------------|-------------|
