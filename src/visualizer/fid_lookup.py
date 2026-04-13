@@ -75,9 +75,9 @@ def identify_signal_layers(
 
     Rules:
       * If a layer is already named exactly ``sigt`` or ``sigb``, use it.
-      * Otherwise, among SIGNAL-type layers (or names containing ``signal``),
-        pick the one with the lowest trailing number as *sigt* and the
-        highest as *sigb*.
+      * Otherwise, among layers starting with ``sig`` and ending with a number
+        (e.g. sig_1, signal_2, sig10), pick the one with the lowest trailing
+        number as *sigt* and the highest as *sigb*.
     """
     result: dict[str, str] = {}
 
@@ -90,16 +90,11 @@ def identify_signal_layers(
     if len(result) == 2:
         return result
 
-    # Collect signal layers with trailing numbers
+    # Collect signal layers that start with "sig" and end with a number
     signal_layers: list[tuple[int, str]] = []
     for name in eda_layer_names:
-        is_signal = False
-        if matrix_layers and name in matrix_layers:
-            is_signal = matrix_layers[name].type == "SIGNAL"
-        else:
-            is_signal = "signal" in name.lower()
-
-        if is_signal:
+        lower = name.lower()
+        if lower.startswith("sig"):
             m = _TRAILING_NUM_RE.search(name)
             if m:
                 signal_layers.append((int(m.group(1)), name))
@@ -225,31 +220,39 @@ def _find_top_bottom_signal_layers(
     Priority:
       1. If a SIGNAL layer is named exactly ``sigt``, it is the top layer.
          If a SIGNAL layer is named exactly ``sigb``, it is the bottom layer.
-      2. Otherwise fall back to matrix row ordering: the SIGNAL layer with the
-         lowest row number is top; the one with the highest row number is bottom.
+      2. Otherwise, among SIGNAL layers starting with ``sig`` and ending with a
+         number (e.g. sig_1, signal_2, sig10), the lowest number is top and the
+         highest number is bottom.
 
     Returns ``(None, None)`` if fewer than two signal layers exist.
     """
-    signal_layers: list[tuple[int, str]] = [
-        (ml.row, name)
-        for name, (_lf, ml) in layers_data.items()
+    signal_names = [
+        name for name, (_lf, ml) in layers_data.items()
         if ml.type == "SIGNAL"
     ]
-    if len(signal_layers) < 2:
+    if len(signal_names) < 2:
         return None, None
 
     # 1. Explicit sigt / sigb names take priority
-    names = {name for _, name in signal_layers}
-    top = "sigt" if "sigt" in names else None
-    bot = "sigb" if "sigb" in names else None
+    name_set = {n.lower() for n in signal_names}
+    top = "sigt" if "sigt" in name_set else None
+    bot = "sigb" if "sigb" in name_set else None
 
-    # 2. Fall back to row ordering for whichever side wasn't found by name
+    # 2. Fall back: among layers starting with "sig" and ending with a number,
+    #    lowest number → top, highest number → bottom
     if top is None or bot is None:
-        signal_layers.sort()
-        if top is None:
-            top = signal_layers[0][1]
-        if bot is None:
-            bot = signal_layers[-1][1]
+        numbered: list[tuple[int, str]] = []
+        for name in signal_names:
+            if name.lower().startswith("sig"):
+                m = _TRAILING_NUM_RE.search(name)
+                if m:
+                    numbered.append((int(m.group(1)), name))
+        if numbered:
+            numbered.sort(key=lambda t: t[0])
+            if top is None:
+                top = numbered[0][1]
+            if bot is None:
+                bot = numbered[-1][1]
 
     return top, bot
 
