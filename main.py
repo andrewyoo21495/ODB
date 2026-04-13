@@ -609,6 +609,19 @@ def cmd_cache(args):
     if eda and eda.layer_names:
         _resolve_pin_geometries(data)
 
+    # Report identified top/bottom signal layers
+    eda = data.get("eda_data")
+    matrix_layers_list = data.get("matrix_layers", [])
+    matrix_layers_map = {ml.name: ml for ml in matrix_layers_list} if matrix_layers_list else None
+    if eda and eda.layer_names:
+        from src.visualizer.fid_lookup import identify_signal_layers
+        sig_map = identify_signal_layers(eda.layer_names, matrix_layers_map)
+        sigt_name = sig_map.get("sigt", "N/A")
+        sigb_name = sig_map.get("sigb", "N/A")
+        print(f"\n  Signal layers identified:")
+        print(f"    Top  (sigt): {sigt_name}")
+        print(f"    Bot  (sigb): {sigb_name}")
+
     # Write cache
     print(f"\nWriting cache...")
     cache_job(cache_name, data, cache_dir)
