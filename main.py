@@ -170,12 +170,40 @@ def _scale_layer_features(features, factor: float) -> None:
 
 
 def _scale_user_symbols(user_symbols: dict, factor: float) -> None:
-    """Scale contour coordinates of all user-defined symbols in place."""
-    from src.models import SurfaceRecord, ArcSegment
+    """Scale coordinates of all user-defined symbols in place.
+
+    Handles every feature type the symbol renderer can consume (line, pad,
+    arc, text, surface) so that non-surface features inside user symbols
+    remain in a consistent coordinate space with the rest of the board.
+    """
+    from src.models import (
+        ArcRecord, ArcSegment, LineRecord, PadRecord, SurfaceRecord,
+        TextRecord,
+    )
     for symbol in user_symbols.values():
         if symbol.units == "INCH":
             for feat in symbol.features:
-                if isinstance(feat, SurfaceRecord):
+                if isinstance(feat, LineRecord):
+                    feat.xs *= factor
+                    feat.ys *= factor
+                    feat.xe *= factor
+                    feat.ye *= factor
+                elif isinstance(feat, PadRecord):
+                    feat.x *= factor
+                    feat.y *= factor
+                elif isinstance(feat, ArcRecord):
+                    feat.xs *= factor
+                    feat.ys *= factor
+                    feat.xe *= factor
+                    feat.ye *= factor
+                    feat.xc *= factor
+                    feat.yc *= factor
+                elif isinstance(feat, TextRecord):
+                    feat.x *= factor
+                    feat.y *= factor
+                    feat.xsize *= factor
+                    feat.ysize *= factor
+                elif isinstance(feat, SurfaceRecord):
                     for contour in feat.contours:
                         contour.start.x *= factor
                         contour.start.y *= factor

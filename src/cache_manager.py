@@ -516,9 +516,18 @@ def reconstruct_user_symbols(data: dict) -> dict:
     result = {}
     for name, sym_data in (data or {}).items():
         features = [f for f in map(_reconstruct_feature, sym_data.get("features", [])) if f]
+        symbols = [
+            SymbolRef(
+                index=s["index"],
+                name=s["name"],
+                unit_override=s.get("unit_override"),
+            )
+            for s in sym_data.get("symbols", [])
+        ]
         result[name] = UserSymbol(
             name=sym_data.get("name", name),
             units=sym_data.get("units", "INCH"),
             features=features,
+            symbols=symbols,
         )
     return result

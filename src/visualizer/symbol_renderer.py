@@ -15,7 +15,8 @@ from matplotlib.patches import (
 from matplotlib.path import Path as MplPath
 
 from src.models import (
-    ArcSegment, Contour, LineSegment, SurfaceRecord, UserSymbol,
+    ArcRecord, ArcSegment, Contour, LineRecord, LineSegment, PadRecord,
+    SurfaceRecord, UserSymbol,
 )
 from src.parsers.symbol_resolver import resolve_symbol
 
@@ -352,10 +353,20 @@ def user_symbol_to_patches(symbol: UserSymbol, x: float, y: float,
                            color: str = "blue", alpha: float = 0.8) -> list:
     """Convert a user-defined symbol to matplotlib patches at a given position.
 
-    Groups each island contour with its subsequent hole contours and renders
-    them as compound Path patches so that holes are true cutouts.
+    Handles each feature record the layer parser can emit:
+      - SurfaceRecord: island/hole contour groups (compound Path with holes).
+      - LineRecord:    stroked line using an aperture from ``symbol.symbols``.
+      - ArcRecord:     stroked polyline approximation of the arc.
+      - PadRecord:     sub-pad placed via ``symbol_to_patch``.
+
+    Aperture-dependent features silently skip when the referenced symbol
+    index is missing from ``symbol.symbols`` (e.g. legacy caches without the
+    symbol-table field) — that preserves the previous behaviour of rendering
+    nothing instead of crashing.
     """
     patches = []
+
+    sym_lookup = {s.index: s for s in symbol.symbols}
 
     for feature in symbol.features:
         if isinstance(feature, SurfaceRecord):
@@ -406,7 +417,117 @@ def user_symbol_to_patches(symbol: UserSymbol, x: float, y: float,
                     path = MplPath(all_verts, all_codes)
                     patches.append(PathPatch(path, facecolor=color,
                                              alpha=alpha, edgecolor="none"))
+
+        elif isinstance(feature, LineRecord):
+            sym_ref = sym_lookup.get(feature.symbol_idx)
+            if sym_ref is None:
+                continue
+            width = get_line_width_for_symbol(
+                sym_ref.name, symbol.units, sym_ref.unit_override)
+            if width <= 0:
+                continue
+            endpoints = _user_local_to_board(
+                np.array([[feature.xs, feature.ys], [feature.xe, feature.ye]]),
+                x, y, rotation, mirror)
+            rounded = resolve_symbol(sym_ref.name).type == "round"
+            patches.extend(_stroke_segment_patches(
+                endpoints[0], endpoints[1], width, color, alpha, rounded))
+
+        elif isinstance(feature, ArcRecord):
+            sym_ref = sym_lookup.get(feature.symbol_idx)
+            if sym_ref is None:
+                continue
+            width = get_line_width_for_symbol(
+                sym_ref.name, symbol.units, sym_ref.unit_override)
+            if width <= 0:
+                continue
+            arc_pts = _arc_to_points(
+                feature.xs, feature.ys, feature.xe, feature.ye,
+                feature.xc, feature.yc, feature.clockwise, num_points=24)
+            if len(arc_pts) < 2:
+                continue
+            board_pts = _user_local_to_board(
+                np.array(arc_pts), x, y, rotation, mirror)
+            rounded = resolve_symbol(sym_ref.name).type == "round"
+            for i in range(len(board_pts) - 1):
+                patches.extend(_stroke_segment_patches(
+                    board_pts[i], board_pts[i + 1], width, color, alpha, rounded))
+
+        elif isinstance(feature, PadRecord):
+            sym_ref = sym_lookup.get(feature.symbol_idx)
+            if sym_ref is None:
+                continue
+            # Transform the pad centre through the parent mirror/rotate/translate
+            pos = _user_local_to_board(
+                np.array([[feature.x, feature.y]]),
+                x, y, rotation, mirror)[0]
+            # Compose rotation / mirror with the parent transform.
+            # An X-mirror reverses the apparent CW rotation direction.
+            eff_mirror = mirror ^ feature.mirror
+            eff_rot = (rotation - feature.rotation) if mirror else (rotation + feature.rotation)
+            sub = symbol_to_patch(
+                sym_ref.name, float(pos[0]), float(pos[1]),
+                eff_rot, eff_mirror,
+                symbol.units, sym_ref.unit_override,
+                color, alpha, feature.resize_factor,
+            )
+            if sub is not None:
+                patches.append(sub)
+
     return patches
+
+
+def _user_local_to_board(pts: np.ndarray, x: float, y: float,
+                         rotation: float, mirror: bool) -> np.ndarray:
+    """Apply the user-symbol local→board transform (mirror → rotate → translate).
+
+    Matches the per-contour transform used by the SurfaceRecord branch so that
+    line/arc/pad features align with surface contours inside the same symbol.
+    """
+    out = np.asarray(pts, dtype=float).copy()
+    if mirror:
+        out[:, 0] = -out[:, 0]
+    if rotation:
+        out = _rotate_points(out, 0, 0, rotation)
+    out[:, 0] += x
+    out[:, 1] += y
+    return out
+
+
+def _stroke_segment_patches(p1: np.ndarray, p2: np.ndarray, width: float,
+                            color: str, alpha: float,
+                            rounded: bool) -> list:
+    """Build matplotlib patches approximating a stroke between two points."""
+    x1, y1 = float(p1[0]), float(p1[1])
+    x2, y2 = float(p2[0]), float(p2[1])
+    dx, dy = x2 - x1, y2 - y1
+    length = math.hypot(dx, dy)
+    half = width / 2.0
+
+    result: list = []
+    if length < 1e-12:
+        # Degenerate: zero-length flash — render as a dot cap if we have any.
+        if rounded and half > 0:
+            result.append(Circle((x1, y1), half,
+                                 facecolor=color, edgecolor="none", alpha=alpha))
+        return result
+
+    ux, uy = dx / length, dy / length
+    px, py = -uy, ux  # unit perpendicular
+    corners = np.array([
+        [x1 + px * half, y1 + py * half],
+        [x2 + px * half, y2 + py * half],
+        [x2 - px * half, y2 - py * half],
+        [x1 - px * half, y1 - py * half],
+    ])
+    result.append(Polygon(corners, closed=True,
+                          facecolor=color, edgecolor="none", alpha=alpha))
+    if rounded and half > 0:
+        result.append(Circle((x1, y1), half,
+                             facecolor=color, edgecolor="none", alpha=alpha))
+        result.append(Circle((x2, y2), half,
+                             facecolor=color, edgecolor="none", alpha=alpha))
+    return result
 
 
 # ---------------------------------------------------------------------------

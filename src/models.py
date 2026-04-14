@@ -238,6 +238,7 @@ class UserSymbol:
     name: str
     units: str = "INCH"
     features: list = field(default_factory=list)  # List of feature records
+    symbols: list = field(default_factory=list)   # Aperture table (SymbolRef) used by line/arc/pad features
 
 
 # --- Font ---
