@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ko">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ODB++ Design Checklist Documentation</title>
+<title>ODB++ 설계 체크리스트 문서</title>
 <style>
   :root {
     --bg: #f8f9fa;
@@ -23,7 +23,7 @@
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
-    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    font-family: 'Malgun Gothic', 'Segoe UI', system-ui, -apple-system, sans-serif;
     background: var(--bg);
     color: var(--text);
     line-height: 1.6;
@@ -214,26 +214,26 @@
 <body>
 
 <div class="header">
-  <h1>ODB++ Design Checklist Documentation</h1>
-  <p>Automated PCB design rule checks for component placement, spacing, orientation, and clearance verification.</p>
+  <h1>ODB++ 설계 체크리스트 문서</h1>
+  <p>부품 배치, 이격, 방향, 클리어런스 검증을 위한 자동화된 PCB 설계 규칙 검사.</p>
 </div>
 
 <div class="stats-bar">
   <div class="stat">
-    <div class="stat-value">18</div>
-    <div class="stat-label">Total Rules</div>
+    <div class="stat-value">30</div>
+    <div class="stat-label">총 규칙 수</div>
   </div>
   <div class="stat">
-    <div class="stat-value">4</div>
-    <div class="stat-label">Categories</div>
+    <div class="stat-value">3</div>
+    <div class="stat-label">카테고리</div>
   </div>
   <div class="stat">
-    <div class="stat-value">6</div>
-    <div class="stat-label">Reference CSVs</div>
+    <div class="stat-value">9</div>
+    <div class="stat-label">참조 CSV 파일</div>
   </div>
   <div class="stat">
-    <div class="stat-value">18</div>
-    <div class="stat-label">Rules</div>
+    <div class="stat-value">3</div>
+    <div class="stat-label">체크리스트 시리즈</div>
   </div>
 </div>
 
@@ -241,41 +241,135 @@
 
   <!-- Usage -->
   <div class="usage">
-    <h2>How to Run</h2>
+    <h2>실행 방법</h2>
     <code><span class="cmd">python main.py check</span> <span class="arg">&lt;odb_path&gt;</span></code>
     <code><span class="cmd">python main.py check</span> <span class="arg">&lt;odb_path&gt;</span> <span class="flag">--rules</span> <span class="arg">CKL-01-001 CKL-03-015</span></code>
     <code><span class="cmd">python main.py check</span> <span class="arg">&lt;odb_path&gt;</span> <span class="flag">--output</span> <span class="arg">my_report.xlsx</span></code>
-    <p>Results are printed to the console and exported to an Excel file in <strong>output/</strong>. Each rule gets its own sheet with a structured results table.</p>
+    <p>결과는 콘솔에 출력되며 <strong>output/</strong> 디렉터리의 Excel 파일로 내보내집니다. 각 규칙은 자체 시트에 구조화된 결과 테이블로 기록됩니다.</p>
   </div>
 
   <!-- ================================================================== -->
-  <div class="section-title">Checklist Series 01 &mdash; IC / AP-Memory Placement</div>
+  <div class="section-title">체크리스트 시리즈 01 &mdash; IC / PMIC / 안테나 / 센서 배치</div>
 
   <!-- CKL-01-001 -->
   <div class="rule-card">
     <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
       <span class="rule-id">CKL-01-001</span>
-      <span class="rule-desc">ICs must not overlap with interposers or connectors on the opposite side</span>
+      <span class="rule-desc">IC 및 Filter는 반대면의 Interposer / Connector / SIM Socket / Shield Can과 패드-패드 겹침이 없어야 함</span>
       <span class="badge badge-placement">Placement</span>
       <span class="toggle-icon">&#9654;</span>
     </div>
     <div class="rule-body">
-      <h4>Inspection Process</h4>
+      <h4>검사 과정</h4>
       <ol>
-        <li>Search for all ICs on both Top and Bottom layers.</li>
-        <li>For each IC, check if any interposer or connector component overlaps on the opposite side.</li>
-        <li>Report overlapping pairs.</li>
+        <li>Top 및 Bottom 레이어에서 모든 IC 및 Filter를 탐색한다.</li>
+        <li>각 IC에 대해 반대면의 Interposer(최외곽 패드만), Connector / SIM Socket / Shield Can(모든 패드) 과의 패드 겹침을 검사한다.</li>
+        <li>각 Filter에 대해 반대면의 Interposer(최외곽 패드만), Connector / SIM Socket(모든 패드) 과의 패드 겹침을 검사한다.</li>
+        <li>외곽선만 겹치는 경우는 PASS로 기록하고, 패드-패드 접촉이 발생하면 FAIL로 플래그한다.</li>
       </ol>
-      <h4>Output Columns</h4>
+      <h4>출력 컬럼</h4>
       <table class="col-table">
-        <tr><th>Column</th><th>Description</th></tr>
-        <tr><td class="col-name">comp</td><td>Name of the IC component</td></tr>
-        <tr><td class="col-name">cmp_layer</td><td>Layer of the IC (Top or Bottom)</td></tr>
-        <tr><td class="col-name">overlapping_cmp</td><td>Name of the overlapping interposer or connector on the opposite side</td></tr>
-        <tr><td class="col-name">status</td><td>PASS or FAIL</td></tr>
+        <tr><th>컬럼</th><th>설명</th></tr>
+        <tr><td class="col-name">comp</td><td>IC 또는 Filter 부품 이름</td></tr>
+        <tr><td class="col-name">cmp_layer</td><td>부품이 배치된 레이어 (Top 또는 Bottom)</td></tr>
+        <tr><td class="col-name">overlapping_cmp</td><td>반대면에서 겹치는 부품 이름</td></tr>
+        <tr><td class="col-name">opp_type</td><td>반대면 부품의 유형 (Interposer / Connector / SIM_Socket / Shield_Can)</td></tr>
+        <tr><td class="col-name">status</td><td>PASS 또는 FAIL</td></tr>
       </table>
-      <h4>Pass/Fail Criteria</h4>
-      <div class="pass-fail-note fail-note"><strong>FAIL</strong> if any interposer or connector overlaps the IC on the opposite side.</div>
+      <h4>Pass/Fail 기준</h4>
+      <div class="pass-fail-note fail-note"><strong>FAIL</strong>: 반대면의 대상 부품 패드와 IC/Filter 패드가 겹치면 FAIL.</div>
+    </div>
+  </div>
+
+  <!-- CKL-01-002 -->
+  <div class="rule-card">
+    <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
+      <span class="rule-id">CKL-01-002</span>
+      <span class="rule-desc">PMIC 부품의 최외곽 패드에는 VIA 설계가 적용되어야 함</span>
+      <span class="badge badge-placement">Placement</span>
+      <span class="toggle-icon">&#9654;</span>
+    </div>
+    <div class="rule-body">
+      <h4>참조 파일</h4>
+      <span class="ref-tag">references/pmic_list.csv</span>
+      <h4>검사 과정</h4>
+      <ol>
+        <li><code>pmic_list.csv</code> 의 part_name 및 속성 기반 분류를 통해 PMIC 부품을 식별한다.</li>
+        <li>각 PMIC 패키지의 핀 배열 중 외곽 경계에 위치한 최외곽 패드 인덱스를 계산한다.</li>
+        <li>각 최외곽 패드 위치에서 VIA 수를 카운트한다 (toeprint 및 FID 기반 실제 동박 패드 geometry 사용).</li>
+        <li>패드가 NC(Not Connected) 인 경우는 FAIL 판정에서 제외한다.</li>
+      </ol>
+      <h4>출력 컬럼</h4>
+      <table class="col-table">
+        <tr><th>컬럼</th><th>설명</th></tr>
+        <tr><td class="col-name">comp</td><td>PMIC 부품 이름</td></tr>
+        <tr><td class="col-name">cmp_layer</td><td>부품이 배치된 레이어</td></tr>
+        <tr><td class="col-name">pad_name</td><td>패드(핀) 이름</td></tr>
+        <tr><td class="col-name">via</td><td>해당 패드 위치에 VIA가 존재하는지 여부 (TRUE / FALSE)</td></tr>
+        <tr><td class="col-name">nc</td><td>NC 패드 여부 (TRUE / FALSE)</td></tr>
+        <tr><td class="col-name">status</td><td>PASS / FAIL / NC</td></tr>
+      </table>
+      <h4>Pass/Fail 기준</h4>
+      <div class="pass-fail-note fail-note"><strong>FAIL</strong>: 최외곽 패드에 VIA가 없고 NC 패드가 아닌 경우 FAIL. NC 패드는 판정에서 제외된다.</div>
+    </div>
+  </div>
+
+  <!-- CKL-01-003 -->
+  <div class="rule-card">
+    <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
+      <span class="rule-id">CKL-01-003</span>
+      <span class="rule-desc">QUALCOMM PMIC는 반대면 부품이 PMIC 외곽선 내부에 포함되도록 배치되어야 함</span>
+      <span class="badge badge-placement">Placement</span>
+      <span class="toggle-icon">&#9654;</span>
+    </div>
+    <div class="rule-body">
+      <h4>참조 파일</h4>
+      <span class="ref-tag">references/pmic_list.csv</span>
+      <h4>검사 과정</h4>
+      <ol>
+        <li><code>pmic_list.csv</code> 에서 maker가 QUALCOMM으로 시작하는 PMIC part_name 을 추출한다.</li>
+        <li>각 QUALCOMM PMIC에 대해 반대면의 모든 부품을 확인하고, 해당 부품의 footprint가 PMIC 외곽선과 교차하는지 검사한다.</li>
+        <li>PMIC 외곽선과 교차하는 반대면 부품을 보고한다.</li>
+      </ol>
+      <h4>출력 컬럼</h4>
+      <table class="col-table">
+        <tr><th>컬럼</th><th>설명</th></tr>
+        <tr><td class="col-name">comp</td><td>QUALCOMM PMIC 이름</td></tr>
+        <tr><td class="col-name">cmp_layer</td><td>PMIC가 배치된 레이어</td></tr>
+        <tr><td class="col-name">overlapping_cmp</td><td>반대면에서 외곽선과 교차하는 부품 이름 (없으면 &ldquo;&ndash;&rdquo;)</td></tr>
+        <tr><td class="col-name">outline</td><td>외곽선 침범 여부 (TRUE / FALSE)</td></tr>
+        <tr><td class="col-name">status</td><td>PASS 또는 FAIL</td></tr>
+      </table>
+      <h4>Pass/Fail 기준</h4>
+      <div class="pass-fail-note fail-note"><strong>FAIL</strong>: 반대면 부품이 QUALCOMM PMIC 외곽선과 겹치면 FAIL.</div>
+    </div>
+  </div>
+
+  <!-- CKL-01-004 -->
+  <div class="rule-card">
+    <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
+      <span class="rule-id">CKL-01-004</span>
+      <span class="rule-desc">안테나(ANT) C-Clip 패드는 반대면 SIM Socket 패드와 겹치지 않아야 함</span>
+      <span class="badge badge-placement">Placement</span>
+      <span class="toggle-icon">&#9654;</span>
+    </div>
+    <div class="rule-body">
+      <h4>검사 과정</h4>
+      <ol>
+        <li>Top 및 Bottom 레이어에서 SIM Socket을 탐색한다.</li>
+        <li>각 SIM Socket의 반대면에서 안테나(ANT) 부품을 식별한다.</li>
+        <li>SIM Socket 패드와 안테나 패드 사이의 패드-패드 겹침을 검사한다.</li>
+      </ol>
+      <h4>출력 컬럼</h4>
+      <table class="col-table">
+        <tr><th>컬럼</th><th>설명</th></tr>
+        <tr><td class="col-name">comp</td><td>SIM Socket 부품 이름</td></tr>
+        <tr><td class="col-name">cmp_layer</td><td>SIM Socket이 배치된 레이어</td></tr>
+        <tr><td class="col-name">overlapping_cmp</td><td>패드가 겹치는 안테나 부품 이름 (없으면 &ldquo;&ndash;&rdquo;)</td></tr>
+        <tr><td class="col-name">status</td><td>PASS 또는 FAIL</td></tr>
+      </table>
+      <h4>Pass/Fail 기준</h4>
+      <div class="pass-fail-note fail-note"><strong>FAIL</strong>: 안테나 C-Clip 패드가 반대면 SIM Socket 패드와 겹치면 FAIL.</div>
     </div>
   </div>
 
@@ -283,34 +377,34 @@
   <div class="rule-card">
     <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
       <span class="rule-id">CKL-01-005</span>
-      <span class="rule-desc">Inductors (&ge;2012) overlapping opposite side of AP/Memory: corner placement and orientation review</span>
+      <span class="rule-desc">AP/Memory 반대면에 겹치는 2012 이상 인덕터의 코너 배치 및 방향 검토</span>
       <span class="badge badge-placement">Placement</span>
       <span class="toggle-icon">&#9654;</span>
     </div>
     <div class="rule-body">
-      <h4>Reference Files</h4>
+      <h4>참조 파일</h4>
       <span class="ref-tag">references/ap_memory.csv</span>
       <span class="ref-tag">references/inductors_2s_list.csv</span>
-      <h4>Inspection Process</h4>
+      <h4>검사 과정</h4>
       <ol>
-        <li>Search for AP or Memory components on Top and Bottom layers (part names from <code>ap_memory.csv</code>).</li>
-        <li>Search for all inductors overlapping the opposite side of each AP/Memory.</li>
-        <li>Filter inductors to include only those with a size of 2012 or larger.</li>
-        <li>Inspect whether filtered inductors are placed at the corners and check their horizontal/vertical orientation.</li>
+        <li><code>ap_memory.csv</code> 의 part_name을 이용해 Top/Bottom 레이어에서 AP/Memory 부품을 탐색한다.</li>
+        <li>각 AP/Memory 부품의 반대면에 겹치는 모든 인덕터를 검색한다.</li>
+        <li>크기가 2012 이상인 인덕터만 필터링한다.</li>
+        <li>필터된 인덕터의 코너 배치 여부와 수평/수직 방향을 검사한다.</li>
       </ol>
-      <h4>Output Columns</h4>
+      <h4>출력 컬럼</h4>
       <table class="col-table">
-        <tr><th>Column</th><th>Description</th></tr>
-        <tr><td class="col-name">comp</td><td>Name of the AP or Memory component</td></tr>
-        <tr><td class="col-name">cmp_layer</td><td>Layer of the AP/Memory (Top or Bottom)</td></tr>
-        <tr><td class="col-name">overlapping_ind</td><td>Name of the overlapping inductor (&ge;2012)</td></tr>
-        <tr><td class="col-name">part_name</td><td>Part name of the inductor</td></tr>
-        <tr><td class="col-name">edge</td><td>TRUE if inductor is at the corner of the AP/Memory, FALSE otherwise</td></tr>
-        <tr><td class="col-name">hori/verti</td><td>Orientation relative to the AP/Memory outline (Horizontal or Vertical)</td></tr>
-        <tr><td class="col-name">status</td><td>PASS or FAIL</td></tr>
+        <tr><th>컬럼</th><th>설명</th></tr>
+        <tr><td class="col-name">comp</td><td>AP/Memory 부품 이름</td></tr>
+        <tr><td class="col-name">cmp_layer</td><td>AP/Memory가 배치된 레이어</td></tr>
+        <tr><td class="col-name">overlapping_ind</td><td>겹치는 인덕터 이름 (&ge;2012)</td></tr>
+        <tr><td class="col-name">part_name</td><td>인덕터 part_name</td></tr>
+        <tr><td class="col-name">edge</td><td>AP/Memory 코너에 있으면 TRUE, 아니면 FALSE</td></tr>
+        <tr><td class="col-name">hori/verti</td><td>AP/Memory 외곽선 기준 방향 (Horizontal / Vertical)</td></tr>
+        <tr><td class="col-name">status</td><td>PASS 또는 FAIL</td></tr>
       </table>
-      <h4>Pass/Fail Criteria</h4>
-      <div class="pass-fail-note"><strong>PASS</strong> if edge is FALSE <em>and</em> orientation is Horizontal. Otherwise <strong>FAIL</strong>.</div>
+      <h4>Pass/Fail 기준</h4>
+      <div class="pass-fail-note"><strong>PASS</strong>: edge가 FALSE이고 방향이 Horizontal인 경우, 또는 Vertical이면서 외곽선과 겹치지 않는 경우. 그 외는 <strong>FAIL</strong>.</div>
     </div>
   </div>
 
@@ -318,27 +412,27 @@
   <div class="rule-card">
     <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
       <span class="rule-id">CKL-01-006</span>
-      <span class="rule-desc">RF Receptacle pads must not overlap with 5-pin filter pads on the opposite layer</span>
+      <span class="rule-desc">RF Receptacle 패드는 반대면 5핀 Filter 패드와 겹치지 않아야 함</span>
       <span class="badge badge-placement">Placement</span>
       <span class="toggle-icon">&#9654;</span>
     </div>
     <div class="rule-body">
-      <h4>Inspection Process</h4>
+      <h4>검사 과정</h4>
       <ol>
-        <li>Search for RF components on both Top and Bottom layers (components with comp_name starting with &ldquo;RF&rdquo;).</li>
-        <li>On the layer opposite each identified RF component, search for any overlapping 5-pin filters (comp_name starting with &ldquo;F&rdquo;, excluding &ldquo;FB&rdquo; and &ldquo;FPC&rdquo; prefixes, with exactly 5 pins).</li>
-        <li>Check whether the RF component&rsquo;s pads overlap with the 5-pin filter&rsquo;s pads on the opposite layer.</li>
+        <li>Top 및 Bottom 레이어에서 RF 부품(comp_name이 &ldquo;RF&rdquo; 로 시작)을 탐색한다.</li>
+        <li>각 RF 부품의 반대면에서 5핀 Filter (comp_name이 &ldquo;F&rdquo; 로 시작하되 &ldquo;FB&rdquo; / &ldquo;FPC&rdquo; 제외, 핀 수 정확히 5개) 를 찾는다.</li>
+        <li>RF 부품 패드와 5핀 Filter 패드의 겹침 여부를 검사한다.</li>
       </ol>
-      <h4>Output Columns</h4>
+      <h4>출력 컬럼</h4>
       <table class="col-table">
-        <tr><th>Column</th><th>Description</th></tr>
-        <tr><td class="col-name">comp</td><td>Name of the identified RF component</td></tr>
-        <tr><td class="col-name">cmp_layer</td><td>Layer where the RF component is located (Top or Bottom)</td></tr>
-        <tr><td class="col-name">overlapping_cmp</td><td>Name of the 5-pin filter component overlapping on the opposite layer</td></tr>
-        <tr><td class="col-name">status</td><td>PASS or FAIL</td></tr>
+        <tr><th>컬럼</th><th>설명</th></tr>
+        <tr><td class="col-name">comp</td><td>식별된 RF 부품 이름</td></tr>
+        <tr><td class="col-name">cmp_layer</td><td>RF 부품이 배치된 레이어</td></tr>
+        <tr><td class="col-name">overlapping_cmp</td><td>반대면에서 겹치는 5핀 Filter 이름 (없으면 &ldquo;&ndash;&rdquo;)</td></tr>
+        <tr><td class="col-name">status</td><td>PASS 또는 FAIL</td></tr>
       </table>
-      <h4>Pass/Fail Criteria</h4>
-      <div class="pass-fail-note fail-note"><strong>FAIL</strong> if a 5-pin filter&rsquo;s pad overlaps with the RF component&rsquo;s pad on the opposite layer.</div>
+      <h4>Pass/Fail 기준</h4>
+      <div class="pass-fail-note fail-note"><strong>FAIL</strong>: 5핀 Filter 패드가 반대면 RF 부품 패드와 겹치면 FAIL.</div>
     </div>
   </div>
 
@@ -346,63 +440,64 @@
   <div class="rule-card">
     <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
       <span class="rule-id">CKL-01-007</span>
-      <span class="rule-desc">Air Pressure Sensor (1209-002567) sensing area must not overlap with ICs, shield cans, or connectors on the opposite layer</span>
+      <span class="rule-desc">기압 센서(1209-002567) 센싱 영역은 반대면의 IC / Shield Can / Connector와 겹치지 않아야 함</span>
       <span class="badge badge-placement">Placement</span>
       <span class="toggle-icon">&#9654;</span>
     </div>
     <div class="rule-body">
-      <h4>Inspection Process</h4>
+      <h4>검사 과정</h4>
       <ol>
-        <li>Search for Air Pressure Sensor components on both Top and Bottom layers (components with part_name &ldquo;1209-002567&rdquo;).</li>
-        <li>On the opposite layer, check for the existence of any ICs, shield cans, or connectors and verify if they overlap with the Air Pressure Sensor&rsquo;s area.</li>
-        <li>Report any overlapping IC, shield can, or connector component.</li>
+        <li>Top 및 Bottom 레이어에서 기압 센서 부품(part_name이 &ldquo;1209-002567&rdquo;) 을 탐색한다.</li>
+        <li>반대면에서 IC / Shield Can / Connector 의 존재 여부를 확인하고 센서 영역과의 겹침을 검증한다.</li>
+        <li>겹치는 IC / Shield Can / Connector 부품을 보고한다.</li>
       </ol>
-      <h4>Output Columns</h4>
+      <h4>출력 컬럼</h4>
       <table class="col-table">
-        <tr><th>Column</th><th>Description</th></tr>
-        <tr><td class="col-name">comp</td><td>Name of the identified Air Pressure Sensor component</td></tr>
-        <tr><td class="col-name">cmp_layer</td><td>Layer where the sensor is located (Top or Bottom)</td></tr>
-        <tr><td class="col-name">overlapping_cmp</td><td>Name of the IC, shield can, or connector component on the opposite layer</td></tr>
-        <tr><td class="col-name">status</td><td>PASS or FAIL</td></tr>
+        <tr><th>컬럼</th><th>설명</th></tr>
+        <tr><td class="col-name">comp</td><td>기압 센서 부품 이름</td></tr>
+        <tr><td class="col-name">cmp_layer</td><td>센서가 배치된 레이어</td></tr>
+        <tr><td class="col-name">overlapping_cmp</td><td>반대면에서 겹치는 IC / Shield Can / Connector 이름 (없으면 &ldquo;&ndash;&rdquo;)</td></tr>
+        <tr><td class="col-name">status</td><td>PASS 또는 FAIL</td></tr>
       </table>
-      <h4>Pass/Fail Criteria</h4>
-      <div class="pass-fail-note fail-note"><strong>FAIL</strong> if the sensor and any IC, shield can, or connector overlap on opposite layers.</div>
+      <h4>Pass/Fail 기준</h4>
+      <div class="pass-fail-note fail-note"><strong>FAIL</strong>: 센서와 반대면의 IC / Shield Can / Connector가 겹치면 FAIL.</div>
     </div>
   </div>
 
   <!-- ================================================================== -->
-  <div class="section-title">Checklist Series 02 &mdash; Capacitor / Inductor vs Connector</div>
+  <div class="section-title">체크리스트 시리즈 02 &mdash; Capacitor / Inductor 배치</div>
 
   <!-- CKL-02-001 -->
   <div class="rule-card">
     <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
       <span class="rule-id">CKL-02-001</span>
-      <span class="rule-desc">10 managed capacitor types must be at least 1.5mm from connectors on the opposite side</span>
+      <span class="rule-desc">관리 대상 Capacitor 10종은 반대면 Connector / Interposer / Shield Can과 최소 1.5mm 이격되어야 함</span>
       <span class="badge badge-spacing">Spacing</span>
       <span class="toggle-icon">&#9654;</span>
     </div>
     <div class="rule-body">
-      <h4>Reference Files</h4>
+      <h4>참조 파일</h4>
       <span class="ref-tag">references/capacitors_10_list.csv</span>
-      <h4>Inspection Process</h4>
+      <h4>검사 과정</h4>
       <ol>
-        <li>Search for 10 managed capacitor types on Top and Bottom layers.</li>
-        <li>Match each identified capacitor with any connector on the opposite side.</li>
-        <li>If an opposite-side connector is found, measure the edge-to-edge distance.</li>
-        <li>Distance must be at least 1.5mm.</li>
+        <li>Top 및 Bottom 레이어에서 관리 대상 10종 Capacitor를 탐색한다.</li>
+        <li>각 Capacitor의 반대면에서 Connector, Interposer, Shield Can과의 겹침/근접을 검사한다.</li>
+        <li>겹치거나 근접한 경우 edge-to-edge 거리를 측정한다.</li>
+        <li>거리는 최소 1.5mm 이상이어야 한다.</li>
       </ol>
-      <h4>Output Columns</h4>
+      <h4>출력 컬럼</h4>
       <table class="col-table">
-        <tr><th>Column</th><th>Description</th></tr>
-        <tr><td class="col-name">comp</td><td>Name of the managed capacitor</td></tr>
-        <tr><td class="col-name">cmp_layer</td><td>Layer of the capacitor</td></tr>
-        <tr><td class="col-name">part_name</td><td>Part name of the capacitor</td></tr>
-        <tr><td class="col-name">overlapping_con</td><td>Name of the connector on the opposite side</td></tr>
-        <tr><td class="col-name">distance</td><td>Edge-to-edge distance (mm)</td></tr>
-        <tr><td class="col-name">status</td><td>PASS or FAIL</td></tr>
+        <tr><th>컬럼</th><th>설명</th></tr>
+        <tr><td class="col-name">comp</td><td>관리 대상 Capacitor 이름</td></tr>
+        <tr><td class="col-name">cmp_layer</td><td>Capacitor가 배치된 레이어</td></tr>
+        <tr><td class="col-name">part_name</td><td>Capacitor part_name</td></tr>
+        <tr><td class="col-name">overlapping_cmp</td><td>반대면에서 인접한 부품 이름</td></tr>
+        <tr><td class="col-name">opp_type</td><td>반대면 부품 유형 (Connector / Interposer / Shield Can)</td></tr>
+        <tr><td class="col-name">distance</td><td>edge-to-edge 거리 (mm)</td></tr>
+        <tr><td class="col-name">status</td><td>PASS 또는 FAIL</td></tr>
       </table>
-      <h4>Pass/Fail Criteria</h4>
-      <div class="pass-fail-note"><strong>PASS</strong> if distance &ge; 1.5mm. Otherwise <strong>FAIL</strong>.</div>
+      <h4>Pass/Fail 기준</h4>
+      <div class="pass-fail-note"><strong>PASS</strong>: 거리가 1.5mm 이상이면 PASS. 그 외는 <strong>FAIL</strong>.</div>
     </div>
   </div>
 
@@ -410,32 +505,134 @@
   <div class="rule-card">
     <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
       <span class="rule-id">CKL-02-002</span>
-      <span class="rule-desc">Managed capacitors (41 types) overlapping connectors on the opposite side must be aligned horizontally</span>
+      <span class="rule-desc">관리 대상 Capacitor 41종이 반대면 Connector에 겹치는 경우 수평 정렬되어야 함</span>
       <span class="badge badge-placement">Placement</span>
       <span class="toggle-icon">&#9654;</span>
     </div>
     <div class="rule-body">
-      <h4>Reference Files</h4>
+      <h4>참조 파일</h4>
       <span class="ref-tag">references/capacitors_41_list.csv</span>
-      <h4>Inspection Process</h4>
+      <h4>검사 과정</h4>
       <ol>
-        <li>Load the 41 managed capacitor part names from <code>capacitors_41_list.csv</code>.</li>
-        <li>Search for all connectors on Top and Bottom layers.</li>
-        <li>For each connector, find managed capacitors (41 types) overlapping on the opposite side.</li>
-        <li>Check the orientation of each overlapping capacitor.</li>
+        <li><code>capacitors_41_list.csv</code> 에서 관리 대상 41종 Capacitor의 part_name을 로드한다.</li>
+        <li>Top 및 Bottom 레이어에서 모든 Connector를 탐색한다.</li>
+        <li>각 Connector에 대해 반대면에서 패드가 겹치는 41종 Capacitor를 찾는다.</li>
+        <li>추가로 Connector 외곽선 내부에 존재하는 41종 Capacitor도 검사 대상으로 포함한다.</li>
+        <li>각 Capacitor의 edge 여부 및 Connector 대비 정렬 방향을 검사한다.</li>
       </ol>
-      <h4>Output Columns</h4>
+      <h4>출력 컬럼</h4>
       <table class="col-table">
-        <tr><th>Column</th><th>Description</th></tr>
-        <tr><td class="col-name">comp</td><td>Name of the connector</td></tr>
-        <tr><td class="col-name">cmp_layer</td><td>Layer of the connector (Top or Bottom)</td></tr>
-        <tr><td class="col-name">overlapping_cap</td><td>Name of the overlapping managed capacitor</td></tr>
-        <tr><td class="col-name">part_name</td><td>Part name of the capacitor</td></tr>
-        <tr><td class="col-name">hori/verti</td><td>Orientation relative to connector outline (Horizontal or Vertical)</td></tr>
-        <tr><td class="col-name">status</td><td>PASS or FAIL</td></tr>
+        <tr><th>컬럼</th><th>설명</th></tr>
+        <tr><td class="col-name">comp</td><td>Connector 이름</td></tr>
+        <tr><td class="col-name">cmp_layer</td><td>Connector가 배치된 레이어</td></tr>
+        <tr><td class="col-name">overlapping_cap</td><td>겹치는 관리 대상 Capacitor 이름</td></tr>
+        <tr><td class="col-name">part_name</td><td>Capacitor part_name</td></tr>
+        <tr><td class="col-name">edge</td><td>Connector 코너에 있으면 TRUE, 아니면 FALSE</td></tr>
+        <tr><td class="col-name">hori/verti</td><td>Connector 외곽선 기준 방향 (Horizontal / Vertical)</td></tr>
+        <tr><td class="col-name">status</td><td>PASS 또는 FAIL</td></tr>
       </table>
-      <h4>Pass/Fail Criteria</h4>
-      <div class="pass-fail-note"><strong>PASS</strong> if orientation is Horizontal. Otherwise <strong>FAIL</strong>.</div>
+      <h4>Pass/Fail 기준</h4>
+      <div class="pass-fail-note"><strong>PASS</strong>: edge가 FALSE이고 방향이 Horizontal인 경우. 내부 배치된 경우에는 Vertical일 때만 FAIL.</div>
+    </div>
+  </div>
+
+  <!-- CKL-02-003 -->
+  <div class="rule-card">
+    <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
+      <span class="rule-id">CKL-02-003</span>
+      <span class="rule-desc">관리 대상 Capacitor 41종이 반대면 Shield Can 패드에 겹치는 경우 수평 정렬되어야 하며 코너/대각 영역은 금지</span>
+      <span class="badge badge-placement">Placement</span>
+      <span class="toggle-icon">&#9654;</span>
+    </div>
+    <div class="rule-body">
+      <h4>참조 파일</h4>
+      <span class="ref-tag">references/capacitors_41_list.csv</span>
+      <h4>검사 과정</h4>
+      <ol>
+        <li>Top 및 Bottom 레이어에서 Shield Can을 탐색한다.</li>
+        <li>각 Shield Can의 반대면에서 패드가 겹치는 41종 관리 대상 Capacitor를 찾는다.</li>
+        <li>Capacitor가 Shield Can의 코너 또는 대각선으로 설계된 구간에 배치되었는지 검사한다.</li>
+        <li>Shield Can 벽 기준 Capacitor의 수평/수직 정렬 방향을 검사한다.</li>
+      </ol>
+      <h4>출력 컬럼</h4>
+      <table class="col-table">
+        <tr><th>컬럼</th><th>설명</th></tr>
+        <tr><td class="col-name">comp</td><td>Shield Can 이름</td></tr>
+        <tr><td class="col-name">cmp_layer</td><td>Shield Can이 배치된 레이어</td></tr>
+        <tr><td class="col-name">overlapping_cap</td><td>겹치는 관리 대상 Capacitor 이름</td></tr>
+        <tr><td class="col-name">part_name</td><td>Capacitor part_name</td></tr>
+        <tr><td class="col-name">edge</td><td>코너 또는 대각선 구간에 있으면 TRUE</td></tr>
+        <tr><td class="col-name">hori/verti</td><td>가장 가까운 Shield Can 벽 기준 정렬 방향</td></tr>
+        <tr><td class="col-name">status</td><td>PASS 또는 FAIL</td></tr>
+      </table>
+      <h4>Pass/Fail 기준</h4>
+      <div class="pass-fail-note"><strong>PASS</strong>: edge가 FALSE이고 방향이 Horizontal인 경우. 그 외는 <strong>FAIL</strong>.</div>
+    </div>
+  </div>
+
+  <!-- CKL-02-004 -->
+  <div class="rule-card">
+    <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
+      <span class="rule-id">CKL-02-004</span>
+      <span class="rule-desc">관리 대상 Capacitor 41종: LED Flash 반대면 배치 금지, RF 반대면은 0.5mm 이상 이격</span>
+      <span class="badge badge-placement">Placement</span>
+      <span class="toggle-icon">&#9654;</span>
+    </div>
+    <div class="rule-body">
+      <h4>참조 파일</h4>
+      <span class="ref-tag">references/capacitors_41_list.csv</span>
+      <h4>검사 과정</h4>
+      <ol>
+        <li>Top 및 Bottom 레이어에서 LED Flash 부품과 RF 부품을 탐색한다.</li>
+        <li>반대면에서 41종 관리 대상 Capacitor를 식별한다.</li>
+        <li><strong>LED Flash</strong>: 반대면에 겹치는 Capacitor가 있는 경우 모두 FAIL.</li>
+        <li><strong>RF</strong>: 반대면에 겹치는 Capacitor가 있는 경우 edge-to-edge 거리를 측정하여 0.5mm 미만이면 FAIL.</li>
+      </ol>
+      <h4>출력 컬럼</h4>
+      <table class="col-table">
+        <tr><th>컬럼</th><th>설명</th></tr>
+        <tr><td class="col-name">comp</td><td>LED Flash 또는 RF 부품 이름</td></tr>
+        <tr><td class="col-name">cmp_layer</td><td>LED / RF가 배치된 레이어</td></tr>
+        <tr><td class="col-name">overlapping_cmp</td><td>반대면의 관리 대상 Capacitor 이름</td></tr>
+        <tr><td class="col-name">part_name</td><td>Capacitor part_name</td></tr>
+        <tr><td class="col-name">distance</td><td>RF의 경우 edge-to-edge 거리 (mm), LED는 &ldquo;&ndash;&rdquo;</td></tr>
+        <tr><td class="col-name">status</td><td>PASS 또는 FAIL</td></tr>
+      </table>
+      <h4>Pass/Fail 기준</h4>
+      <div class="pass-fail-note fail-note"><strong>FAIL</strong>: LED Flash 반대면에 관리 대상 Capacitor가 배치되거나, RF 반대면 Capacitor까지 거리가 0.5mm 미만이면 FAIL.</div>
+    </div>
+  </div>
+
+  <!-- CKL-02-005 -->
+  <div class="rule-card">
+    <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
+      <span class="rule-id">CKL-02-005</span>
+      <span class="rule-desc">Shield Can / Interposer 내부의 D-pad 대상 Capacitor는 SMT/SMB 레이어에 반원(D형) 오프닝이 적용되어야 함</span>
+      <span class="badge badge-placement">Placement</span>
+      <span class="toggle-icon">&#9654;</span>
+    </div>
+    <div class="rule-body">
+      <h4>참조 파일</h4>
+      <span class="ref-tag">references/dpad_capacitors.csv</span>
+      <h4>검사 과정</h4>
+      <ol>
+        <li><code>dpad_capacitors.csv</code> 에서 D-pad 대상 Capacitor의 part_name 및 기대 geometry 이름을 로드한다.</li>
+        <li>각 레이어에서 Shield Can(SC*) 과 Interposer(INP*) 의 외곽선을 구축한다.</li>
+        <li>해당 레이어의 D-pad 리스트 Capacitor를 탐색하여 외곽선 내부에 포함된 부품을 선별한다.</li>
+        <li>동일 면의 솔더 마스크 레이어(Top &rarr; smt, Bottom &rarr; smb) 에서 Capacitor 영역에 해당하는 패드 심볼을 확인한다.</li>
+        <li>심볼 이름이 D형 오프닝(<code>_D_</code>, <code>_D_THMC</code>, <code>DE_</code> 토큰 포함 또는 기대 geometry 와 일치) 인지 판정한다.</li>
+      </ol>
+      <h4>출력 컬럼</h4>
+      <table class="col-table">
+        <tr><th>컬럼</th><th>설명</th></tr>
+        <tr><td class="col-name">comp</td><td>Capacitor 부품 이름</td></tr>
+        <tr><td class="col-name">comp_layer</td><td>Capacitor가 배치된 레이어</td></tr>
+        <tr><td class="col-name">part_name</td><td>Capacitor part_name</td></tr>
+        <tr><td class="col-name">d-pad</td><td>D형 오프닝 존재 여부 (TRUE / FALSE)</td></tr>
+        <tr><td class="col-name">status</td><td>PASS 또는 FAIL</td></tr>
+      </table>
+      <h4>Pass/Fail 기준</h4>
+      <div class="pass-fail-note fail-note"><strong>FAIL</strong>: D-pad 대상 Capacitor가 Shield Can / Interposer 내부에 배치되었는데 솔더 마스크 레이어에 D형 오프닝이 없으면 FAIL.</div>
     </div>
   </div>
 
@@ -443,34 +640,68 @@
   <div class="rule-card">
     <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
       <span class="rule-id">CKL-02-006</span>
-      <span class="rule-desc">General capacitors (not in 51 managed types) overlapping connectors: edge and orientation check</span>
+      <span class="rule-desc">일반 Capacitor(관리 대상 51종 외)가 Connector / Shield Can에 겹치는 경우 edge · 방향 · 대각 영역 검사</span>
       <span class="badge badge-placement">Placement</span>
       <span class="toggle-icon">&#9654;</span>
     </div>
     <div class="rule-body">
-      <h4>Reference Files</h4>
+      <h4>참조 파일</h4>
       <span class="ref-tag">references/capacitors_41_list.csv</span>
       <span class="ref-tag">references/capacitors_10_list.csv</span>
-      <h4>Inspection Process</h4>
+      <h4>검사 과정</h4>
       <ol>
-        <li>Load <code>capacitors_41_list.csv</code> and <code>capacitors_10_list.csv</code> to compile a list of 51 managed capacitor types.</li>
-        <li>Search for all connectors on Top/Bottom layers and find all capacitors overlapping on the opposite side.</li>
-        <li>Filter for General Capacitors (those NOT in the 51-type list).</li>
-        <li>Inspect whether general capacitors are at the edge of the connector and check their orientation.</li>
+        <li><code>capacitors_41_list.csv</code> 와 <code>capacitors_10_list.csv</code> 를 결합하여 관리 대상 51종 목록을 구축한다.</li>
+        <li>Top 및 Bottom 레이어에서 Connector 및 Shield Can을 탐색한다.</li>
+        <li>각 Connector / Shield Can의 반대면에서 패드가 겹치는 Capacitor 중 관리 대상 51종이 아닌 일반 Capacitor를 선별한다.</li>
+        <li><strong>Connector</strong>: 일반 Capacitor의 edge 여부와 방향을 검사한다.</li>
+        <li><strong>Shield Can</strong>: 코너 / 대각 구간 배치 여부와 벽 기준 방향을 검사한다.</li>
       </ol>
-      <h4>Output Columns</h4>
+      <h4>출력 컬럼</h4>
       <table class="col-table">
-        <tr><th>Column</th><th>Description</th></tr>
-        <tr><td class="col-name">comp</td><td>Name of the connector</td></tr>
-        <tr><td class="col-name">cmp_layer</td><td>Layer of the connector</td></tr>
-        <tr><td class="col-name">overlapping_cap</td><td>Name of the overlapping general capacitor</td></tr>
-        <tr><td class="col-name">part_name</td><td>Part name of the capacitor</td></tr>
-        <tr><td class="col-name">edge</td><td>TRUE if capacitor is at the corner of the connector, FALSE otherwise</td></tr>
-        <tr><td class="col-name">hori/verti</td><td>Orientation relative to connector outline (Horizontal or Vertical)</td></tr>
-        <tr><td class="col-name">status</td><td>PASS or FAIL</td></tr>
+        <tr><th>컬럼</th><th>설명</th></tr>
+        <tr><td class="col-name">comp</td><td>Connector 또는 Shield Can 이름</td></tr>
+        <tr><td class="col-name">comp_type</td><td>대상 유형 (Connector / Shield_Can)</td></tr>
+        <tr><td class="col-name">cmp_layer</td><td>대상이 배치된 레이어</td></tr>
+        <tr><td class="col-name">overlapping_cap</td><td>겹치는 일반 Capacitor 이름</td></tr>
+        <tr><td class="col-name">part_name</td><td>Capacitor part_name</td></tr>
+        <tr><td class="col-name">edge</td><td>코너 배치 여부</td></tr>
+        <tr><td class="col-name">hori/verti</td><td>외곽선 기준 정렬 방향</td></tr>
+        <tr><td class="col-name">diagonal</td><td>Shield Can의 경우 대각/코너 구간 여부, Connector는 N/A</td></tr>
+        <tr><td class="col-name">status</td><td>PASS 또는 FAIL</td></tr>
       </table>
-      <h4>Pass/Fail Criteria</h4>
-      <div class="pass-fail-note"><strong>PASS</strong> if edge is FALSE <em>and</em> orientation is Horizontal. Otherwise <strong>FAIL</strong>.</div>
+      <h4>Pass/Fail 기준</h4>
+      <div class="pass-fail-note"><strong>PASS</strong>: Connector &mdash; edge가 FALSE이고 Horizontal. Shield Can &mdash; 코너/대각 아님이고 벽 기준 Horizontal. 그 외는 <strong>FAIL</strong>.</div>
+    </div>
+  </div>
+
+  <!-- CKL-02-007 -->
+  <div class="rule-card">
+    <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
+      <span class="rule-id">CKL-02-007</span>
+      <span class="rule-desc">Shield Can 내부 벽 근처에 배치된 Capacitor / Inductor는 내부 벽과 0.3mm 이상 이격되어야 함</span>
+      <span class="badge badge-spacing">Spacing</span>
+      <span class="toggle-icon">&#9654;</span>
+    </div>
+    <div class="rule-body">
+      <h4>검사 과정</h4>
+      <ol>
+        <li>Top 및 Bottom 레이어에서 Shield Can을 탐색하고 내부 벽(inner walls) 구조를 검출한다.</li>
+        <li>동일 레이어의 Capacitor 및 Inductor 중 내부 벽에서 0.5mm 이내에 있는 후보를 선별한다.</li>
+        <li>각 후보 부품의 중심과 패드 중심에서 가장 가까운 내부 벽까지의 최소 거리를 측정한다.</li>
+        <li>최소 거리가 0.3mm 미만이면 FAIL로 플래그한다.</li>
+      </ol>
+      <h4>출력 컬럼</h4>
+      <table class="col-table">
+        <tr><th>컬럼</th><th>설명</th></tr>
+        <tr><td class="col-name">comp</td><td>Shield Can 이름</td></tr>
+        <tr><td class="col-name">cmp_layer</td><td>Shield Can이 배치된 레이어</td></tr>
+        <tr><td class="col-name">neighbor_cmp</td><td>내부 벽 근처에 배치된 Capacitor / Inductor 이름</td></tr>
+        <tr><td class="col-name">part_name</td><td>Capacitor / Inductor part_name</td></tr>
+        <tr><td class="col-name">distance</td><td>내부 벽까지 최소 거리 (mm)</td></tr>
+        <tr><td class="col-name">status</td><td>PASS 또는 FAIL</td></tr>
+      </table>
+      <h4>Pass/Fail 기준</h4>
+      <div class="pass-fail-note"><strong>PASS</strong>: 내부 벽까지 거리가 0.3mm 이상이면 PASS. 그 외는 <strong>FAIL</strong>.</div>
     </div>
   </div>
 
@@ -478,33 +709,33 @@
   <div class="rule-card">
     <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
       <span class="rule-id">CKL-02-008</span>
-      <span class="rule-desc">2S Inductors (&ge;2012) overlapping connectors on the opposite side: edge and orientation check</span>
+      <span class="rule-desc">2S Inductor(&ge;2012)가 반대면 Connector에 겹치는 경우 edge 및 방향 검사</span>
       <span class="badge badge-placement">Placement</span>
       <span class="toggle-icon">&#9654;</span>
     </div>
     <div class="rule-body">
-      <h4>Reference Files</h4>
+      <h4>참조 파일</h4>
       <span class="ref-tag">references/inductors_2s_list.csv</span>
-      <h4>Inspection Process</h4>
+      <h4>검사 과정</h4>
       <ol>
-        <li>Search for connectors on Top and Bottom layers.</li>
-        <li>Check for 2S Inductors (from <code>inductors_2s_list.csv</code>) overlapping the opposite side of these connectors.</li>
-        <li>Filter for those with a size of 2012 or larger.</li>
-        <li>Inspect edge placement and horizontal/vertical orientation.</li>
+        <li>Top 및 Bottom 레이어에서 Connector를 탐색한다.</li>
+        <li>각 Connector의 반대면에서 <code>inductors_2s_list.csv</code> 에 등록된 2S Inductor 중 패드가 겹치는 것을 찾는다.</li>
+        <li>크기가 2012 이상인 것만 필터링한다.</li>
+        <li>각 Inductor의 edge 배치 및 방향을 검사한다.</li>
       </ol>
-      <h4>Output Columns</h4>
+      <h4>출력 컬럼</h4>
       <table class="col-table">
-        <tr><th>Column</th><th>Description</th></tr>
-        <tr><td class="col-name">comp</td><td>Name of the connector</td></tr>
-        <tr><td class="col-name">cmp_layer</td><td>Layer of the connector</td></tr>
-        <tr><td class="col-name">overlapping_ind</td><td>Name of the overlapping 2S inductor</td></tr>
-        <tr><td class="col-name">part_name</td><td>Part name of the 2S inductor</td></tr>
-        <tr><td class="col-name">edge</td><td>TRUE if inductor is at the corner of the connector, FALSE otherwise</td></tr>
-        <tr><td class="col-name">hori/verti</td><td>Orientation relative to connector outline (Horizontal or Vertical)</td></tr>
-        <tr><td class="col-name">status</td><td>PASS or FAIL</td></tr>
+        <tr><th>컬럼</th><th>설명</th></tr>
+        <tr><td class="col-name">comp</td><td>Connector 이름</td></tr>
+        <tr><td class="col-name">cmp_layer</td><td>Connector가 배치된 레이어</td></tr>
+        <tr><td class="col-name">overlapping_ind</td><td>겹치는 2S Inductor 이름</td></tr>
+        <tr><td class="col-name">part_name</td><td>2S Inductor part_name</td></tr>
+        <tr><td class="col-name">edge</td><td>Connector 코너에 있으면 TRUE</td></tr>
+        <tr><td class="col-name">hori/verti</td><td>Connector 외곽선 기준 방향</td></tr>
+        <tr><td class="col-name">status</td><td>PASS 또는 FAIL</td></tr>
       </table>
-      <h4>Pass/Fail Criteria</h4>
-      <div class="pass-fail-note"><strong>PASS</strong> if edge is FALSE <em>and</em> orientation is Horizontal. Otherwise <strong>FAIL</strong>.</div>
+      <h4>Pass/Fail 기준</h4>
+      <div class="pass-fail-note"><strong>PASS</strong>: edge가 FALSE이고 방향이 Horizontal인 경우. 그 외는 <strong>FAIL</strong>.</div>
     </div>
   </div>
 
@@ -512,33 +743,35 @@
   <div class="rule-card">
     <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
       <span class="rule-id">CKL-02-009</span>
-      <span class="rule-desc">General Inductors (&ge;2012, excluding 2S) overlapping connectors: edge and orientation check</span>
+      <span class="rule-desc">일반 Inductor(&ge;2012, 2S 제외): Connector는 edge/방향 검사, Shield Can은 겹침 자체가 FAIL</span>
       <span class="badge badge-placement">Placement</span>
       <span class="toggle-icon">&#9654;</span>
     </div>
     <div class="rule-body">
-      <h4>Reference Files</h4>
+      <h4>참조 파일</h4>
       <span class="ref-tag">references/inductors_2s_list.csv</span>
-      <h4>Inspection Process</h4>
+      <h4>검사 과정</h4>
       <ol>
-        <li>Search for connectors on Top and Bottom layers.</li>
-        <li>Check for General Inductors (those NOT in <code>inductors_2s_list.csv</code>) overlapping the opposite side.</li>
-        <li>Filter for those with a size of 2012 or larger.</li>
-        <li>Inspect edge placement and horizontal/vertical orientation.</li>
+        <li>Top 및 Bottom 레이어에서 Connector와 Shield Can을 탐색한다.</li>
+        <li>반대면에서 <code>inductors_2s_list.csv</code> 에 등록되지 않은 일반 Inductor를 식별한다.</li>
+        <li>크기가 2012 이상인 일반 Inductor만 필터링한다.</li>
+        <li><strong>Connector</strong>: 일반 Inductor의 edge 및 방향을 검사한다.</li>
+        <li><strong>Shield Can</strong>: 일반 Inductor가 반대면에 겹치면 모두 FAIL (회피 체크).</li>
       </ol>
-      <h4>Output Columns</h4>
+      <h4>출력 컬럼</h4>
       <table class="col-table">
-        <tr><th>Column</th><th>Description</th></tr>
-        <tr><td class="col-name">comp</td><td>Name of the connector</td></tr>
-        <tr><td class="col-name">cmp_layer</td><td>Layer of the connector</td></tr>
-        <tr><td class="col-name">overlapping_ind</td><td>Name of the general inductor (&ge;2012)</td></tr>
-        <tr><td class="col-name">part_name</td><td>Part name of the inductor</td></tr>
-        <tr><td class="col-name">edge</td><td>TRUE if inductor is at the corner of the connector, FALSE otherwise</td></tr>
-        <tr><td class="col-name">hori/verti</td><td>Orientation relative to connector outline (Horizontal or Vertical)</td></tr>
-        <tr><td class="col-name">status</td><td>PASS or FAIL</td></tr>
+        <tr><th>컬럼</th><th>설명</th></tr>
+        <tr><td class="col-name">check_type</td><td>검사 유형 (Connector / Shield Can)</td></tr>
+        <tr><td class="col-name">comp</td><td>Connector 또는 Shield Can 이름</td></tr>
+        <tr><td class="col-name">cmp_layer</td><td>대상이 배치된 레이어</td></tr>
+        <tr><td class="col-name">overlapping_ind</td><td>겹치는 일반 Inductor 이름 (&ge;2012)</td></tr>
+        <tr><td class="col-name">part_name</td><td>Inductor part_name</td></tr>
+        <tr><td class="col-name">edge</td><td>Connector 검사 시 edge 여부, Shield Can은 &ldquo;&ndash;&rdquo;</td></tr>
+        <tr><td class="col-name">hori/verti</td><td>Connector 검사 시 방향, Shield Can은 &ldquo;&ndash;&rdquo;</td></tr>
+        <tr><td class="col-name">status</td><td>PASS 또는 FAIL</td></tr>
       </table>
-      <h4>Pass/Fail Criteria</h4>
-      <div class="pass-fail-note"><strong>PASS</strong> if edge is FALSE <em>and</em> orientation is Horizontal. Otherwise <strong>FAIL</strong>.</div>
+      <h4>Pass/Fail 기준</h4>
+      <div class="pass-fail-note"><strong>PASS</strong>: Connector &mdash; edge가 FALSE이고 Horizontal. Shield Can &mdash; 겹침이 없는 경우. 그 외는 <strong>FAIL</strong>.</div>
     </div>
   </div>
 
@@ -546,30 +779,63 @@
   <div class="rule-card">
     <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
       <span class="rule-id">CKL-02-010</span>
-      <span class="rule-desc">SIM sockets: capacitors/inductors (&ge;2012) on the opposite side must be horizontally oriented</span>
+      <span class="rule-desc">SIM Socket 반대면의 Capacitor / Inductor(&ge;2012)는 수평 방향으로 배치되어야 함</span>
       <span class="badge badge-placement">Placement</span>
       <span class="toggle-icon">&#9654;</span>
     </div>
     <div class="rule-body">
-      <h4>Inspection Process</h4>
+      <h4>검사 과정</h4>
       <ol>
-        <li>Locate SIM socket components and identify their placement layer.</li>
-        <li>Search for all capacitors or inductors overlapping on the opposite side.</li>
-        <li>Filter to include only those with a size of 2012 or larger.</li>
-        <li>Inspect horizontal/vertical alignment relative to the SIM socket.</li>
+        <li>SIM Socket 부품과 해당 배치 레이어를 식별한다.</li>
+        <li>반대면에서 패드가 겹치는 Capacitor 및 Inductor를 모두 검색한다.</li>
+        <li>크기가 2012 이상인 것만 필터링한다.</li>
+        <li>SIM Socket 기준 수평/수직 정렬을 검사한다.</li>
       </ol>
-      <h4>Output Columns</h4>
+      <h4>출력 컬럼</h4>
       <table class="col-table">
-        <tr><th>Column</th><th>Description</th></tr>
-        <tr><td class="col-name">comp</td><td>Name of the SIM socket</td></tr>
-        <tr><td class="col-name">cmp_layer</td><td>Layer of the SIM socket (Top or Bottom)</td></tr>
-        <tr><td class="col-name">overlapping_cmp</td><td>Name of the capacitor or inductor (&ge;2012) on the opposite side</td></tr>
-        <tr><td class="col-name">part_name</td><td>Part name of the component</td></tr>
-        <tr><td class="col-name">hori/verti</td><td>Orientation relative to SIM socket outline (Horizontal or Vertical)</td></tr>
-        <tr><td class="col-name">status</td><td>PASS or FAIL</td></tr>
+        <tr><th>컬럼</th><th>설명</th></tr>
+        <tr><td class="col-name">comp</td><td>SIM Socket 이름</td></tr>
+        <tr><td class="col-name">cmp_layer</td><td>SIM Socket이 배치된 레이어</td></tr>
+        <tr><td class="col-name">overlapping_cmp</td><td>반대면의 Capacitor 또는 Inductor 이름 (&ge;2012)</td></tr>
+        <tr><td class="col-name">part_name</td><td>부품 part_name</td></tr>
+        <tr><td class="col-name">hori/verti</td><td>SIM Socket 외곽선 기준 방향 (Horizontal / Vertical)</td></tr>
+        <tr><td class="col-name">status</td><td>PASS 또는 FAIL</td></tr>
       </table>
-      <h4>Pass/Fail Criteria</h4>
-      <div class="pass-fail-note"><strong>PASS</strong> if orientation is Horizontal. Otherwise <strong>FAIL</strong>.</div>
+      <h4>Pass/Fail 기준</h4>
+      <div class="pass-fail-note"><strong>PASS</strong>: 방향이 Horizontal이면 PASS. 그 외는 <strong>FAIL</strong>.</div>
+    </div>
+  </div>
+
+  <!-- CKL-02-011 -->
+  <div class="rule-card">
+    <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
+      <span class="rule-id">CKL-02-011</span>
+      <span class="rule-desc">AP/Memory 사이에 끼워진(Sandwiched) Capacitor가 AP/Memory 외곽선과 겹치면 안 됨</span>
+      <span class="badge badge-placement">Placement</span>
+      <span class="toggle-icon">&#9654;</span>
+    </div>
+    <div class="rule-body">
+      <h4>참조 파일</h4>
+      <span class="ref-tag">references/ap_memory.csv</span>
+      <h4>검사 과정</h4>
+      <ol>
+        <li><code>ap_memory.csv</code> 의 part_name을 이용해 AP/Memory 부품을 식별한다.</li>
+        <li>두 AP/Memory가 edge-to-edge 거리 5mm 이내로 가까이 배치된 쌍을 찾는다.</li>
+        <li>Capacitor가 해당 쌍 사이에 끼워져 있는지(sandwiched) 판정한다. Capacitor와 AP/Memory는 동일 면 또는 반대면 모두 검사한다.</li>
+        <li>끼워진 Capacitor가 AP 또는 Memory의 외곽선과 겹치는지 확인한다.</li>
+      </ol>
+      <h4>출력 컬럼</h4>
+      <table class="col-table">
+        <tr><th>컬럼</th><th>설명</th></tr>
+        <tr><td class="col-name">comp</td><td>끼워진 Capacitor 이름</td></tr>
+        <tr><td class="col-name">part_name</td><td>Capacitor part_name</td></tr>
+        <tr><td class="col-name">cap_layer</td><td>Capacitor가 배치된 레이어</td></tr>
+        <tr><td class="col-name">overlapping_cmp</td><td>외곽선이 겹치는 AP/Memory 이름</td></tr>
+        <tr><td class="col-name">am_layer</td><td>AP/Memory가 배치된 레이어</td></tr>
+        <tr><td class="col-name">status</td><td>PASS 또는 FAIL</td></tr>
+      </table>
+      <h4>Pass/Fail 기준</h4>
+      <div class="pass-fail-note fail-note"><strong>FAIL</strong>: 끼워진 Capacitor가 AP 또는 Memory의 외곽선과 한쪽이라도 겹치면 FAIL.</div>
     </div>
   </div>
 
@@ -577,67 +843,99 @@
   <div class="rule-card">
     <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
       <span class="rule-id">CKL-02-012</span>
-      <span class="rule-desc">Inductors &ge;2012 overlapping both AP/Memory and Shield Can on opposite sides must be avoided</span>
+      <span class="rule-desc">Inductor(&ge;2012)가 반대면 AP/Memory와 동일 면 Shield Can에 동시 겹치는 배치는 피해야 함</span>
       <span class="badge badge-placement">Placement</span>
       <span class="toggle-icon">&#9654;</span>
     </div>
     <div class="rule-body">
-      <h4>Reference Files</h4>
+      <h4>참조 파일</h4>
       <span class="ref-tag">references/ap_memory.csv</span>
       <span class="ref-tag">references/inductors_2s_list.csv</span>
-      <h4>Inspection Process</h4>
+      <h4>검사 과정</h4>
       <ol>
-        <li>Identify AP/Memory components on each layer using part names from <code>ap_memory.csv</code>.</li>
-        <li>Find inductors on the opposite side overlapping each AP/Memory component.</li>
-        <li>Filter inductors to size &ge; 2012 using <code>inductors_2s_list.csv</code>.</li>
-        <li>For each qualifying inductor, check whether a Shield Can on the same side as the AP/Memory also overlaps the inductor.</li>
-        <li>Report any inductor that simultaneously overlaps both an AP/Memory and a Shield Can.</li>
+        <li><code>ap_memory.csv</code> 의 part_name으로 각 레이어의 AP/Memory 부품을 식별한다.</li>
+        <li>각 AP/Memory 부품의 반대면에서 패드가 겹치는 Inductor를 찾는다.</li>
+        <li><code>inductors_2s_list.csv</code> 기반 크기 정보로 2012 이상 Inductor만 필터링한다.</li>
+        <li>각 해당 Inductor에 대해, AP/Memory와 동일 면의 Shield Can이 해당 Inductor 패드와 겹치는지 검사한다.</li>
+        <li>AP/Memory와 Shield Can이 동시에 한 Inductor에 겹치는 경우를 보고한다.</li>
       </ol>
-      <h4>Output Columns</h4>
+      <h4>출력 컬럼</h4>
       <table class="col-table">
-        <tr><th>Column</th><th>Description</th></tr>
-        <tr><td class="col-name">comp</td><td>Name of the inductor</td></tr>
-        <tr><td class="col-name">cmp_layer</td><td>Layer where the inductor is placed</td></tr>
-        <tr><td class="col-name">part_name</td><td>Part name of the inductor</td></tr>
-        <tr><td class="col-name">overlapping_ap</td><td>Name of the AP/Memory component on the opposite side</td></tr>
-        <tr><td class="col-name">status</td><td>PASS or FAIL</td></tr>
+        <tr><th>컬럼</th><th>설명</th></tr>
+        <tr><td class="col-name">comp</td><td>Inductor 이름</td></tr>
+        <tr><td class="col-name">cmp_layer</td><td>Inductor가 배치된 레이어</td></tr>
+        <tr><td class="col-name">part_name</td><td>Inductor part_name</td></tr>
+        <tr><td class="col-name">overlapping_ap</td><td>반대면의 AP/Memory 부품 이름</td></tr>
+        <tr><td class="col-name">status</td><td>PASS 또는 FAIL</td></tr>
       </table>
-      <h4>Pass/Fail Criteria</h4>
-      <div class="pass-fail-note fail-note"><strong>FAIL</strong> if an inductor (&ge;2012) overlaps both an AP/Memory component and a Shield Can simultaneously.</div>
+      <h4>Pass/Fail 기준</h4>
+      <div class="pass-fail-note fail-note"><strong>FAIL</strong>: Inductor(&ge;2012)가 AP/Memory와 Shield Can에 동시에 겹치면 FAIL.</div>
     </div>
   </div>
 
   <!-- ================================================================== -->
-  <div class="section-title">Checklist Series 03 &mdash; OSC / MIC / Component Placement &amp; Clearance</div>
+  <div class="section-title">체크리스트 시리즈 03 &mdash; MCP / 센서 / OSC / MIC / 클리어런스</div>
 
   <!-- CKL-03-001 -->
   <div class="rule-card">
     <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
       <span class="rule-id">CKL-03-001</span>
-      <span class="rule-desc">Connectors must not overlap the opposite side of MCP IC components</span>
+      <span class="rule-desc">MCP IC: 반대면 Connector 겹침 금지, 코너 핀에는 각각 최소 1개 이상의 VIA 필요</span>
       <span class="badge badge-clearance">Clearance</span>
       <span class="toggle-icon">&#9654;</span>
     </div>
     <div class="rule-body">
-      <h4>Reference Files</h4>
+      <h4>참조 파일</h4>
       <span class="ref-tag">references/ap_memory.csv</span>
-      <h4>Inspection Process</h4>
+      <h4>검사 과정</h4>
       <ol>
-        <li>Identify MCP (Multi-Chip Package) ICs on each layer by looking up the category column in <code>ap_memory.csv</code>.</li>
-        <li>Search for connectors on the opposite side of each MCP IC.</li>
-        <li>Report any connector that overlaps the footprint of an MCP IC.</li>
+        <li><code>ap_memory.csv</code> 의 category 컬럼에서 MCP(Multi-Chip Package) IC 를 식별한다.</li>
+        <li><strong>Connector 겹침 검사</strong>: 각 MCP IC의 반대면에서 패드가 겹치는 Connector를 모두 찾아 FAIL 처리한다.</li>
+        <li><strong>코너 VIA 검사</strong>: 패키지 bounding-box의 네 코너에서 가장 가까운 3개 핀씩 총 12개 코너 핀을 선별한다.</li>
+        <li>각 코너 핀 위치에서 VIA 수를 카운트한다.</li>
       </ol>
-      <h4>Output Columns</h4>
+      <h4>출력 컬럼</h4>
       <table class="col-table">
-        <tr><th>Column</th><th>Description</th></tr>
-        <tr><td class="col-name">comp</td><td>Name of the MCP IC component</td></tr>
-        <tr><td class="col-name">cmp_layer</td><td>Layer of the MCP IC (Top or Bottom)</td></tr>
-        <tr><td class="col-name">overlapping_cmp</td><td>Name of the overlapping connector on the opposite side</td></tr>
-        <tr><td class="col-name">part_name</td><td>Part name of the connector</td></tr>
-        <tr><td class="col-name">status</td><td>PASS or FAIL</td></tr>
+        <tr><th>컬럼</th><th>설명</th></tr>
+        <tr><td class="col-name">check_type</td><td>검사 유형 (Connector Overlap / Corner Via)</td></tr>
+        <tr><td class="col-name">comp</td><td>MCP IC 이름</td></tr>
+        <tr><td class="col-name">cmp_layer</td><td>MCP IC가 배치된 레이어</td></tr>
+        <tr><td class="col-name">overlapping_cmp</td><td>반대면에서 겹치는 Connector 이름 (VIA 검사 시 &ldquo;&ndash;&rdquo;)</td></tr>
+        <tr><td class="col-name">part_name</td><td>Connector part_name</td></tr>
+        <tr><td class="col-name">corner_pin</td><td>코너 핀 이름 (Connector 검사 시 &ldquo;&ndash;&rdquo;)</td></tr>
+        <tr><td class="col-name">via_count</td><td>해당 코너 핀의 VIA 수</td></tr>
+        <tr><td class="col-name">status</td><td>PASS 또는 FAIL</td></tr>
       </table>
-      <h4>Pass/Fail Criteria</h4>
-      <div class="pass-fail-note fail-note"><strong>FAIL</strong> if any connector overlaps an MCP IC on the opposite side.</div>
+      <h4>Pass/Fail 기준</h4>
+      <div class="pass-fail-note fail-note"><strong>FAIL</strong>: 반대면 Connector 겹침이 발생하거나, 코너 핀에 VIA가 없으면 FAIL.</div>
+    </div>
+  </div>
+
+  <!-- CKL-03-002 -->
+  <div class="rule-card">
+    <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
+      <span class="rule-id">CKL-03-002</span>
+      <span class="rule-desc">중앙이 빈 BGA IC는 레진(Resin) 충전이 필요함</span>
+      <span class="badge badge-placement">Placement</span>
+      <span class="toggle-icon">&#9654;</span>
+    </div>
+    <div class="rule-body">
+      <h4>검사 과정</h4>
+      <ol>
+        <li>Top 및 Bottom 레이어에서 BGA 타입 IC 부품을 식별한다.</li>
+        <li>패드 배열의 중앙 영역에 내부 패드(볼) 이 없는지 검사한다.</li>
+        <li>중앙이 비어있으면 레진 충전이 필요한 부품으로 FAIL 처리한다.</li>
+      </ol>
+      <h4>출력 컬럼</h4>
+      <table class="col-table">
+        <tr><th>컬럼</th><th>설명</th></tr>
+        <tr><td class="col-name">comp</td><td>BGA IC 이름</td></tr>
+        <tr><td class="col-name">cmp_layer</td><td>IC가 배치된 레이어</td></tr>
+        <tr><td class="col-name">status</td><td>PASS 또는 FAIL</td></tr>
+        <tr><td class="col-name">comment</td><td>FAIL 시 &ldquo;Resin filling required.&rdquo; 코멘트</td></tr>
+      </table>
+      <h4>Pass/Fail 기준</h4>
+      <div class="pass-fail-note fail-note"><strong>FAIL</strong>: BGA IC의 중앙 영역에 패드가 없으면 FAIL (레진 충전 필요).</div>
     </div>
   </div>
 
@@ -645,30 +943,30 @@
   <div class="rule-card">
     <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
       <span class="rule-id">CKL-03-004</span>
-      <span class="rule-desc">Hall IC pads must each have at least one VIA</span>
+      <span class="rule-desc">Hall IC의 모든 패드는 각각 최소 1개 이상의 VIA가 있어야 함</span>
       <span class="badge badge-placement">Placement</span>
       <span class="toggle-icon">&#9654;</span>
     </div>
     <div class="rule-body">
-      <h4>Reference Files</h4>
+      <h4>참조 파일</h4>
       <span class="ref-tag">references/hall_ic.csv</span>
-      <h4>Inspection Process</h4>
+      <h4>검사 과정</h4>
       <ol>
-        <li>Load Hall IC part names from <code style="display:inline;padding:2px 6px;">hall_ic.csv</code>.</li>
-        <li>Search for components whose part_name matches the list on Top and Bottom layers.</li>
-        <li>For each Hall IC, iterate over all pads and count VIAs at each pad position.</li>
+        <li><code>hall_ic.csv</code> 에서 Hall IC의 part_name 목록을 로드한다.</li>
+        <li>Top 및 Bottom 레이어에서 해당 part_name과 일치하는 부품을 탐색한다.</li>
+        <li>각 Hall IC의 모든 패드에 대해 VIA 수를 카운트한다.</li>
       </ol>
-      <h4>Output Columns</h4>
+      <h4>출력 컬럼</h4>
       <table class="col-table">
-        <tr><th>Column</th><th>Description</th></tr>
-        <tr><td class="col-name">comp</td><td>Name of the Hall IC component</td></tr>
-        <tr><td class="col-name">cmp_layer</td><td>Layer where the component is placed (Top or Bottom)</td></tr>
-        <tr><td class="col-name">pad</td><td>Name / number of the specific pad</td></tr>
-        <tr><td class="col-name">via</td><td>Number of VIAs located at that pad position</td></tr>
-        <tr><td class="col-name">status</td><td>PASS or FAIL</td></tr>
+        <tr><th>컬럼</th><th>설명</th></tr>
+        <tr><td class="col-name">comp</td><td>Hall IC 이름</td></tr>
+        <tr><td class="col-name">cmp_layer</td><td>IC가 배치된 레이어</td></tr>
+        <tr><td class="col-name">pad</td><td>패드 이름 / 번호</td></tr>
+        <tr><td class="col-name">via</td><td>해당 패드 위치의 VIA 수</td></tr>
+        <tr><td class="col-name">status</td><td>PASS 또는 FAIL</td></tr>
       </table>
-      <h4>Pass/Fail Criteria</h4>
-      <div class="pass-fail-note fail-note"><strong>FAIL</strong> if the VIA count for a pad is 0. <strong>PASS</strong> if 1 or more VIAs are present.</div>
+      <h4>Pass/Fail 기준</h4>
+      <div class="pass-fail-note fail-note"><strong>FAIL</strong>: 패드에 VIA가 0개면 FAIL. 1개 이상이면 <strong>PASS</strong>.</div>
     </div>
   </div>
 
@@ -676,30 +974,118 @@
   <div class="rule-card">
     <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
       <span class="rule-id">CKL-03-005</span>
-      <span class="rule-desc">3-axis / 6-axis sensor pads must each have at least one VIA</span>
+      <span class="rule-desc">3축 / 6축 센서의 모든 패드는 각각 최소 1개 이상의 VIA가 있어야 함</span>
       <span class="badge badge-placement">Placement</span>
       <span class="toggle-icon">&#9654;</span>
     </div>
     <div class="rule-body">
-      <h4>Reference Files</h4>
+      <h4>참조 파일</h4>
       <span class="ref-tag">references/axis_sensors.csv</span>
-      <h4>Inspection Process</h4>
+      <h4>검사 과정</h4>
       <ol>
-        <li>Load axis sensor part names from <code style="display:inline;padding:2px 6px;">axis_sensors.csv</code>.</li>
-        <li>Search for components whose part_name matches the list on Top and Bottom layers.</li>
-        <li>For each axis sensor, iterate over all pads and count VIAs at each pad position.</li>
+        <li><code>axis_sensors.csv</code> 에서 축 센서의 part_name 목록을 로드한다.</li>
+        <li>Top 및 Bottom 레이어에서 해당 part_name과 일치하는 부품을 탐색한다.</li>
+        <li>각 센서의 모든 패드에 대해 VIA 수를 카운트한다.</li>
       </ol>
-      <h4>Output Columns</h4>
+      <h4>출력 컬럼</h4>
       <table class="col-table">
-        <tr><th>Column</th><th>Description</th></tr>
-        <tr><td class="col-name">comp</td><td>Name of the axis sensor component</td></tr>
-        <tr><td class="col-name">cmp_layer</td><td>Layer where the component is placed (Top or Bottom)</td></tr>
-        <tr><td class="col-name">pad</td><td>Name / number of the specific pad</td></tr>
-        <tr><td class="col-name">via</td><td>Number of VIAs located at that pad position</td></tr>
-        <tr><td class="col-name">status</td><td>PASS or FAIL</td></tr>
+        <tr><th>컬럼</th><th>설명</th></tr>
+        <tr><td class="col-name">comp</td><td>축 센서 부품 이름</td></tr>
+        <tr><td class="col-name">cmp_layer</td><td>센서가 배치된 레이어</td></tr>
+        <tr><td class="col-name">pad</td><td>패드 이름 / 번호</td></tr>
+        <tr><td class="col-name">via</td><td>해당 패드 위치의 VIA 수</td></tr>
+        <tr><td class="col-name">status</td><td>PASS 또는 FAIL</td></tr>
       </table>
-      <h4>Pass/Fail Criteria</h4>
-      <div class="pass-fail-note fail-note"><strong>FAIL</strong> if the VIA count for a pad is 0. <strong>PASS</strong> if 1 or more VIAs are present.</div>
+      <h4>Pass/Fail 기준</h4>
+      <div class="pass-fail-note fail-note"><strong>FAIL</strong>: 패드에 VIA가 0개면 FAIL. 1개 이상이면 <strong>PASS</strong>.</div>
+    </div>
+  </div>
+
+  <!-- CKL-03-008 -->
+  <div class="rule-card">
+    <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
+      <span class="rule-id">CKL-03-008</span>
+      <span class="rule-desc">일반 센서 부품의 모든 패드에는 최소 1개 이상의 VIA가 적용되어야 함</span>
+      <span class="badge badge-placement">Placement</span>
+      <span class="toggle-icon">&#9654;</span>
+    </div>
+    <div class="rule-body">
+      <h4>참조 파일</h4>
+      <span class="ref-tag">references/regular_sensors.csv</span>
+      <h4>검사 과정</h4>
+      <ol>
+        <li><code>regular_sensors.csv</code> 에서 센서 part_name 목록을 로드한다. 단, <code>IC-ACCEL./GYRO SENSOR</code> 와 <code>IC-MAGNETIC SENSOR</code> 타입은 제외한다. (해당 타입들은 CKL-03-005 에서 별도 검사)</li>
+        <li>Top 및 Bottom 레이어에서 해당 part_name과 일치하는 센서 부품을 탐색한다.</li>
+        <li>각 센서의 모든 패드에 대해 VIA 수를 카운트한다.</li>
+      </ol>
+      <h4>출력 컬럼</h4>
+      <table class="col-table">
+        <tr><th>컬럼</th><th>설명</th></tr>
+        <tr><td class="col-name">comp</td><td>센서 부품 이름</td></tr>
+        <tr><td class="col-name">cmp_layer</td><td>센서가 배치된 레이어</td></tr>
+        <tr><td class="col-name">pad</td><td>패드 이름 / 번호</td></tr>
+        <tr><td class="col-name">via</td><td>해당 패드 위치의 VIA 수</td></tr>
+        <tr><td class="col-name">status</td><td>PASS 또는 FAIL</td></tr>
+      </table>
+      <h4>Pass/Fail 기준</h4>
+      <div class="pass-fail-note fail-note"><strong>FAIL</strong>: 패드에 VIA가 0개면 FAIL. 1개 이상이면 <strong>PASS</strong>.</div>
+    </div>
+  </div>
+
+  <!-- CKL-03-009 -->
+  <div class="rule-card">
+    <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
+      <span class="rule-id">CKL-03-009</span>
+      <span class="rule-desc">SIM Socket의 최외곽(Perimeter) 패드에는 찢김 방지를 위해 최소 4개 이상의 VIA가 필요함</span>
+      <span class="badge badge-placement">Placement</span>
+      <span class="toggle-icon">&#9654;</span>
+    </div>
+    <div class="rule-body">
+      <h4>검사 과정</h4>
+      <ol>
+        <li>Top 및 Bottom 레이어에서 SIM Socket을 탐색한다.</li>
+        <li>각 SIM Socket 패키지의 핀 배열 중 상/하/좌/우 네 방향 모두에 이웃 핀이 있는 내부 핀을 제외하여 외곽 핀을 선별한다. (핀 피치는 최소 핀 간격의 40% 허용 오차 기반으로 판정)</li>
+        <li>각 외곽 핀 위치에서 VIA 수를 카운트한다.</li>
+      </ol>
+      <h4>출력 컬럼</h4>
+      <table class="col-table">
+        <tr><th>컬럼</th><th>설명</th></tr>
+        <tr><td class="col-name">comp</td><td>SIM Socket 이름</td></tr>
+        <tr><td class="col-name">cmp_layer</td><td>SIM Socket이 배치된 레이어</td></tr>
+        <tr><td class="col-name">pad</td><td>외곽 패드 이름 / 번호</td></tr>
+        <tr><td class="col-name">via</td><td>해당 패드 위치의 VIA 수</td></tr>
+        <tr><td class="col-name">status</td><td>PASS 또는 FAIL</td></tr>
+      </table>
+      <h4>Pass/Fail 기준</h4>
+      <div class="pass-fail-note"><strong>PASS</strong>: 외곽 패드의 VIA 수가 4개 이상인 경우. 그 외는 <strong>FAIL</strong>.</div>
+    </div>
+  </div>
+
+  <!-- CKL-03-011 -->
+  <div class="rule-card">
+    <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
+      <span class="rule-id">CKL-03-011</span>
+      <span class="rule-desc">OSC 부품은 굽힘 취약 영역(bending-vulnerable area)에 배치되면 안 됨</span>
+      <span class="badge badge-clearance">Clearance</span>
+      <span class="toggle-icon">&#9654;</span>
+    </div>
+    <div class="rule-body">
+      <h4>검사 과정</h4>
+      <ol>
+        <li>PCB 프로파일 데이터로부터 보드 외곽 polygon을 구축한다.</li>
+        <li>국부 폭이 8mm 이하이고 본체에서 2mm 이상 돌출된 얇은 돌출부(bending-vulnerable area)를 검출한다.</li>
+        <li>각 OSC 부품의 중심 좌표가 해당 영역 내에 있는지 확인한다.</li>
+      </ol>
+      <h4>출력 컬럼</h4>
+      <table class="col-table">
+        <tr><th>컬럼</th><th>설명</th></tr>
+        <tr><td class="col-name">comp</td><td>OSC 부품 이름</td></tr>
+        <tr><td class="col-name">cmp_layer</td><td>OSC가 배치된 레이어</td></tr>
+        <tr><td class="col-name">bending</td><td>굽힘 취약 영역 배치 여부 (TRUE / FALSE)</td></tr>
+        <tr><td class="col-name">status</td><td>PASS 또는 FAIL</td></tr>
+      </table>
+      <h4>Pass/Fail 기준</h4>
+      <div class="pass-fail-note fail-note"><strong>FAIL</strong>: OSC가 굽힘 취약 영역 내부에 배치되어 있으면 FAIL.</div>
     </div>
   </div>
 
@@ -707,29 +1093,30 @@
   <div class="rule-card">
     <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
       <span class="rule-id">CKL-03-012</span>
-      <span class="rule-desc">OSC components must be at least 1mm from PCB edge and BOTHHOLE components</span>
+      <span class="rule-desc">OSC는 PCB 외곽 및 BOTHHOLE 부품과 최소 1mm 이격되어야 하며, Shield Can 내부 배치 여부도 기록</span>
       <span class="badge badge-clearance">Clearance</span>
       <span class="toggle-icon">&#9654;</span>
     </div>
     <div class="rule-body">
-      <h4>Inspection Process</h4>
+      <h4>검사 과정</h4>
       <ol>
-        <li>Collect all BOTHHOLE components from both Top and Bottom layers.</li>
-        <li>Build the board outline polygon from the PCB profile data.</li>
-        <li>For each Oscillator (OSC) component, measure the distance to the PCB outline and the distance to the nearest BOTHHOLE.</li>
-        <li>Both distances must be at least 1mm.</li>
+        <li>Top 및 Bottom 레이어에서 모든 BOTHHOLE 부품을 수집한다.</li>
+        <li>PCB 프로파일 데이터로부터 보드 외곽 polygon을 구축한다.</li>
+        <li>각 OSC 부품에 대해 패드 geometry 기준 PCB 외곽까지 거리와 가장 가까운 BOTHHOLE까지 거리를 측정한다. (부품 중심이나 외곽선이 아닌 실제 패드 기반)</li>
+        <li>OSC가 동일 레이어 Shield Can 외곽선 내부에 있는지 확인하여 inSC 컬럼에 기록한다.</li>
       </ol>
-      <h4>Output Columns</h4>
+      <h4>출력 컬럼</h4>
       <table class="col-table">
-        <tr><th>Column</th><th>Description</th></tr>
-        <tr><td class="col-name">comp</td><td>Name of the OSC component</td></tr>
-        <tr><td class="col-name">cmp_layer</td><td>Layer where the OSC is placed (Top or Bottom)</td></tr>
-        <tr><td class="col-name">to_pcb</td><td>Edge-to-edge distance to the PCB outline (mm), or N/A if not measurable</td></tr>
-        <tr><td class="col-name">to_BTH</td><td>Edge-to-edge distance to the nearest BOTHHOLE component (mm), or N/A if none present</td></tr>
-        <tr><td class="col-name">status</td><td>PASS or FAIL</td></tr>
+        <tr><th>컬럼</th><th>설명</th></tr>
+        <tr><td class="col-name">comp</td><td>OSC 부품 이름</td></tr>
+        <tr><td class="col-name">cmp_layer</td><td>OSC가 배치된 레이어</td></tr>
+        <tr><td class="col-name">to_pcb</td><td>PCB 외곽까지 edge-to-edge 거리 (mm), 측정 불가 시 N/A</td></tr>
+        <tr><td class="col-name">to_BTH</td><td>가장 가까운 BOTHHOLE까지 거리 (mm), BTH 부품이 없으면 N/A</td></tr>
+        <tr><td class="col-name">inSC</td><td>동일 면 Shield Can 내부 배치 여부 (TRUE / FALSE)</td></tr>
+        <tr><td class="col-name">status</td><td>PASS 또는 FAIL</td></tr>
       </table>
-      <h4>Pass/Fail Criteria</h4>
-      <div class="pass-fail-note"><strong>PASS</strong> if both to_pcb &ge; 1mm and to_BTH &ge; 1mm. Otherwise <strong>FAIL</strong>.</div>
+      <h4>Pass/Fail 기준</h4>
+      <div class="pass-fail-note"><strong>PASS</strong>: to_pcb &ge; 1mm 이고 to_BTH &ge; 1mm 인 경우. 그 외는 <strong>FAIL</strong>.</div>
     </div>
   </div>
 
@@ -737,30 +1124,28 @@
   <div class="rule-card">
     <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
       <span class="rule-id">CKL-03-013</span>
-      <span class="rule-desc">Each MIC pad must have at least one VIA</span>
+      <span class="rule-desc">MIC 부품의 모든 패드에는 각각 최소 1개 이상의 VIA가 있어야 함</span>
       <span class="badge badge-placement">Placement</span>
       <span class="toggle-icon">&#9654;</span>
     </div>
     <div class="rule-body">
-      <h4>Inspection Process</h4>
+      <h4>검사 과정</h4>
       <ol>
-        <li>Search for MIC components (comp_name starts with <code style="display:inline;padding:2px 6px;">MIC</code>) on Top and Bottom layers.</li>
-        <li>For each MIC component, iterate over all pads defined in the package.</li>
-        <li>Transform each pad centre from package-local coordinates to board coordinates.</li>
-        <li>Count the number of VIAs whose board position falls within 0.05mm of the pad centre.</li>
-        <li>Report one row per pad with the VIA count and pass/fail result.</li>
+        <li>Top 및 Bottom 레이어에서 MIC 부품(comp_name이 &ldquo;MIC&rdquo; 로 시작) 을 탐색한다.</li>
+        <li>각 MIC 패키지의 모든 핀에 대해 toeprint 및 FID 기반 실제 패드 geometry를 구한다.</li>
+        <li>각 패드 위치에서 VIA 수를 카운트한다.</li>
       </ol>
-      <h4>Output Columns</h4>
+      <h4>출력 컬럼</h4>
       <table class="col-table">
-        <tr><th>Column</th><th>Description</th></tr>
-        <tr><td class="col-name">comp</td><td>Name of the MIC component</td></tr>
-        <tr><td class="col-name">cmp_layer</td><td>Layer where the MIC component is placed (Top or Bottom)</td></tr>
-        <tr><td class="col-name">pad</td><td>Name / number of the specific pad</td></tr>
-        <tr><td class="col-name">via</td><td>Number of VIAs located at that pad position</td></tr>
-        <tr><td class="col-name">status</td><td>PASS or FAIL</td></tr>
+        <tr><th>컬럼</th><th>설명</th></tr>
+        <tr><td class="col-name">comp</td><td>MIC 부품 이름</td></tr>
+        <tr><td class="col-name">cmp_layer</td><td>MIC가 배치된 레이어</td></tr>
+        <tr><td class="col-name">pad</td><td>패드 이름 / 번호</td></tr>
+        <tr><td class="col-name">via</td><td>해당 패드 위치의 VIA 수</td></tr>
+        <tr><td class="col-name">status</td><td>PASS 또는 FAIL</td></tr>
       </table>
-      <h4>Pass/Fail Criteria</h4>
-      <div class="pass-fail-note fail-note"><strong>FAIL</strong> if the VIA count for a pad is 0. <strong>PASS</strong> if 1 or more VIAs are present.</div>
+      <h4>Pass/Fail 기준</h4>
+      <div class="pass-fail-note fail-note"><strong>FAIL</strong>: 패드에 VIA가 0개면 FAIL. 1개 이상이면 <strong>PASS</strong>.</div>
     </div>
   </div>
 
@@ -768,29 +1153,29 @@
   <div class="rule-card">
     <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
       <span class="rule-id">CKL-03-015</span>
-      <span class="rule-desc">Components must have at least 0.65mm clearance from the PCB outline</span>
+      <span class="rule-desc">부품 패드는 PCB 외곽에서 최소 0.65mm 이상 이격되어야 함</span>
       <span class="badge badge-clearance">Clearance</span>
       <span class="toggle-icon">&#9654;</span>
     </div>
     <div class="rule-body">
-      <h4>Inspection Process</h4>
+      <h4>검사 과정</h4>
       <ol>
-        <li>Generate a reference boundary line 0.65mm inward from the PCB outline.</li>
-        <li>For the Top layer, identify any component pins or pads within the clearance zone (between the PCB outline and the reference line).</li>
-        <li>Calculate the direct linear distance between the identified components and the PCB outline.</li>
-        <li>Perform the same process for the Bottom layer.</li>
+        <li>PCB 외곽에서 내부로 0.65mm 안쪽의 inset 경계선을 생성한다.</li>
+        <li>Top 및 Bottom 레이어에서 부품의 <strong>패드</strong>가 클리어런스 영역 (PCB 외곽과 inset 경계선 사이) 을 침범하는지 식별한다. (외곽선만 겹치는 경우는 허용)</li>
+        <li>식별된 부품과 PCB 외곽 사이의 직선 거리를 계산한다.</li>
+        <li>ANT, CN, TP 접두사 부품은 검사에서 제외한다.</li>
       </ol>
-      <h4>Output Columns</h4>
+      <h4>출력 컬럼</h4>
       <table class="col-table">
-        <tr><th>Column</th><th>Description</th></tr>
-        <tr><td class="col-name">comp</td><td>Name of the component</td></tr>
-        <tr><td class="col-name">part_name</td><td>Part name of the component</td></tr>
-        <tr><td class="col-name">cmp_layer</td><td>Layer where the component is placed</td></tr>
-        <tr><td class="col-name">distance</td><td>Measured distance to the PCB outline (mm)</td></tr>
-        <tr><td class="col-name">status</td><td>PASS or FAIL</td></tr>
+        <tr><th>컬럼</th><th>설명</th></tr>
+        <tr><td class="col-name">comp</td><td>부품 이름</td></tr>
+        <tr><td class="col-name">part_name</td><td>부품 part_name</td></tr>
+        <tr><td class="col-name">cmp_layer</td><td>부품이 배치된 레이어</td></tr>
+        <tr><td class="col-name">distance</td><td>PCB 외곽까지 측정 거리 (mm)</td></tr>
+        <tr><td class="col-name">status</td><td>PASS 또는 FAIL</td></tr>
       </table>
-      <h4>Pass/Fail Criteria</h4>
-      <div class="pass-fail-note"><strong>PASS</strong> if distance &ge; 0.65mm. Otherwise <strong>FAIL</strong>.</div>
+      <h4>Pass/Fail 기준</h4>
+      <div class="pass-fail-note"><strong>PASS</strong>: 거리가 0.65mm 이상이면 PASS. 그 외는 <strong>FAIL</strong>.</div>
     </div>
   </div>
 
@@ -798,95 +1183,111 @@
   <div class="rule-card">
     <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
       <span class="rule-id">CKL-03-016</span>
-      <span class="rule-desc">Interposers, Shield Cans, SIM Sockets, and Connectors must not overlap the opposite side of OSC components</span>
+      <span class="rule-desc">Interposer / Shield Can / SIM Socket / Connector는 OSC 부품의 반대면과 겹치면 안 됨</span>
       <span class="badge badge-placement">Placement</span>
       <span class="toggle-icon">&#9654;</span>
     </div>
     <div class="rule-body">
-      <h4>Inspection Process</h4>
+      <h4>검사 과정</h4>
       <ol>
-        <li>Search for Oscillator (OSC) components on the Top and Bottom layers.</li>
-        <li>For each OSC, collect all Interposers (INP), Shield Cans (SC), SIM Sockets (SIM), and Connector components on the opposite side.</li>
-        <li>Check if any of those components overlap the OSC footprint.</li>
-        <li>Report one row per overlapping component; OSCs with no overlap are recorded as PASS.</li>
+        <li>Top 및 Bottom 레이어에서 OSC 부품을 탐색한다.</li>
+        <li>각 OSC의 반대면에서 Interposer(INP), Shield Can(SC), SIM Socket(SIM), Connector 부품을 수집한다.</li>
+        <li>해당 부품들이 OSC의 footprint 와 겹치는지 확인한다.</li>
+        <li>겹치는 부품별로 한 행씩 보고하고, 겹침이 없는 OSC는 PASS로 기록한다.</li>
       </ol>
-      <h4>Output Columns</h4>
+      <h4>출력 컬럼</h4>
       <table class="col-table">
-        <tr><th>Column</th><th>Description</th></tr>
-        <tr><td class="col-name">comp</td><td>Name of the OSC component</td></tr>
-        <tr><td class="col-name">cmp_layer</td><td>Layer where the OSC is placed (Top or Bottom)</td></tr>
-        <tr><td class="col-name">overlapping_cmp</td><td>Name of the overlapping component on the opposite side (INP, SC, SIM, or Connector), or &ldquo;&ndash;&rdquo; if none</td></tr>
-        <tr><td class="col-name">part_name</td><td>Part name of the overlapping component, or &ldquo;&ndash;&rdquo; if none</td></tr>
-        <tr><td class="col-name">status</td><td>PASS or FAIL</td></tr>
+        <tr><th>컬럼</th><th>설명</th></tr>
+        <tr><td class="col-name">comp</td><td>OSC 부품 이름</td></tr>
+        <tr><td class="col-name">cmp_layer</td><td>OSC가 배치된 레이어</td></tr>
+        <tr><td class="col-name">overlapping_cmp</td><td>반대면에서 겹치는 부품 이름 (INP / SC / SIM / Connector), 없으면 &ldquo;&ndash;&rdquo;</td></tr>
+        <tr><td class="col-name">part_name</td><td>반대면 부품의 part_name, 없으면 &ldquo;&ndash;&rdquo;</td></tr>
+        <tr><td class="col-name">status</td><td>PASS 또는 FAIL</td></tr>
       </table>
-      <h4>Pass/Fail Criteria</h4>
-      <div class="pass-fail-note fail-note"><strong>FAIL</strong> if any INP, SC, SIM, or Connector overlaps the opposite side of an OSC component.</div>
+      <h4>Pass/Fail 기준</h4>
+      <div class="pass-fail-note fail-note"><strong>FAIL</strong>: INP, SC, SIM, Connector 중 어느 것이라도 OSC 반대면에 겹치면 FAIL.</div>
     </div>
   </div>
 
   <!-- ================================================================== -->
-  <div class="section-title">Reference CSV Files</div>
+  <div class="section-title">참조 CSV 파일</div>
 
   <div class="usage">
-    <p style="margin-top:0">All reference files are located in the <code style="display:inline; padding:2px 6px;">references/</code> directory. If a required CSV file is missing, the system automatically generates a sample file for testing.</p>
+    <p style="margin-top:0">모든 참조 파일은 <code style="display:inline; padding:2px 6px;">references/</code> 디렉터리에 있습니다. 필요한 CSV가 없는 경우 시스템은 테스트용 샘플 파일을 자동으로 생성합니다.</p>
     <table class="col-table" style="margin-top:14px">
-      <tr><th>File</th><th>Description</th><th>Used By</th></tr>
+      <tr><th>파일</th><th>설명</th><th>사용 규칙</th></tr>
       <tr>
         <td class="col-name">ap_memory.csv</td>
-        <td>AP and Memory component part names with rank and category</td>
-        <td>CKL-01-005, CKL-02-012, CKL-03-001</td>
+        <td>AP 및 Memory 부품의 part_name, rank, category 정보</td>
+        <td>CKL-01-005, CKL-02-011, CKL-02-012, CKL-03-001</td>
       </tr>
       <tr>
         <td class="col-name">capacitors_10_list.csv</td>
-        <td>10 managed capacitor types with part_name and size</td>
+        <td>관리 대상 10종 Capacitor의 part_name 및 size</td>
         <td>CKL-02-001, CKL-02-006, CKL-02-010, manage_list</td>
       </tr>
       <tr>
         <td class="col-name">capacitors_41_list.csv</td>
-        <td>41 managed capacitor types with part_name and size</td>
-        <td>CKL-02-002, CKL-02-006, manage_list</td>
+        <td>관리 대상 41종 Capacitor의 part_name 및 size</td>
+        <td>CKL-02-002, CKL-02-003, CKL-02-004, CKL-02-006, manage_list</td>
+      </tr>
+      <tr>
+        <td class="col-name">dpad_capacitors.csv</td>
+        <td>D-pad(반원형) 오프닝 대상 Capacitor의 part_name 및 기대 geometry</td>
+        <td>CKL-02-005</td>
       </tr>
       <tr>
         <td class="col-name">inductors_2s_list.csv</td>
-        <td>2S inductor types with part_name and size</td>
+        <td>2S Inductor의 part_name 및 size</td>
         <td>CKL-01-005, CKL-02-008, CKL-02-009, CKL-02-010, CKL-02-012, manage_list</td>
       </tr>
       <tr>
+        <td class="col-name">pmic_list.csv</td>
+        <td>PMIC 부품의 part_name 및 maker(Manufacturer) 정보</td>
+        <td>CKL-01-002, CKL-01-003</td>
+      </tr>
+      <tr>
         <td class="col-name">hall_ic.csv</td>
-        <td>Hall IC part names with rank</td>
+        <td>Hall IC의 part_name 및 rank</td>
         <td>CKL-03-004</td>
       </tr>
       <tr>
         <td class="col-name">axis_sensors.csv</td>
-        <td>3-axis / 6-axis sensor part names with rank</td>
+        <td>3축 / 6축 센서의 part_name 및 rank</td>
         <td>CKL-03-005</td>
+      </tr>
+      <tr>
+        <td class="col-name">regular_sensors.csv</td>
+        <td>일반 센서 부품의 part_name 및 type 분류</td>
+        <td>CKL-03-008</td>
       </tr>
     </table>
   </div>
 
   <!-- Architecture note -->
-  <div class="section-title">Architecture Notes</div>
+  <div class="section-title">아키텍처 노트</div>
   <div class="usage">
-    <h2>Adding New Checklist Rules</h2>
+    <h2>새 체크리스트 규칙 추가 방법</h2>
     <ol style="padding-left: 22px; font-size: 0.93rem;">
-      <li>Create a new file in <code style="display:inline; padding:2px 6px;">src/checklist/rules/</code> (e.g. <code style="display:inline; padding:2px 6px;">ckl_04_001.py</code>).</li>
-      <li>Define a class that extends <code style="display:inline; padding:2px 6px;">ChecklistRule</code> with <code style="display:inline; padding:2px 6px;">rule_id</code>, <code style="display:inline; padding:2px 6px;">description</code>, <code style="display:inline; padding:2px 6px;">category</code>, and an <code style="display:inline; padding:2px 6px;">evaluate()</code> method.</li>
-      <li>Decorate the class with <code style="display:inline; padding:2px 6px;">@register_rule</code>.</li>
-      <li>Return a <code style="display:inline; padding:2px 6px;">RuleResult</code> with <code style="display:inline; padding:2px 6px;">details={"columns": [...], "rows": [...]}</code> for automatic tabular Excel output.</li>
-      <li>Add the import to <code style="display:inline; padding:2px 6px;">main.py</code> inside <code style="display:inline; padding:2px 6px;">cmd_check()</code>.</li>
+      <li><code style="display:inline; padding:2px 6px;">src/checklist/rules/</code> 디렉터리에 새 파일을 생성한다 (예: <code style="display:inline; padding:2px 6px;">ckl_04_001.py</code>).</li>
+      <li><code style="display:inline; padding:2px 6px;">ChecklistRule</code> 을 상속하는 클래스를 정의하고, <code style="display:inline; padding:2px 6px;">rule_id</code>, <code style="display:inline; padding:2px 6px;">description</code>, <code style="display:inline; padding:2px 6px;">category</code>, <code style="display:inline; padding:2px 6px;">evaluate()</code> 메서드를 구현한다.</li>
+      <li>클래스에 <code style="display:inline; padding:2px 6px;">@register_rule</code> 데코레이터를 적용한다.</li>
+      <li>자동 Excel 표 출력을 위해 <code style="display:inline; padding:2px 6px;">RuleResult</code> 에 <code style="display:inline; padding:2px 6px;">details={"columns": [...], "rows": [...]}</code> 형식으로 반환한다.</li>
+      <li><code style="display:inline; padding:2px 6px;">main.py</code> 의 <code style="display:inline; padding:2px 6px;">cmd_check()</code> 에 import 문을 추가한다.</li>
     </ol>
-    <p style="margin-top: 14px"><strong>Key utilities available:</strong></p>
+    <p style="margin-top: 14px"><strong>주요 유틸리티:</strong></p>
     <ul style="padding-left: 22px; font-size: 0.93rem; margin-top: 6px;">
-      <li><code style="display:inline; padding:2px 6px;">component_classifier.py</code> &mdash; find_ics(), find_connectors(), find_capacitors(), find_inductors(), find_simsockets(), find_interposers(), find_shield_cans(), find_oscillators(), find_bothholes(), find_mics(), find_rf_components(), find_filters()</li>
-      <li><code style="display:inline; padding:2px 6px;">geometry_utils.py</code> &mdash; find_overlapping_components(), find_pad_overlapping_components(), is_on_edge(), edge_distance(), distance_to_outline(), get_component_orientation(), filter_by_size(), build_board_polygon(), components_in_clearance_zone(), build_via_position_set(), count_vias_at_pad()</li>
-      <li><code style="display:inline; padding:2px 6px;">reference_loader.py</code> &mdash; load_reference_csv(), get_managed_part_names(), get_part_size_map(), get_part_category_map() (auto-generates sample CSVs if missing)</li>
+      <li><code style="display:inline; padding:2px 6px;">component_classifier.py</code> &mdash; find_ics(), find_bga_ics(), find_connectors(), find_capacitors(), find_inductors(), find_simsockets(), find_interposers(), find_shield_cans(), find_oscillators(), find_bothholes(), find_mics(), find_rf_components(), find_filters(), find_leds(), find_pmics(), find_antennas()</li>
+      <li><code style="display:inline; padding:2px 6px;">geometry_utils.py</code> &mdash; find_overlapping_components(), find_pad_overlapping_components(), find_outermost_pad_overlapping_components(), find_components_inside_outline(), is_on_edge(), is_on_corner_or_diagonal(), is_sandwiched_between(), edge_distance(), pad_distance_to_component(), pad_distance_to_outline(), distance_to_outline(), get_component_orientation(), get_pair_orientation(), get_orientation_relative_to_shield_can(), filter_by_size(), build_board_polygon(), build_inset_boundary(), find_bending_vulnerable_areas(), detect_inner_walls(), is_near_inner_wall(), components_with_pads_in_clearance_zone(), build_via_position_set(), count_vias_at_pad(), build_toeprint_lookup(), find_outermost_pin_indices(), lookup_resolved_pads_for_pin(), is_pad_nc(), has_empty_center(), overlaps_component_outline()</li>
+      <li><code style="display:inline; padding:2px 6px;">reference_loader.py</code> &mdash; load_reference_csv(), get_managed_part_names(), get_part_size_map(), get_part_category_map() (파일이 없으면 샘플 CSV를 자동 생성)</li>
+      <li><code style="display:inline; padding:2px 6px;">visualizers/</code> &mdash; render_overlap_image(), render_via_check_image(), render_clearance_image() (규칙별 시각화 이미지 생성)</li>
     </ul>
   </div>
 
 </div>
 
 <div class="footer">
-  ODB++ Design Checklist System &bull; Generated documentation
+  ODB++ 설계 체크리스트 시스템 &bull; 자동 생성 문서
 </div>
 
 </body>
