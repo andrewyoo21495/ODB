@@ -146,7 +146,12 @@ def _draw_component_geometry(ax: Axes, comp: Component,
                 continue
 
             geom = tp.geom
-            pad_rot = -geom.rotation if is_bottom else geom.rotation
+            # The pad feature is stored in absolute board space (top view) in
+            # the ODB++ feature file — the same coordinates used when rendering
+            # the signal layer directly.  symbol_to_patch already handles CW
+            # rotation internally, so no sign inversion is needed for bottom
+            # components.
+            pad_rot = geom.rotation
 
             if geom.is_user_symbol and geom.symbol_name in user_symbols:
                 patches = user_symbol_to_patches(

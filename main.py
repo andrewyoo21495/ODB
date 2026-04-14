@@ -341,7 +341,9 @@ def _resolve_pin_geometries(data: dict):
     render directly without re-resolving FID references at runtime.
     """
     from src.models import PinGeometry
-    from src.visualizer.fid_lookup import build_fid_map, resolve_fid_features
+    from src.visualizer.fid_lookup import (
+        build_fid_map, resolve_fid_features, _find_top_bottom_signal_layers,
+    )
 
     eda = data["eda_data"]
 
@@ -367,6 +369,11 @@ def _resolve_pin_geometries(data: dict):
     if not resolved:
         return
 
+    # Identify top/bottom signal layers so we can prefer the correct outer
+    # layer pad when a toeprint has FID references to multiple layers
+    # (e.g. through-hole pads appear on sigt, inner layers, and sigb).
+    top_sig, bot_sig = _find_top_bottom_signal_layers(layers_data)
+
     # Collect user-defined symbol names for the is_user_symbol flag
     user_sym_names: set[str] = set()
     symbols = data.get("symbols")
@@ -377,6 +384,7 @@ def _resolve_pin_geometries(data: dict):
     # Populate Toeprint.geom for each component
     populated = 0
     for side_key, side_char in (("components_top", "T"), ("components_bot", "B")):
+        preferred_layer = top_sig if side_char == "T" else bot_sig
         comps = data.get(side_key, [])
         for comp in comps:
             for tp in comp.toeprints:
@@ -386,8 +394,19 @@ def _resolve_pin_geometries(data: dict):
                     pad_features = resolved.get(key)
                     if not pad_features:
                         continue
-                    # Use the first successfully resolved feature
-                    rpf = pad_features[0]
+                    # Prefer the pad from the correct outer signal layer
+                    # (sigt for top, sigb for bottom).  A toeprint can have
+                    # FID references to multiple layers (outer + inner copper),
+                    # so we must pick the outermost one, not just the first.
+                    rpf = None
+                    if preferred_layer:
+                        rpf = next(
+                            (f for f in pad_features
+                             if f.layer_name == preferred_layer),
+                            None,
+                        )
+                    if rpf is None:
+                        rpf = pad_features[0]  # fallback: first available
                     tp.geom = PinGeometry(
                         symbol_name=rpf.symbol.name,
                         x=rpf.pad.x,
