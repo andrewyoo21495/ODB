@@ -45,6 +45,7 @@ class CKL03012(ChecklistRule):
         profile = job_data.get("profile")
         eda = job_data.get("eda_data")
         packages = eda.packages if eda else []
+        user_symbols: dict = job_data.get("user_symbols") or {}
 
         board_poly = build_board_polygon(profile)
 
@@ -64,10 +65,15 @@ class CKL03012(ChecklistRule):
             layer_shield_cans = find_shield_cans(comps)
             oscs = find_oscillators(comps)
 
+            is_bottom = (layer_name == "Bottom")
+
             for osc in oscs:
                 # Distance from OSC pads to PCB outline
                 if board_poly is not None:
-                    dist_pcb = pad_distance_to_outline(osc, board_poly, packages)
+                    dist_pcb = pad_distance_to_outline(
+                        osc, board_poly, packages,
+                        is_bottom=is_bottom, user_symbols=user_symbols,
+                    )
                 else:
                     dist_pcb = float("inf")
 
@@ -75,7 +81,10 @@ class CKL03012(ChecklistRule):
                 dist_bth = float("inf")
                 nearest_bth = None
                 for bth in all_bothholes:
-                    d = pad_distance_to_component(osc, bth, packages)
+                    d = pad_distance_to_component(
+                        osc, bth, packages,
+                        is_bottom=is_bottom, user_symbols=user_symbols,
+                    )
                     if d < dist_bth:
                         dist_bth = d
                         nearest_bth = bth
@@ -83,7 +92,9 @@ class CKL03012(ChecklistRule):
                 # Check if OSC is inside any Shield Can outline on the same layer
                 in_sc = False
                 for sc in layer_shield_cans:
-                    inside = find_components_inside_outline(sc, [osc], packages)
+                    inside = find_components_inside_outline(
+                        sc, [osc], packages, is_bottom=is_bottom
+                    )
                     if inside:
                         in_sc = True
                         break
@@ -136,6 +147,8 @@ class CKL03012(ChecklistRule):
                     comp_label="OSC",
                     ref_label="BOTHHOLE",
                     min_clearance=_MIN_CLEARANCE_MM,
+                    user_symbols=user_symbols,
+                    is_bottom=is_bottom,
                 )
                 images.append({
                     "path": img_path,

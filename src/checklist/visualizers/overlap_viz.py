@@ -94,6 +94,7 @@ def render_overlap_image(
     context_radius: float = 5.0,
     primary_is_bottom: bool = False,
     overlap_is_bottom: bool = False,
+    user_symbols: dict | None = None,
 ) -> Path:
     """Render a single primary component with overlapping opposite-side parts.
 
@@ -125,7 +126,8 @@ def render_overlap_image(
     Path
     """
     # --- build geometries ---------------------------------------------------
-    conn_pad_geom = _get_pad_union(primary, packages, is_bottom=primary_is_bottom)
+    conn_pad_geom = _get_pad_union(primary, packages, is_bottom=primary_is_bottom,
+                                   user_symbols=user_symbols)
     conn_outline = _resolve_outline(primary, packages, is_bottom=primary_is_bottom)
     conn_footprint = _resolve_footprint(primary, packages, is_bottom=primary_is_bottom)
     conn_display = conn_outline or conn_footprint or conn_pad_geom

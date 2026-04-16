@@ -622,6 +622,10 @@ def _arc_to_points(xs: float, ys: float, xe: float, ye: float,
     return points
 
 
+# Public alias so geometry utilities can import without relying on the name mangling.
+arc_to_points = _arc_to_points
+
+
 def _circle_points(cx: float, cy: float, r: float, n: int = 64) -> np.ndarray:
     """Generate points for a circle."""
     theta = np.linspace(0, 2 * np.pi, n, endpoint=False)

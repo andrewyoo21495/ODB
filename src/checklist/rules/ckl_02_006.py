@@ -57,6 +57,7 @@ class CKL02006(ChecklistRule):
         components_bot = job_data.get("components_bot", [])
         eda = job_data.get("eda_data")
         packages = eda.packages if eda else []
+        user_symbols: dict = job_data.get("user_symbols") or {}
 
         managed_51 = _get_51_managed_part_names()
 
@@ -91,6 +92,7 @@ class CKL02006(ChecklistRule):
                     conn, opp_general_caps, packages,
                     is_bottom_primary=ref_is_bottom,
                     is_bottom_candidates=opp_is_bottom,
+                    user_symbols=user_symbols,
                 )
                 overlap_items: list[dict] = []
                 for cap in overlaps:
@@ -133,6 +135,7 @@ class CKL02006(ChecklistRule):
                         overlap_label="General cap",
                         primary_is_bottom=ref_is_bottom,
                         overlap_is_bottom=opp_is_bottom,
+                        user_symbols=user_symbols,
                     )
                     images.append({"path": img_path,
                                    "title": f"{conn.comp_name} ({ref_layer})",
@@ -145,6 +148,7 @@ class CKL02006(ChecklistRule):
                     sc, opp_general_caps, packages,
                     is_bottom_primary=ref_is_bottom,
                     is_bottom_candidates=opp_is_bottom,
+                    user_symbols=user_symbols,
                 )
                 overlap_items = []
                 for cap in overlaps:
@@ -195,6 +199,7 @@ class CKL02006(ChecklistRule):
                         overlap_label="General cap",
                         primary_is_bottom=ref_is_bottom,
                         overlap_is_bottom=opp_is_bottom,
+                        user_symbols=user_symbols,
                     )
                     images.append({"path": img_path,
                                    "title": f"{sc.comp_name} ({ref_layer})",

@@ -49,7 +49,8 @@ def _classify_opp_type(c, interposers, simsockets, shield_cans):
 
 def _check_overlaps(comp, comp_layer, interposers, full_pad_targets,
                     opp_type_fn, packages, rows,
-                    *, comp_is_bottom=False, opp_is_bottom=False):
+                    *, comp_is_bottom=False, opp_is_bottom=False,
+                    user_symbols=None):
     """Run overlap checks for a single component against opposite-side targets.
 
     - Interposers: checked against outermost pads only
@@ -72,6 +73,7 @@ def _check_overlaps(comp, comp_layer, interposers, full_pad_targets,
             comp, interposers, packages,
             is_bottom_primary=comp_is_bottom,
             is_bottom_candidates=opp_is_bottom,
+            user_symbols=user_symbols,
         )
 
         if pad_ovl:
@@ -114,6 +116,7 @@ def _check_overlaps(comp, comp_layer, interposers, full_pad_targets,
             comp, full_pad_targets, packages,
             is_bottom_primary=comp_is_bottom,
             is_bottom_candidates=opp_is_bottom,
+            user_symbols=user_symbols,
         )
 
         if pad_ovl:
@@ -162,6 +165,7 @@ class CKL01001(ChecklistRule):
         components_bot = job_data.get("components_bot", [])
         eda = job_data.get("eda_data")
         packages = eda.packages if eda else []
+        user_symbols: dict = job_data.get("user_symbols") or {}
 
         columns = ["comp", "cmp_layer", "overlapping_cmp", "opp_type", "status"]
         rows: list[dict] = []
@@ -220,6 +224,7 @@ class CKL01001(ChecklistRule):
                     opp_type_fn, packages, rows,
                     comp_is_bottom=comp_is_bottom,
                     opp_is_bottom=opp_is_bottom,
+                    user_symbols=user_symbols,
                 )
                 _register_overlaps(ic, "IC", items)
 
@@ -232,6 +237,7 @@ class CKL01001(ChecklistRule):
                     opp_type_fn, packages, rows,
                     comp_is_bottom=comp_is_bottom,
                     opp_is_bottom=opp_is_bottom,
+                    user_symbols=user_symbols,
                 )
                 _register_overlaps(flt, "Filter", items)
 
@@ -254,6 +260,7 @@ class CKL01001(ChecklistRule):
                 primary_label="Overlapping cmp",
                 primary_is_bottom=opp_is_bottom,
                 overlap_is_bottom=not opp_is_bottom,
+                user_symbols=user_symbols,
             )
             images.append({"path": img_path,
                            "title": f"{ovl_name} ({opp_layer})",

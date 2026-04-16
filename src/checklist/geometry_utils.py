@@ -23,14 +23,20 @@ from typing import Optional, Sequence
 import numpy as np
 
 from src.models import (
-    ArcSegment, BBox, Component, EdaData, LineSegment, Package, Pin,
-    PinOutline, Toeprint,
+    ArcRecord, ArcSegment, BBox, Component, EdaData, LineRecord, LineSegment,
+    Package, PadRecord, Pin, PinGeometry, PinOutline, SurfaceRecord, Toeprint,
+    UserSymbol,
 )
 from src.visualizer.component_overlay import (
     transform_point,
     transform_pts,
 )
-from src.visualizer.symbol_renderer import contour_to_vertices
+from src.visualizer.symbol_renderer import (
+    arc_to_points,
+    contour_to_vertices,
+    get_line_width_for_symbol,
+)
+from src.parsers.symbol_resolver import resolve_symbol
 
 try:
     from shapely.geometry import (
@@ -725,17 +731,64 @@ def find_outermost_pin_indices(pins: list[Pin]) -> set[int]:
 
 
 def _get_outermost_pad_union(comp: Component, packages: list[Package],
-                             *, is_bottom: bool = False):
+                             *, is_bottom: bool = False,
+                             user_symbols: dict | None = None):
     """Build a union of only the **outermost** pad polygons for *comp*.
 
-    Same as :func:`_get_pad_union` but restricted to pins whose indices
-    are in the convex-hull perimeter set.
+    Same as :func:`_get_pad_union` but restricted to pads at the perimeter.
+
+    Primary path: uses FID-resolved ``Toeprint.geom`` data.  Outermost
+    toeprints are identified by board-space position (same criterion as
+    :func:`find_outermost_pin_indices`).
+
+    Fallback: when no toeprint has ``geom``, uses the package-level pin
+    outline definitions restricted to the outermost pin indices.
     """
     if not _HAS_SHAPELY:
         return None
     if comp.pkg_ref < 0 or comp.pkg_ref >= len(packages):
         return None
 
+    user_symbols = user_symbols or {}
+
+    # --- Primary path: select outermost toeprints by board position -----------
+    tps_with_geom = [tp for tp in comp.toeprints if tp.geom is not None]
+    if tps_with_geom:
+        if len(tps_with_geom) <= 4:
+            outer_tps = tps_with_geom
+        else:
+            xs = [tp.x for tp in tps_with_geom]
+            ys = [tp.y for tp in tps_with_geom]
+            x_min, x_max = min(xs), max(xs)
+            y_min, y_max = min(ys), max(ys)
+            tol = 0.01
+            outer_tps = [
+                tp for tp in tps_with_geom
+                if (tp.x <= x_min + tol or tp.x >= x_max - tol or
+                    tp.y <= y_min + tol or tp.y >= y_max - tol)
+            ]
+
+        pad_polys = []
+        for tp in outer_tps:
+            geom = tp.geom
+            pad_rot = -geom.rotation if is_bottom else geom.rotation
+            if geom.is_user_symbol and geom.symbol_name in user_symbols:
+                g = _user_symbol_to_shapely(
+                    user_symbols[geom.symbol_name],
+                    geom.x, geom.y, pad_rot, geom.mirror,
+                )
+            else:
+                g = _symbol_to_shapely(
+                    geom.symbol_name, geom.x, geom.y, pad_rot, geom.mirror,
+                    geom.units, geom.unit_override, geom.resize_factor,
+                )
+            if g is not None and not g.is_empty:
+                pad_polys.append(g)
+
+        if pad_polys:
+            return unary_union(pad_polys)
+
+    # --- Fallback: package-level outermost pin outlines -----------------------
     pkg = packages[comp.pkg_ref]
     if not pkg.pins:
         return None
@@ -777,6 +830,7 @@ def find_outermost_pad_overlapping_components(
     *,
     is_bottom_primary: bool = False,
     is_bottom_candidates: bool = False,
+    user_symbols: dict | None = None,
 ) -> list[Component]:
     """Return *candidates* whose **outermost** pads overlap *comp*'s pads.
 
@@ -786,13 +840,16 @@ def find_outermost_pad_overlapping_components(
     if not _HAS_SHAPELY:
         return []
 
-    pad_union_comp = _get_pad_union(comp, packages, is_bottom=is_bottom_primary)
+    pad_union_comp = _get_pad_union(comp, packages, is_bottom=is_bottom_primary,
+                                    user_symbols=user_symbols)
     if pad_union_comp is None:
         pad_union_comp = ShapelyPoint(comp.x, comp.y).buffer(0.05)
 
     overlapping: list[Component] = []
     for cand in candidates:
-        outermost_union = _get_outermost_pad_union(cand, packages, is_bottom=is_bottom_candidates)
+        outermost_union = _get_outermost_pad_union(cand, packages,
+                                                   is_bottom=is_bottom_candidates,
+                                                   user_symbols=user_symbols)
         if outermost_union is None:
             outermost_union = ShapelyPoint(cand.x, cand.y).buffer(0.05)
         if pad_union_comp.intersects(outermost_union):
@@ -804,13 +861,266 @@ def find_outermost_pad_overlapping_components(
 # 7. Pad-to-Pad Overlap Detection
 # ---------------------------------------------------------------------------
 
+def _mm_scale(units: str, unit_override: str | None) -> float:
+    """Return the scale factor that converts symbol params to MM."""
+    effective = unit_override if unit_override else units
+    return 25.4 if effective in ("INCH", "I") else 1.0
+
+
+def _rot_pts(pts: np.ndarray, cx: float, cy: float, angle_deg: float) -> np.ndarray:
+    """Rotate *pts* (N×2) CCW by *angle_deg* around (cx, cy)."""
+    a = math.radians(angle_deg)
+    cos_a, sin_a = math.cos(a), math.sin(a)
+    shifted = pts - np.array([cx, cy])
+    rotated = np.column_stack([
+        shifted[:, 0] * cos_a - shifted[:, 1] * sin_a,
+        shifted[:, 0] * sin_a + shifted[:, 1] * cos_a,
+    ])
+    return rotated + np.array([cx, cy])
+
+
+def _symbol_to_shapely(symbol_name: str, x: float, y: float,
+                       rotation: float, mirror: bool,
+                       units: str = "INCH", unit_override: str | None = None,
+                       resize_factor: float | None = None):
+    """Convert a standard symbol name to a Shapely geometry at board position.
+
+    Mirrors the shape logic in ``symbol_to_patch()`` but produces Shapely
+    objects for geometric analysis instead of matplotlib patches.  Falls back
+    to a small circular buffer for unrecognised or complex symbol types.
+    """
+    if not _HAS_SHAPELY:
+        return None
+
+    try:
+        sym = resolve_symbol(symbol_name)
+    except Exception:
+        return ShapelyPoint(x, y).buffer(0.025)
+
+    scale = _mm_scale(units, unit_override)
+    if resize_factor is not None and resize_factor > 0:
+        scale *= resize_factor
+
+    def _apply_transform(pts: np.ndarray) -> np.ndarray:
+        if mirror:
+            pts[:, 0] = 2 * x - pts[:, 0]
+        if rotation:
+            pts = _rot_pts(pts, x, y, rotation)
+        return pts
+
+    if sym.type == "round":
+        return ShapelyPoint(x, y).buffer(sym.params["diameter"] * scale / 2)
+
+    if sym.type == "square":
+        s = sym.params["side"] * scale / 2
+        corners = np.array([
+            [x - s, y - s], [x + s, y - s],
+            [x + s, y + s], [x - s, y + s],
+        ])
+        corners = _apply_transform(corners)
+        try:
+            return ShapelyPolygon(corners)
+        except Exception:
+            return ShapelyPoint(x, y).buffer(s)
+
+    if sym.type in ("rect", "rect_round", "rect_chamfer"):
+        w = sym.params["width"] * scale / 2
+        h = sym.params["height"] * scale / 2
+        corners = np.array([
+            [x - w, y - h], [x + w, y - h],
+            [x + w, y + h], [x - w, y + h],
+        ])
+        corners = _apply_transform(corners)
+        try:
+            return ShapelyPolygon(corners)
+        except Exception:
+            return ShapelyPoint(x, y).buffer(max(w, h))
+
+    if sym.type == "oval":
+        w = sym.params["width"] * scale
+        h = sym.params["height"] * scale
+        half_long = max(w, h) / 2
+        half_short = min(w, h) / 2
+        if w >= h:
+            bar = np.array([
+                [x - half_long + half_short, y - half_short],
+                [x + half_long - half_short, y - half_short],
+                [x + half_long - half_short, y + half_short],
+                [x - half_long + half_short, y + half_short],
+            ])
+            bar = _apply_transform(bar)
+            try:
+                rect = ShapelyPolygon(bar)
+            except Exception:
+                rect = ShapelyPoint(x, y).buffer(half_long)
+            dx = (half_long - half_short) * math.cos(math.radians(rotation if not mirror else -rotation))
+            dy = (half_long - half_short) * math.sin(math.radians(rotation if not mirror else -rotation))
+            c1 = ShapelyPoint(x - dx, y - dy).buffer(half_short)
+            c2 = ShapelyPoint(x + dx, y + dy).buffer(half_short)
+            return unary_union([rect, c1, c2])
+        else:
+            bar = np.array([
+                [x - half_short, y - half_long + half_short],
+                [x + half_short, y - half_long + half_short],
+                [x + half_short, y + half_long - half_short],
+                [x - half_short, y + half_long - half_short],
+            ])
+            bar = _apply_transform(bar)
+            try:
+                rect = ShapelyPolygon(bar)
+            except Exception:
+                rect = ShapelyPoint(x, y).buffer(half_long)
+            dx = (half_long - half_short) * math.sin(math.radians(rotation if not mirror else -rotation))
+            dy = (half_long - half_short) * math.cos(math.radians(rotation if not mirror else -rotation))
+            c1 = ShapelyPoint(x - dx, y + dy).buffer(half_short)
+            c2 = ShapelyPoint(x + dx, y - dy).buffer(half_short)
+            return unary_union([rect, c1, c2])
+
+    if sym.type == "ellipse":
+        w = sym.params["width"] * scale / 2
+        h = sym.params["height"] * scale / 2
+        return ShapelyPoint(x, y).buffer(1.0).simplify(0.01).__class__  # fallback
+
+    if sym.type == "diamond":
+        w = sym.params["width"] * scale / 2
+        h = sym.params["height"] * scale / 2
+        verts = np.array([[x, y + h], [x + w, y], [x, y - h], [x - w, y]])
+        verts = _apply_transform(verts)
+        try:
+            return ShapelyPolygon(verts)
+        except Exception:
+            return ShapelyPoint(x, y).buffer(max(w, h))
+
+    # Fallback: circular approximation using a rough size estimate
+    try:
+        size = max(
+            sym.params.get("diameter", 0),
+            sym.params.get("width", 0),
+            sym.params.get("height", 0),
+            sym.params.get("side", 0),
+            sym.params.get("outer_diameter", 0),
+            sym.params.get("outer_size", 0),
+            sym.params.get("outer_width", 0),
+        ) * scale / 2
+        if size > 0:
+            return ShapelyPoint(x, y).buffer(size)
+    except Exception:
+        pass
+    return ShapelyPoint(x, y).buffer(0.025)
+
+
+def _user_symbol_to_shapely(symbol: UserSymbol, x: float, y: float,
+                            rotation: float, mirror: bool):
+    """Convert a UserSymbol to a Shapely geometry union at board position (x, y).
+
+    Handles the same four feature record types as ``user_symbol_to_patches()``:
+    SurfaceRecord, LineRecord, ArcRecord, and PadRecord.  The result is a
+    unary union of all sub-geometries, suitable for geometric analysis.
+    """
+    if not _HAS_SHAPELY:
+        return None
+
+    geoms = []
+    sym_lookup = {s.index: s for s in symbol.symbols}
+
+    def _local_to_board(pts: np.ndarray) -> np.ndarray:
+        """Apply mirror → rotate → translate to symbol-local points."""
+        out = np.asarray(pts, dtype=float).copy()
+        if mirror:
+            out[:, 0] = -out[:, 0]
+        if rotation:
+            a = math.radians(rotation)
+            cos_a, sin_a = math.cos(a), math.sin(a)
+            rotated = np.column_stack([
+                out[:, 0] * cos_a - out[:, 1] * sin_a,
+                out[:, 0] * sin_a + out[:, 1] * cos_a,
+            ])
+            out = rotated
+        out[:, 0] += x
+        out[:, 1] += y
+        return out
+
+    for feature in symbol.features:
+        if isinstance(feature, SurfaceRecord):
+            for contour in feature.contours:
+                if not contour.is_island:
+                    continue
+                verts = contour_to_vertices(contour)
+                if len(verts) < 3:
+                    continue
+                board_verts = _local_to_board(np.array(verts))
+                try:
+                    poly = ShapelyPolygon(board_verts.tolist())
+                    if poly.is_valid and not poly.is_empty:
+                        geoms.append(poly)
+                except Exception:
+                    pass
+
+        elif isinstance(feature, LineRecord):
+            sym_ref = sym_lookup.get(feature.symbol_idx)
+            if sym_ref is None:
+                continue
+            width = get_line_width_for_symbol(
+                sym_ref.name, symbol.units, sym_ref.unit_override)
+            if width <= 0:
+                continue
+            pts = _local_to_board(
+                np.array([[feature.xs, feature.ys], [feature.xe, feature.ye]]))
+            try:
+                geoms.append(LineString(pts.tolist()).buffer(width / 2))
+            except Exception:
+                pass
+
+        elif isinstance(feature, ArcRecord):
+            sym_ref = sym_lookup.get(feature.symbol_idx)
+            if sym_ref is None:
+                continue
+            width = get_line_width_for_symbol(
+                sym_ref.name, symbol.units, sym_ref.unit_override)
+            if width <= 0:
+                continue
+            arc_pts = arc_to_points(
+                feature.xs, feature.ys, feature.xe, feature.ye,
+                feature.xc, feature.yc, feature.clockwise, num_points=24)
+            if len(arc_pts) < 2:
+                continue
+            board_pts = _local_to_board(np.array(arc_pts))
+            try:
+                geoms.append(LineString(board_pts.tolist()).buffer(width / 2))
+            except Exception:
+                pass
+
+        elif isinstance(feature, PadRecord):
+            sym_ref = sym_lookup.get(feature.symbol_idx)
+            if sym_ref is None:
+                continue
+            pos = _local_to_board(np.array([[feature.x, feature.y]]))[0]
+            eff_mirror = mirror ^ feature.mirror
+            eff_rot = (rotation - feature.rotation) if mirror else (rotation + feature.rotation)
+            g = _symbol_to_shapely(
+                sym_ref.name, float(pos[0]), float(pos[1]),
+                eff_rot, eff_mirror,
+                symbol.units, sym_ref.unit_override,
+            )
+            if g is not None and not g.is_empty:
+                geoms.append(g)
+
+    if not geoms:
+        return None
+    return unary_union(geoms)
+
+
 def _get_pad_union(comp: Component, packages: list[Package],
-                   *, is_bottom: bool = False):
+                   *, is_bottom: bool = False, user_symbols: dict | None = None):
     """Build a union of all individual pad polygons for *comp*.
 
-    For each pin in the package, the pin outline vertices are transformed to
-    board coordinates and turned into a Shapely polygon.  Falls back to a
-    small circular buffer around the toeprint position if no outline is found.
+    Primary path: uses FID-resolved ``Toeprint.geom`` data (the same source
+    as the visualiser's ``draw_components()``).  For UserSymbol pads this
+    calls ``_user_symbol_to_shapely()`` which handles all four feature record
+    types (SurfaceRecord, LineRecord, ArcRecord, PadRecord).
+
+    Fallback: when no toeprint has a resolved ``geom``, falls back to the
+    package-level pin outline definitions (EDA data).
 
     Returns a Shapely geometry (union of all pads) or None.
     """
@@ -819,6 +1129,38 @@ def _get_pad_union(comp: Component, packages: list[Package],
     if comp.pkg_ref < 0 or comp.pkg_ref >= len(packages):
         return None
 
+    user_symbols = user_symbols or {}
+
+    # --- Primary path: use FID-resolved toeprint geometry (tp.geom) ----------
+    # tp.geom.x / tp.geom.y are already in board coordinates (signal-layer
+    # feature data), so no transform_point() call is needed for position.
+    tp_geom_polys = []
+    for tp in comp.toeprints:
+        if tp.geom is None:
+            continue
+        geom = tp.geom
+        # is_bottom rotation correction mirrors the view-path logic in
+        # component_overlay._draw_component_geometry().
+        pad_rot = -geom.rotation if is_bottom else geom.rotation
+
+        if geom.is_user_symbol and geom.symbol_name in user_symbols:
+            g = _user_symbol_to_shapely(
+                user_symbols[geom.symbol_name],
+                geom.x, geom.y, pad_rot, geom.mirror,
+            )
+        else:
+            g = _symbol_to_shapely(
+                geom.symbol_name, geom.x, geom.y, pad_rot, geom.mirror,
+                geom.units, geom.unit_override, geom.resize_factor,
+            )
+
+        if g is not None and not g.is_empty:
+            tp_geom_polys.append(g)
+
+    if tp_geom_polys:
+        return unary_union(tp_geom_polys)
+
+    # --- Fallback: package-level pin outlines (EDA definition) ---------------
     pkg = packages[comp.pkg_ref]
     pad_polys = []
 
@@ -860,6 +1202,7 @@ def find_pad_overlapping_components(
     *,
     is_bottom_primary: bool = False,
     is_bottom_candidates: bool = False,
+    user_symbols: dict | None = None,
 ) -> list[Component]:
     """Return *candidates* whose pads overlap *comp*'s pads.
 
@@ -870,13 +1213,15 @@ def find_pad_overlapping_components(
     if not _HAS_SHAPELY:
         return []
 
-    pad_union_comp = _get_pad_union(comp, packages, is_bottom=is_bottom_primary)
+    pad_union_comp = _get_pad_union(comp, packages, is_bottom=is_bottom_primary,
+                                    user_symbols=user_symbols)
     if pad_union_comp is None:
         pad_union_comp = ShapelyPoint(comp.x, comp.y).buffer(0.05)
 
     overlapping: list[Component] = []
     for cand in candidates:
-        pad_union_cand = _get_pad_union(cand, packages, is_bottom=is_bottom_candidates)
+        pad_union_cand = _get_pad_union(cand, packages, is_bottom=is_bottom_candidates,
+                                        user_symbols=user_symbols)
         if pad_union_cand is None:
             pad_union_cand = ShapelyPoint(cand.x, cand.y).buffer(0.05)
         if pad_union_comp.intersects(pad_union_cand):
@@ -888,6 +1233,8 @@ def find_components_inside_outline(
     comp: Component,
     candidates: Sequence[Component],
     packages: list[Package],
+    *,
+    is_bottom: bool = False,
 ) -> list[Component]:
     """Return *candidates* whose footprint is inside *comp*'s component outline.
 
@@ -899,13 +1246,13 @@ def find_components_inside_outline(
     if not _HAS_SHAPELY:
         return []
 
-    outline = _resolve_outline(comp, packages)
+    outline = _resolve_outline(comp, packages, is_bottom=is_bottom)
     if outline is None:
         return []
 
     inside: list[Component] = []
     for cand in candidates:
-        fp_cand = _resolve_footprint(cand, packages)
+        fp_cand = _resolve_footprint(cand, packages, is_bottom=is_bottom)
         if fp_cand is None:
             fp_cand = ShapelyPoint(cand.x, cand.y).buffer(0.05)
         if outline.contains(fp_cand):
@@ -1109,7 +1456,9 @@ def distance_to_outline(comp: Component, board_poly,
 
 
 def pad_distance_to_outline(comp: Component, board_poly,
-                            packages: list[Package] | None = None) -> float:
+                            packages: list[Package] | None = None,
+                            *, is_bottom: bool = False,
+                            user_symbols: dict | None = None) -> float:
     """Return the minimum distance from *comp*'s pad geometry to the board outline.
 
     Uses actual pad polygons (via ``_get_pad_union``) rather than just pad
@@ -1121,7 +1470,8 @@ def pad_distance_to_outline(comp: Component, board_poly,
     outline = board_poly.boundary
 
     if packages is not None:
-        pad_geom = _get_pad_union(comp, packages)
+        pad_geom = _get_pad_union(comp, packages, is_bottom=is_bottom,
+                                  user_symbols=user_symbols)
         if pad_geom is not None:
             return outline.distance(pad_geom)
 
@@ -1136,7 +1486,9 @@ def pad_distance_to_outline(comp: Component, board_poly,
 
 
 def pad_distance_to_component(comp: Component, other: Component,
-                              packages: list[Package]) -> float:
+                              packages: list[Package],
+                              *, is_bottom: bool = False,
+                              user_symbols: dict | None = None) -> float:
     """Return the minimum distance from *comp*'s pads to *other*'s footprint.
 
     Measures from the actual pad polygons of *comp* to the footprint polygon
@@ -1145,7 +1497,8 @@ def pad_distance_to_component(comp: Component, other: Component,
     if not _HAS_SHAPELY:
         return center_distance(comp, other)
 
-    pad_geom = _get_pad_union(comp, packages)
+    pad_geom = _get_pad_union(comp, packages, is_bottom=is_bottom,
+                              user_symbols=user_symbols)
     fp_other = _resolve_footprint(other, packages)
 
     if pad_geom is None or fp_other is None:

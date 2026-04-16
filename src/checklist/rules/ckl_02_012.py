@@ -44,6 +44,7 @@ class CKL02012(ChecklistRule):
         components_bot = job_data.get("components_bot", [])
         eda = job_data.get("eda_data")
         packages = eda.packages if eda else []
+        user_symbols: dict = job_data.get("user_symbols") or {}
 
         ind_size_map = get_part_size_map("inductors_2s_list")
         size_maps = [ind_size_map]
@@ -77,6 +78,7 @@ class CKL02012(ChecklistRule):
                     ap, opp_inductors, packages,
                     is_bottom_primary=ap_is_bottom,
                     is_bottom_candidates=ind_is_bottom,
+                    user_symbols=user_symbols,
                 )
                 # Filter to size >= 2012
                 filtered = filter_by_size(
@@ -92,6 +94,7 @@ class CKL02012(ChecklistRule):
                         ind, same_side_shield_cans, packages,
                         is_bottom_primary=ind_is_bottom,
                         is_bottom_candidates=ap_is_bottom,
+                        user_symbols=user_symbols,
                     )
 
                     if sc_overlaps:
@@ -119,6 +122,7 @@ class CKL02012(ChecklistRule):
                         overlap_label="Inductor",
                         primary_is_bottom=ap_is_bottom,
                         overlap_is_bottom=ind_is_bottom,
+                        user_symbols=user_symbols,
                     )
                     images.append({"path": img_path,
                                    "title": f"{ap.comp_name} ({ap_layer})",

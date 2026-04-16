@@ -81,6 +81,8 @@ def render_clearance_image(
     comp_label: str = "Component",
     ref_label: str = "Reference",
     min_clearance: float = 1.0,
+    user_symbols: dict | None = None,
+    is_bottom: bool = False,
 ) -> Path:
     """Render a component's clearance to board edge and reference components.
 
@@ -112,7 +114,8 @@ def render_clearance_image(
     -------
     Path
     """
-    pad_geom = _get_pad_union(comp, packages)
+    pad_geom = _get_pad_union(comp, packages, is_bottom=is_bottom,
+                              user_symbols=user_symbols)
     if pad_geom is None:
         return output_path
 

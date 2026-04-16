@@ -43,6 +43,7 @@ class CKL02009(ChecklistRule):
         components_bot = job_data.get("components_bot", [])
         eda = job_data.get("eda_data")
         packages = eda.packages if eda else []
+        user_symbols: dict = job_data.get("user_symbols") or {}
 
         ind_2s_parts = get_managed_part_names("inductors_2s_list")
         ind_size_map = get_part_size_map("inductors_2s_list")
@@ -72,7 +73,8 @@ class CKL02009(ChecklistRule):
 
             for conn in connectors:
                 overlaps = find_pad_overlapping_components(
-                    conn, opp_general_ind, packages
+                    conn, opp_general_ind, packages,
+                    user_symbols=user_symbols,
                 )
                 filtered = filter_by_size(overlaps, 2012, size_maps, packages)
 
@@ -114,6 +116,7 @@ class CKL02009(ChecklistRule):
                         layer_name=conn_layer,
                         primary_label="Connector",
                         overlap_label="General Inductor",
+                        user_symbols=user_symbols,
                     )
                     images.append({"path": img_path,
                                    "title": f"{conn.comp_name} ({conn_layer}) – Connector",
@@ -141,6 +144,7 @@ class CKL02009(ChecklistRule):
                     sc, opp_general_ind, packages,
                     is_bottom_primary=sc_is_bottom,
                     is_bottom_candidates=ind_is_bottom,
+                    user_symbols=user_symbols,
                 )
                 filtered = filter_by_size(overlaps, 2012, size_maps, packages)
 
@@ -173,6 +177,7 @@ class CKL02009(ChecklistRule):
                         overlap_label="General Inductor",
                         primary_is_bottom=sc_is_bottom,
                         overlap_is_bottom=ind_is_bottom,
+                        user_symbols=user_symbols,
                     )
                     images.append({"path": img_path,
                                    "title": f"{sc.comp_name} ({sc_layer}) – Shield Can",

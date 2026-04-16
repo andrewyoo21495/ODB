@@ -39,6 +39,7 @@ class CKL02003(ChecklistRule):
         components_bot = job_data.get("components_bot", [])
         eda = job_data.get("eda_data")
         packages = eda.packages if eda else []
+        user_symbols: dict = job_data.get("user_symbols") or {}
 
         managed_41 = get_managed_part_names("capacitors_41_list")
 
@@ -71,6 +72,7 @@ class CKL02003(ChecklistRule):
                     sc, opp_managed_caps, packages,
                     is_bottom_primary=sc_is_bottom,
                     is_bottom_candidates=opp_is_bottom,
+                    user_symbols=user_symbols,
                 )
                 if not overlaps:
                     continue
@@ -125,6 +127,7 @@ class CKL02003(ChecklistRule):
                         overlap_label="Managed cap",
                         primary_is_bottom=sc_is_bottom,
                         overlap_is_bottom=opp_is_bottom,
+                        user_symbols=user_symbols,
                     )
                     images.append({
                         "path": img_path,
