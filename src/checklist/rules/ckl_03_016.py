@@ -37,6 +37,7 @@ class CKL03016(ChecklistRule):
         components_bot = job_data.get("components_bot", [])
         eda = job_data.get("eda_data")
         packages = eda.packages if eda else []
+        user_symbols: dict = job_data.get("user_symbols") or {}
 
         columns = ["comp", "cmp_layer", "overlapping_cmp", "part_name", "status"]
         rows: list[dict] = []
@@ -108,6 +109,7 @@ class CKL03016(ChecklistRule):
                         primary_label="OSC",
                         primary_is_bottom=osc_is_bottom,
                         overlap_is_bottom=opp_is_bottom,
+                        user_symbols=user_symbols,
                     )
                     images.append({"path": img_path,
                                    "title": f"{osc.comp_name} ({osc_layer})",

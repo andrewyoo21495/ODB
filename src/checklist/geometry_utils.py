@@ -1526,6 +1526,33 @@ def pad_distance_to_component(comp: Component, other: Component,
     return pad_geom.distance(fp_other)
 
 
+def pad_to_pad_distance(
+    comp_a: Component, comp_b: Component,
+    packages: list[Package],
+    *,
+    is_bottom_a: bool = False,
+    is_bottom_b: bool = False,
+    user_symbols: dict | None = None,
+) -> float:
+    """Return the minimum distance between *comp_a*'s pads and *comp_b*'s pads.
+
+    Uses FID-resolved toeprint geometry (UserSymbol-aware) for both components.
+    Falls back to ``edge_distance`` when pad geometry is unavailable.
+    """
+    if not _HAS_SHAPELY:
+        return edge_distance(comp_a, comp_b, packages)
+
+    pad_a = _get_pad_union(comp_a, packages, is_bottom=is_bottom_a,
+                           user_symbols=user_symbols)
+    pad_b = _get_pad_union(comp_b, packages, is_bottom=is_bottom_b,
+                           user_symbols=user_symbols)
+
+    if pad_a is None or pad_b is None:
+        return edge_distance(comp_a, comp_b, packages)
+
+    return pad_a.distance(pad_b)
+
+
 def components_in_clearance_zone(
     components: Sequence[Component],
     board_poly,

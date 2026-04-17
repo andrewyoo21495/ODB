@@ -17,8 +17,8 @@ from src.checklist.component_classifier import (
 )
 from src.checklist.engine import register_rule
 from src.checklist.geometry_utils import (
-    edge_distance,
     find_overlapping_components,
+    pad_to_pad_distance,
 )
 from src.checklist.reference_loader import get_managed_part_names
 from src.checklist.rule_base import ChecklistRule
@@ -43,6 +43,7 @@ class CKL02001(ChecklistRule):
         components_bot = job_data.get("components_bot", [])
         eda = job_data.get("eda_data")
         packages = eda.packages if eda else []
+        user_symbols: dict = job_data.get("user_symbols") or {}
 
         managed_parts = get_managed_part_names("capacitors_10_list")
 
@@ -58,6 +59,9 @@ class CKL02001(ChecklistRule):
             (components_top, "Top", components_bot),
             (components_bot, "Bottom", components_top),
         ]:
+            cap_is_bottom = (cap_layer == "Bottom")
+            opp_is_bottom = not cap_is_bottom
+
             # Filter to managed capacitors
             managed_caps = [
                 c for c in caps_layer_comps
@@ -80,13 +84,23 @@ class CKL02001(ChecklistRule):
             opp_type_map = {id(c): t for c, t in opp_targets}
 
             for cap in managed_caps:
+                # Use footprint overlap to find spatially nearby candidates first
                 overlaps = find_overlapping_components(
-                    cap, opp_all, packages
+                    cap, opp_all, packages,
+                    is_bottom_primary=cap_is_bottom,
+                    is_bottom_candidates=opp_is_bottom,
                 )
                 overlap_items: list[dict] = []
                 if overlaps:
                     for opp in overlaps:
-                        dist = edge_distance(cap, opp, packages)
+                        # Measure actual pad-to-pad distance (not footprint distance,
+                        # which returns 0 when SC footprint covers the cap area)
+                        dist = pad_to_pad_distance(
+                            cap, opp, packages,
+                            is_bottom_a=cap_is_bottom,
+                            is_bottom_b=opp_is_bottom,
+                            user_symbols=user_symbols,
+                        )
                         dist_str = f"{dist:.3f}" if dist < float("inf") else "N/A"
                         status = "PASS" if dist >= _MIN_DISTANCE_MM else "FAIL"
                         opp_type = opp_type_map.get(id(opp), "Unknown")
@@ -125,6 +139,9 @@ class CKL02001(ChecklistRule):
                         layer_name=cap_layer,
                         primary_label="Capacitor",
                         overlap_label="Opp. Component",
+                        primary_is_bottom=cap_is_bottom,
+                        overlap_is_bottom=opp_is_bottom,
+                        user_symbols=user_symbols,
                     )
                     images.append({"path": img_path,
                                    "title": f"{cap.comp_name} ({cap_layer})",
