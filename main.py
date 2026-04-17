@@ -1033,6 +1033,35 @@ def cmd_view_comp(args):
 
 
 
+def cmd_view_net(args):
+    """Launch the signal-layer net visualizer."""
+    import matplotlib
+    matplotlib.use("TkAgg")
+
+    cache_dir = Path(getattr(args, "cache_dir", None) or "cache")
+    cache_name = _ensure_cache(args.odb_path, cache_dir)
+    data = _load_from_cache(cache_dir, cache_name)
+
+    from src.visualizer.viewer import NetViewer
+    from src.visualizer.net_filter import get_signal_layers
+
+    signal_layers = get_signal_layers(data.get("layers_data", {}))
+    if not signal_layers:
+        print("No SIGNAL layers found in cache.")
+        return
+
+    print(f"\nLaunching net viewer ({len(signal_layers)} signal layers)...")
+
+    viewer = NetViewer(
+        profile=data.get("profile"),
+        layers_data=data.get("layers_data", {}),
+        eda_data=data.get("eda_data"),
+        user_symbols=data.get("user_symbols", {}),
+        font=data.get("font"),
+    )
+    viewer.show()
+
+
 def cmd_check(args):
     """Run the automated checklist."""
     # Import rules to trigger registration
@@ -1239,6 +1268,11 @@ def main():
     p_view_comp.add_argument("odb_path", help="Path to ODB++ archive or directory")
     p_view_comp.add_argument("--cache-dir", default="cache", help="Cache directory")
 
+    # view-net command
+    p_view_net = subparsers.add_parser("view-net", help="Launch signal-layer net viewer")
+    p_view_net.add_argument("odb_path", help="Path to ODB++ archive or directory")
+    p_view_net.add_argument("--cache-dir", default="cache", help="Cache directory")
+
     # check command
     p_check = subparsers.add_parser("check", help="Run design checklist")
     p_check.add_argument("odb_path", help="Path to ODB++ archive or directory")
@@ -1270,6 +1304,8 @@ def main():
         cmd_view(args)
     elif args.command == "view-comp":
         cmd_view_comp(args)
+    elif args.command == "view-net":
+        cmd_view_net(args)
     elif args.command == "check":
         cmd_check(args)
     elif args.command == "copper":

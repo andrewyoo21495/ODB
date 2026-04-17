@@ -1714,3 +1714,340 @@ class CopperCalculateViewer:
 
         if self._root:
             self._root.after(0, _update)
+
+
+# ===========================================================================
+# Net Viewer
+# ===========================================================================
+
+class NetViewer:
+    """Signal-layer net visualizer.
+
+    Left panel (top → bottom):
+      - Signal Layer Selection : Listbox (single-select, SIGNAL layers only)
+      - Net Search             : Entry widget for filtering net names
+      - Net Selection          : Listbox (multi-select, scrollable)
+      - Selection buttons      : Select All / Deselect All / Invert
+      - Update Visualization   : button
+      - Info                   : selected layer / net count summary
+
+    Right panel: matplotlib canvas.
+
+    Interaction:
+      1. Select a signal layer  → net list is rebuilt for that layer.
+      2. Filter nets via search → net list filters in real-time.
+      3. Select nets and click "Update Visualization" → renders filtered features.
+    """
+
+    def __init__(self,
+                 profile: Profile,
+                 layers_data: dict[str, tuple[LayerFeatures, MatrixLayer]],
+                 eda_data: EdaData,
+                 user_symbols: dict[str, UserSymbol] = None,
+                 font: StrokeFont = None):
+        self.profile      = profile
+        self.layers_data  = layers_data
+        self.eda_data     = eda_data
+        self.user_symbols = user_symbols or {}
+        self.font         = font
+
+        from src.visualizer.net_filter import (
+            build_net_feature_index, get_signal_layers,
+        )
+        self._net_index   = build_net_feature_index(eda_data, layers_data)
+        self._signal_layers: list[str] = get_signal_layers(layers_data)
+
+        # All net names for the currently selected layer
+        self._layer_nets: list[str] = []
+        # Net names currently shown in the listbox (after search filter)
+        self._visible_nets: list[str] = []
+
+        self._selected_layer: Optional[str] = None
+        self._info_var: Optional[tk.StringVar] = None
+        self._net_lb: Optional[tk.Listbox] = None
+        self._search_var: Optional[tk.StringVar] = None
+        self._root: Optional[tk.Tk] = None
+
+    # ------------------------------------------------------------------
+    # Public entry point
+    # ------------------------------------------------------------------
+
+    def show(self, figsize: tuple[float, float] = (14, 9)):
+        root = tk.Tk()
+        self._root = root
+        root.title("ODB++ Net Viewer")
+        root.configure(bg=_BG)
+        try:
+            root.state("zoomed")
+        except tk.TclError:
+            pass
+
+        # ---- Left panel ---------------------------------------------------
+        left = tk.Frame(root, bg=_BG, width=240)
+        left.pack(side=tk.LEFT, fill=tk.Y, padx=(6, 3), pady=6)
+        left.pack_propagate(False)
+
+        # Signal layer selection (single-select)
+        _section_label(left, "Signal Layer").pack(anchor="w", pady=(4, 4))
+        lb_layer_frame, self._layer_lb = _make_listbox(
+            left, height=6, selectmode=tk.SINGLE,
+        )
+        lb_layer_frame.pack(fill=tk.X, pady=(0, 4))
+        for name in self._signal_layers:
+            self._layer_lb.insert(tk.END, name)
+        self._layer_lb.bind("<<ListboxSelect>>", self._on_layer_select)
+
+        _divider(left).pack(fill=tk.X, pady=(0, 4))
+
+        # Net search
+        _section_label(left, "Net Selection").pack(anchor="w", pady=(0, 2))
+        self._search_var = tk.StringVar()
+        self._search_var.trace_add("write", self._on_search_change)
+        search_entry = tk.Entry(
+            left,
+            textvariable=self._search_var,
+            bg=_BG2, fg=_FG,
+            insertbackground=_FG,
+            relief=tk.FLAT,
+            font=_FONT,
+            highlightbackground="#cccccc",
+            highlightthickness=1,
+        )
+        search_entry.pack(fill=tk.X, padx=2, pady=(0, 4))
+
+        # Net listbox (multi-select, expands to fill space)
+        lb_net_frame, self._net_lb = _make_listbox(left, height=12)
+        lb_net_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 4))
+
+        # Selection control buttons
+        btn_frame = tk.Frame(left, bg=_BG)
+        btn_frame.pack(fill=tk.X, pady=(0, 6))
+        for label, cmd in [
+            ("Select All",   self._select_all),
+            ("Deselect All", self._deselect_all),
+            ("Invert",       self._invert_selection),
+        ]:
+            tk.Button(
+                btn_frame, text=label,
+                bg="#e0e0e0", fg="#1a1a1a",
+                activebackground="#c8c8c8", activeforeground="#1a1a1a",
+                font=("Segoe UI", 9),
+                relief=tk.FLAT, cursor="hand2",
+                command=cmd,
+            ).pack(fill=tk.X, pady=1, padx=2)
+
+        # Update button
+        tk.Button(
+            left, text="Update Visualization",
+            bg="#1a73e8", fg="#ffffff",
+            activebackground="#1557b0", activeforeground="#ffffff",
+            font=("Segoe UI", 10, "bold"),
+            relief=tk.FLAT, cursor="hand2",
+            command=self._on_update,
+        ).pack(fill=tk.X, pady=(0, 8), padx=2)
+
+        # Info text
+        _divider(left).pack(fill=tk.X, pady=(0, 4))
+        _section_label(left, "Info").pack(anchor="w", pady=(0, 4))
+        self._info_var = tk.StringVar(value="Select a layer to begin.")
+        tk.Label(
+            left,
+            textvariable=self._info_var,
+            bg=_BG, fg="#333333",
+            font=("Segoe UI", 9),
+            anchor="w",
+            justify=tk.LEFT,
+            wraplength=220,
+        ).pack(fill=tk.X, padx=4)
+
+        # ---- Right panel (matplotlib canvas) ------------------------------
+        right = tk.Frame(root, bg="white")
+        right.pack(side=tk.LEFT, fill=tk.BOTH, expand=True,
+                   padx=(3, 6), pady=6)
+
+        self.fig = Figure(figsize=figsize, facecolor="white")
+        self.ax  = self.fig.add_axes([0.07, 0.07, 0.90, 0.88])
+        _style_axes(self.ax)
+
+        self.canvas = FigureCanvasTkAgg(self.fig, master=right)
+        toolbar = NavigationToolbar2Tk(self.canvas, right)
+        toolbar.update()
+        self.canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+
+        self._draw_board_only()
+
+        root.mainloop()
+
+    # ------------------------------------------------------------------
+    # Layer selection
+    # ------------------------------------------------------------------
+
+    def _on_layer_select(self, _event=None):
+        sel = self._layer_lb.curselection()
+        if not sel:
+            return
+        self._selected_layer = self._signal_layers[sel[0]]
+        self._rebuild_net_list()
+        self._draw_board_only()
+
+    def _rebuild_net_list(self):
+        from src.visualizer.net_filter import get_nets_for_layer
+        if self._selected_layer is None:
+            return
+        self._layer_nets = get_nets_for_layer(
+            self._selected_layer, self._net_index
+        )
+        self._apply_search_filter()
+
+    # ------------------------------------------------------------------
+    # Net search
+    # ------------------------------------------------------------------
+
+    def _on_search_change(self, *_):
+        self._apply_search_filter()
+
+    def _apply_search_filter(self):
+        query = (self._search_var.get() if self._search_var else "").strip().lower()
+        if query:
+            self._visible_nets = [n for n in self._layer_nets if query in n.lower()]
+        else:
+            self._visible_nets = list(self._layer_nets)
+
+        self._net_lb.delete(0, tk.END)
+        for name in self._visible_nets:
+            self._net_lb.insert(tk.END, name)
+
+        total = len(self._layer_nets)
+        shown = len(self._visible_nets)
+        layer = self._selected_layer or "—"
+        if query:
+            self._info_var.set(
+                f"Layer: {layer}\nNets: {shown}/{total} shown"
+            )
+        else:
+            self._info_var.set(
+                f"Layer: {layer}\nNets: {total} total"
+            )
+
+    # ------------------------------------------------------------------
+    # Selection helpers
+    # ------------------------------------------------------------------
+
+    def _select_all(self):
+        self._net_lb.selection_set(0, tk.END)
+
+    def _deselect_all(self):
+        self._net_lb.selection_clear(0, tk.END)
+
+    def _invert_selection(self):
+        for i in range(self._net_lb.size()):
+            if self._net_lb.selection_includes(i):
+                self._net_lb.selection_clear(i)
+            else:
+                self._net_lb.selection_set(i)
+
+    # ------------------------------------------------------------------
+    # Update / render
+    # ------------------------------------------------------------------
+
+    def _on_update(self):
+        if self._selected_layer is None:
+            self._info_var.set("Please select a signal layer first.")
+            return
+
+        selected_indices = self._net_lb.curselection()
+        selected_nets = [self._visible_nets[i] for i in selected_indices]
+
+        if not selected_nets:
+            self._info_var.set("No nets selected.")
+            self._draw_board_only()
+            return
+
+        # Union of feature indices for all selected nets on this layer
+        from src.visualizer.net_filter import filter_layer_features
+        allowed: set[int] = set()
+        for net_name in selected_nets:
+            layer_map = self._net_index.get(net_name, {})
+            allowed |= layer_map.get(self._selected_layer, set())
+
+        layer_features, matrix_layer = self.layers_data[self._selected_layer]
+        filtered = filter_layer_features(layer_features, allowed)
+        flip = is_bottom_layer(self._selected_layer)
+
+        self.ax.clear()
+        _style_axes(self.ax)
+        if self.profile and self.profile.surface:
+            _draw_profile(self.ax, self.profile)
+
+        # Background: full layer at low opacity
+        color = LAYER_COLORS.get(matrix_layer.type, "#008E5C")
+        render_layer(
+            self.ax, layer_features,
+            color=color,
+            layer_type=matrix_layer.type,
+            alpha=0.25,
+            user_symbols=self.user_symbols,
+            font=self.font,
+            flip_x=flip,
+        )
+
+        # Foreground: selected net features in red
+        render_layer(
+            self.ax, filtered,
+            color="#FF4444",
+            layer_type=matrix_layer.type,
+            alpha=0.95,
+            user_symbols=self.user_symbols,
+            font=self.font,
+            flip_x=flip,
+        )
+
+        self.ax.set_xlabel("X", color="#000000")
+        self.ax.set_ylabel("Y", color="#000000")
+        self.ax.set_title(
+            f"Layer: {self._selected_layer}  |  "
+            f"{len(selected_nets)} net(s)  |  {len(filtered.features)} feature(s)",
+            color="#000000",
+        )
+        self.ax.grid(False)
+        self.ax.set_aspect("equal")
+        self.canvas.draw()
+
+        self._info_var.set(
+            f"Layer: {self._selected_layer}\n"
+            f"Selected nets: {len(selected_nets)}\n"
+            f"Features shown: {len(filtered.features)}"
+        )
+
+    # ------------------------------------------------------------------
+    # Board-only draw
+    # ------------------------------------------------------------------
+
+    def _draw_board_only(self):
+        self.ax.clear()
+        _style_axes(self.ax)
+        if self.profile and self.profile.surface:
+            _draw_profile(self.ax, self.profile)
+
+        layer = self._selected_layer or ""
+        if layer and layer in self.layers_data:
+            _, matrix_layer = self.layers_data[layer]
+            color = LAYER_COLORS.get(matrix_layer.type, "#008E5C")
+            layer_features, _ = self.layers_data[layer]
+            render_layer(
+                self.ax, layer_features,
+                color=color,
+                layer_type=matrix_layer.type,
+                alpha=0.4,
+                user_symbols=self.user_symbols,
+                font=self.font,
+                flip_x=is_bottom_layer(layer),
+            )
+
+        self.ax.set_xlabel("X", color="#000000")
+        self.ax.set_ylabel("Y", color="#000000")
+        title = f"Layer: {layer}" if layer else "Select a layer"
+        self.ax.set_title(title, color="#000000")
+        self.ax.grid(False)
+        self.ax.set_aspect("equal")
+        self.canvas.draw()
