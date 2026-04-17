@@ -185,7 +185,8 @@ def render_overlap_image(
         fill_color = "#90EE90" if is_pass else "#FFB0B0"
         edge_color = "darkgreen" if is_pass else "darkred"
 
-        comp_pad_geom = _get_pad_union(comp, packages, is_bottom=overlap_is_bottom)
+        comp_pad_geom = _get_pad_union(comp, packages, is_bottom=overlap_is_bottom,
+                                       user_symbols=user_symbols)
         comp_fp = _resolve_footprint(comp, packages, is_bottom=overlap_is_bottom)
         draw_geom = comp_pad_geom or comp_fp
 
