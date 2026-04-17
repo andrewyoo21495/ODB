@@ -13,8 +13,8 @@ from pathlib import Path
 from src.checklist.component_classifier import find_leds, find_rf_components
 from src.checklist.engine import register_rule
 from src.checklist.geometry_utils import (
-    edge_distance,
     find_overlapping_components,
+    pad_to_pad_distance,
 )
 from src.checklist.reference_loader import get_managed_part_names
 from src.checklist.rule_base import ChecklistRule
@@ -42,6 +42,7 @@ class CKL02004(ChecklistRule):
         packages = eda.packages if eda else []
 
         managed_41 = get_managed_part_names("capacitors_41_list")
+        user_symbols: dict = job_data.get("user_symbols") or {}
 
         columns = [
             "comp", "cmp_layer", "overlapping_cmp", "part_name",
@@ -55,6 +56,8 @@ class CKL02004(ChecklistRule):
             (components_top, "Top", components_bot),
             (components_bot, "Bottom", components_top),
         ]:
+            primary_is_bottom = (layer == "Bottom")
+            overlap_is_bottom = not primary_is_bottom
             leds = find_leds(layer_comps)
             rfs = find_rf_components(layer_comps)
 
@@ -93,6 +96,9 @@ class CKL02004(ChecklistRule):
                         layer_name=layer,
                         primary_label="LED Flash",
                         overlap_label="Managed cap",
+                        primary_is_bottom=primary_is_bottom,
+                        overlap_is_bottom=overlap_is_bottom,
+                        user_symbols=user_symbols,
                     )
                     images.append({"path": img_path,
                                    "title": f"{led.comp_name} ({layer})",
@@ -105,7 +111,12 @@ class CKL02004(ChecklistRule):
                 )
                 overlap_items_rf: list[dict] = []
                 for cap in overlaps:
-                    dist = edge_distance(rf, cap, packages)
+                    dist = pad_to_pad_distance(
+                        rf, cap, packages,
+                        is_bottom_a=primary_is_bottom,
+                        is_bottom_b=overlap_is_bottom,
+                        user_symbols=user_symbols,
+                    )
                     dist_str = f"{dist:.3f}" if dist < float("inf") else "0.000"
                     status = "FAIL" if dist < _MIN_DISTANCE_MM else "PASS"
                     rows.append({
@@ -132,6 +143,9 @@ class CKL02004(ChecklistRule):
                         layer_name=layer,
                         primary_label="RF",
                         overlap_label="Managed cap",
+                        primary_is_bottom=primary_is_bottom,
+                        overlap_is_bottom=overlap_is_bottom,
+                        user_symbols=user_symbols,
                     )
                     images.append({"path": img_path,
                                    "title": f"{rf.comp_name} ({layer})",
