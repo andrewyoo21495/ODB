@@ -35,7 +35,7 @@ from src.models import (
     StrokeFont, UserSymbol,
 )
 from src.visualizer.symbol_renderer import symbol_to_patch, user_symbol_to_patches
-from src.visualizer.layer_renderer import LAYER_COLORS, render_layer
+from src.visualizer.layer_renderer import LAYER_COLORS, render_layer, is_bottom_layer
 from src.visualizer.component_overlay import draw_components
 from src.visualizer.renderer import _draw_profile
 from src.visualizer import copper_utils
@@ -351,7 +351,8 @@ class PcbViewer:
             render_layer(self.ax, features, color=color,
                          layer_type=matrix_layer.type,
                          alpha=0.7, user_symbols=self.user_symbols,
-                         font=self.font)
+                         font=self.font,
+                         flip_x=is_bottom_layer(layer_name))
 
         packages = self.eda_data.packages if self.eda_data else None
         if COMP_TOP_KEY in self._visible_set and self.components_top:
@@ -1250,7 +1251,8 @@ class CopperRatioViewer:
             render_layer(self.ax, features, color=color,
                          layer_type=matrix_layer.type,
                          alpha=0.85, user_symbols=self.user_symbols,
-                         font=self.font)
+                         font=self.font,
+                         flip_x=is_bottom_layer(self._selected_layer))
 
         if self._subsection_ratios is not None:
             self._draw_subsection_overlay()
