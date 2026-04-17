@@ -862,14 +862,30 @@ def find_outermost_pad_overlapping_components(
 # ---------------------------------------------------------------------------
 
 def _mm_scale(units: str, unit_override: str | None) -> float:
-    """Return the scale factor that converts symbol params to MM."""
-    effective = unit_override if unit_override else units
-    return 25.4 if effective in ("INCH", "I") else 1.0
+    """Return the scale factor that converts symbol params to MM.
+
+    ODB++ standard symbol name numbers are encoded in the *sub-unit* of the
+    file's declared unit:
+      - INCH files → mils  (×0.0254 to get mm)
+      - MM   files → microns (×0.001 to get mm)
+    unit_override "I" / "M" overrides the file-level unit.
+    Matches symbol_renderer._get_scale_factor().
+    """
+    if unit_override == "I":
+        return 0.0254    # mils → mm
+    if unit_override == "M":
+        return 0.001     # microns → mm
+    if units == "INCH":
+        return 0.0254    # mils → mm
+    return 0.001         # microns → mm
 
 
 def _rot_pts(pts: np.ndarray, cx: float, cy: float, angle_deg: float) -> np.ndarray:
-    """Rotate *pts* (N×2) CCW by *angle_deg* around (cx, cy)."""
-    a = math.radians(angle_deg)
+    """Rotate *pts* (N×2) clockwise by *angle_deg* around (cx, cy).
+
+    Matches symbol_renderer._rotate_points() convention (CW for positive angle).
+    """
+    a = math.radians(-angle_deg)   # negative → CW in standard math coords
     cos_a, sin_a = math.cos(a), math.sin(a)
     shifted = pts - np.array([cx, cy])
     rotated = np.column_stack([
@@ -1024,12 +1040,15 @@ def _user_symbol_to_shapely(symbol: UserSymbol, x: float, y: float,
     sym_lookup = {s.index: s for s in symbol.symbols}
 
     def _local_to_board(pts: np.ndarray) -> np.ndarray:
-        """Apply mirror → rotate → translate to symbol-local points."""
+        """Apply mirror → rotate (CW) → translate to symbol-local points.
+
+        Matches symbol_renderer._user_local_to_board() convention.
+        """
         out = np.asarray(pts, dtype=float).copy()
         if mirror:
             out[:, 0] = -out[:, 0]
         if rotation:
-            a = math.radians(rotation)
+            a = math.radians(-rotation)   # negative → CW
             cos_a, sin_a = math.cos(a), math.sin(a)
             rotated = np.column_stack([
                 out[:, 0] * cos_a - out[:, 1] * sin_a,
