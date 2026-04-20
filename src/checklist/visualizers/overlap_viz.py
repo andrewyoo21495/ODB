@@ -170,12 +170,21 @@ def render_overlap_image(
         for wall in inner_walls:
             geoms = list(wall.geoms) if hasattr(wall, "geoms") else [wall]
             for g in geoms:
-                coords = list(g.coords)
-                xs = [c[0] for c in coords]
-                ys = [c[1] for c in coords]
-                ax.plot(xs, ys, color="#CCFF00", linewidth=4, zorder=5,
-                        solid_capstyle="round",
-                        label="Inner wall" if first else None)
+                lbl = "Inner wall" if first else None
+                if hasattr(g, "exterior"):
+                    # Polygon — draw filled + outlined
+                    xs, ys = g.exterior.xy
+                    ax.fill(xs, ys, color="#CCFF00", alpha=0.6, zorder=5,
+                            label=lbl)
+                    ax.plot(xs, ys, color="#AADD00", linewidth=1.5,
+                            zorder=5)
+                else:
+                    # LineString fallback
+                    coords = list(g.coords)
+                    xs = [c[0] for c in coords]
+                    ys = [c[1] for c in coords]
+                    ax.plot(xs, ys, color="#CCFF00", linewidth=4,
+                            solid_capstyle="round", zorder=5, label=lbl)
                 first = False
 
     # --- draw context components (dimmed) -----------------------------------
