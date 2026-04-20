@@ -123,7 +123,7 @@ class CKL02006(ChecklistRule):
                         "detail": ", ".join(detail_parts),
                     })
 
-                if overlap_items:
+                if overlap_items and any(i["status"] == "FAIL" for i in overlap_items):
                     safe = conn.comp_name.replace("/", "_")
                     img_path = image_dir / f"{safe}_{ref_layer}.png"
                     render_overlap_image(
@@ -187,7 +187,7 @@ class CKL02006(ChecklistRule):
                         "detail": ", ".join(detail_parts),
                     })
 
-                if overlap_items:
+                if overlap_items and any(i["status"] == "FAIL" for i in overlap_items):
                     safe = sc.comp_name.replace("/", "_")
                     img_path = image_dir / f"{safe}_{ref_layer}_sc.png"
                     render_overlap_image(

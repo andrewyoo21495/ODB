@@ -1,7 +1,11 @@
-"""CKL-02-007: Capacitors/inductors near shield can inner walls — clearance check.
+"""CKL-02-007: Shield Can inner wall detection and visualisation.
 
-All capacitors or inductors located near the inner walls of a Shield Can must
-be placed with a clearance of at least 0.3 mm from those inner walls.
+For each Shield Can component on Top and Bottom layers, detect inner wall
+segments (pads that lie inside the outer boundary) and render them in
+fluorescent yellow-green so their location can be verified visually.
+
+This is a debugging / verification step before the full clearance check
+against adjacent capacitors and inductors is enabled.
 """
 
 from __future__ import annotations
@@ -9,55 +13,20 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-from src.checklist.component_classifier import (
-    find_capacitors,
-    find_inductors,
-    find_shield_cans,
-)
+from src.checklist.component_classifier import find_shield_cans
 from src.checklist.engine import register_rule
-from src.checklist.geometry_utils import (
-    _get_pad_centers,
-    detect_inner_walls,
-    find_nearest_inner_wall,
-    is_near_inner_wall,
-)
+from src.checklist.geometry_utils import detect_inner_walls
 from src.checklist.rule_base import ChecklistRule
 from src.checklist.visualizers.overlap_viz import render_overlap_image
 from src.models import RuleResult
-
-_CLEARANCE_MM = 0.3   # FAIL threshold
-_DETECTION_MM = 0.5   # Search radius for "near inner wall" candidates
-
-
-def _min_dist_to_walls(
-    comp,
-    packages,
-    inner_walls,
-    *,
-    is_bottom: bool = False,
-) -> float:
-    """Return the minimum distance (mm) from *comp* to any inner wall.
-
-    Tests both the component board centre and all pad centres so that the
-    reported distance reflects the closest point of the component footprint.
-    """
-    result = find_nearest_inner_wall((comp.x, comp.y), inner_walls)
-    min_dist = result[1] if result is not None else float("inf")
-
-    for px, py in _get_pad_centers(comp, packages, is_bottom=is_bottom):
-        r = find_nearest_inner_wall((px, py), inner_walls)
-        if r is not None:
-            min_dist = min(min_dist, r[1])
-
-    return min_dist
 
 
 @register_rule
 class CKL02007(ChecklistRule):
     rule_id = "CKL-02-007"
     description = (
-        "All capacitors or inductors near the inner walls of a Shield Can "
-        "must be placed with a clearance of at least 0.3 mm."
+        "Shield Can inner wall detection: verify that inner wall segments "
+        "are correctly identified (fluorescent highlight in result images)"
     )
     category = "Placement"
 
@@ -67,10 +36,7 @@ class CKL02007(ChecklistRule):
         eda = job_data.get("eda_data")
         packages = eda.packages if eda else []
 
-        columns = [
-            "comp", "cmp_layer", "neighbor_cmp", "part_name",
-            "distance", "status",
-        ]
+        columns = ["comp", "cmp_layer", "inner_wall_count", "status"]
         rows: list[dict] = []
         images: list[dict] = []
         image_dir = Path(tempfile.mkdtemp(prefix="ckl_02_007_"))
@@ -80,95 +46,59 @@ class CKL02007(ChecklistRule):
             (components_bot, "Bottom"),
         ]:
             sc_is_bottom = sc_layer == "Bottom"
-
             shield_cans = find_shield_cans(sc_comps)
             if not shield_cans:
-                continue
-
-            # Capacitors and inductors on the same layer as the shield can
-            candidates = find_capacitors(sc_comps) + find_inductors(sc_comps)
-            if not candidates:
                 continue
 
             for sc in shield_cans:
                 inner_walls = detect_inner_walls(
                     sc, packages, is_bottom=sc_is_bottom
                 )
+                wall_count = len(inner_walls)
+
+                rows.append({
+                    "comp": sc.comp_name,
+                    "cmp_layer": sc_layer,
+                    "inner_wall_count": wall_count,
+                    "status": "Found" if wall_count > 0 else "Not found",
+                })
+
                 if not inner_walls:
-                    continue  # Shield can has no inner walls — skip
+                    continue
 
-                overlap_items: list[dict] = []
+                safe = sc.comp_name.replace("/", "_")
+                img_path = image_dir / f"{safe}_{sc_layer}.png"
+                render_overlap_image(
+                    sc, packages, [], sc_comps, img_path,
+                    rule_id=self.rule_id,
+                    title="Inner wall detection",
+                    layer_name=sc_layer,
+                    primary_label="Shield Can",
+                    overlap_label="",
+                    primary_is_bottom=sc_is_bottom,
+                    overlap_is_bottom=sc_is_bottom,
+                    inner_walls=inner_walls,
+                )
+                images.append({
+                    "path": img_path,
+                    "title": f"{sc.comp_name} ({sc_layer}) — {wall_count} inner wall(s)",
+                    "width": 500,
+                })
 
-                for comp in candidates:
-                    if not is_near_inner_wall(
-                        comp,
-                        sc,
-                        packages,
-                        distance_threshold=_DETECTION_MM,
-                        comp_is_bottom=sc_is_bottom,
-                        sc_is_bottom=sc_is_bottom,
-                        inner_walls=inner_walls,
-                    ):
-                        continue
-
-                    dist = _min_dist_to_walls(
-                        comp, packages, inner_walls, is_bottom=sc_is_bottom
-                    )
-                    status = "FAIL" if dist < _CLEARANCE_MM else "PASS"
-                    rows.append({
-                        "comp": sc.comp_name,
-                        "cmp_layer": sc_layer,
-                        "neighbor_cmp": comp.comp_name,
-                        "part_name": comp.part_name or "",
-                        "distance": round(dist, 4),
-                        "status": status,
-                    })
-                    overlap_items.append({
-                        "comp": comp,
-                        "status": status,
-                        "detail": f"{dist:.3f} mm",
-                        "distance": round(dist, 4),
-                        "min_distance": _CLEARANCE_MM,
-                    })
-
-                if overlap_items:
-                    safe = sc.comp_name.replace("/", "_")
-                    img_path = image_dir / f"{safe}_{sc_layer}.png"
-                    render_overlap_image(
-                        sc, packages, overlap_items, sc_comps, img_path,
-                        rule_id=self.rule_id,
-                        title="Inner wall clearance",
-                        layer_name=sc_layer,
-                        primary_label="Shield Can",
-                        overlap_label="Cap/Inductor",
-                        primary_is_bottom=sc_is_bottom,
-                        overlap_is_bottom=sc_is_bottom,
-                        inner_walls=inner_walls,
-                    )
-                    images.append({
-                        "path": img_path,
-                        "title": f"{sc.comp_name} ({sc_layer})",
-                        "width": 500,
-                    })
-
-        fail_count = sum(1 for r in rows if r["status"] == "FAIL")
-        passed = fail_count == 0
+        found_count = sum(1 for r in rows if r["status"] == "Found")
 
         return RuleResult(
             rule_id=self.rule_id,
             description=self.description,
             category=self.category,
-            passed=passed,
+            passed=True,
             message=(
-                f"{fail_count} capacitor(s)/inductor(s) placed within "
-                f"{_CLEARANCE_MM} mm of a shield can inner wall."
-                if not passed
-                else "All capacitors and inductors near shield can inner walls "
-                "meet the 0.3 mm clearance requirement."
+                f"{found_count} shield can(s) with inner walls detected "
+                f"(out of {len(rows)} total). See images for verification."
+                if rows
+                else "No Shield Can components found."
             ),
-            affected_components=[
-                r["neighbor_cmp"] for r in rows if r["status"] == "FAIL"
-            ],
+            affected_components=[],
             details={"columns": columns, "rows": rows},
             images=images,
             recommended=True,

@@ -114,8 +114,8 @@ class CKL02003(ChecklistRule):
                         "detail": ", ".join(detail_parts),
                     })
 
-                # Generate visualisation image for this shield can
-                if overlap_items:
+                # Generate image only when at least one item is FAIL
+                if overlap_items and any(i["status"] == "FAIL" for i in overlap_items):
                     safe_name = sc.comp_name.replace("/", "_")
                     img_path = image_dir / f"{safe_name}_{sc_layer}.png"
                     render_overlap_image(
