@@ -38,6 +38,7 @@ class CKL02002(ChecklistRule):
         components_bot = job_data.get("components_bot", [])
         eda = job_data.get("eda_data")
         packages = eda.packages if eda else []
+        user_symbols: dict = job_data.get("user_symbols") or {}
 
         managed_41 = get_managed_part_names("capacitors_41_list")
 
@@ -53,6 +54,9 @@ class CKL02002(ChecklistRule):
             (components_top, "Top", components_bot),
             (components_bot, "Bottom", components_top),
         ]:
+            conn_is_bottom = (conn_layer == "Bottom")
+            cap_is_bottom = not conn_is_bottom
+
             connectors = find_connectors(conn_comps)
             # Filter opposite-side capacitors to managed 41 types
             opp_managed_caps = [
@@ -64,11 +68,15 @@ class CKL02002(ChecklistRule):
 
             for conn in connectors:
                 overlaps = find_pad_overlapping_components(
-                    conn, opp_managed_caps, packages
+                    conn, opp_managed_caps, packages,
+                    is_bottom_primary=conn_is_bottom,
+                    is_bottom_candidates=cap_is_bottom,
+                    user_symbols=user_symbols,
                 )
                 # Caps inside connector outline but not pad-overlapping
                 inside_caps = find_components_inside_outline(
-                    conn, opp_managed_caps, packages
+                    conn, opp_managed_caps, packages,
+                    is_bottom=conn_is_bottom,
                 )
                 inside_only = [
                     c for c in inside_caps
@@ -133,6 +141,9 @@ class CKL02002(ChecklistRule):
                         layer_name=conn_layer,
                         primary_label="Connector",
                         overlap_label="Managed cap",
+                        primary_is_bottom=conn_is_bottom,
+                        overlap_is_bottom=cap_is_bottom,
+                        user_symbols=user_symbols,
                     )
                     images.append({
                         "path": img_path,

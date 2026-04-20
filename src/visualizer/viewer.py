@@ -1994,7 +1994,7 @@ class NetViewer:
         # Foreground: selected net features in red
         render_layer(
             self.ax, filtered,
-            color="#FF4444",
+            color="#FF7E7E",
             layer_type=matrix_layer.type,
             alpha=0.95,
             user_symbols=self.user_symbols,
