@@ -2775,67 +2775,79 @@ def detect_inner_walls(
     packages: list[Package],
     *,
     is_bottom: bool = False,
-    min_aspect_ratio: float = 3.0,
-    axis_tolerance_deg: float = 20.0,
-    interior_margin: float = 0.5,
+    boundary_proximity: float = 0.5,
 ):
-    """Detect inner wall pads of a shield can.
+    """Detect inner-wall pads of a shield can.
 
-    A shield can's pads typically form an outer wall that traces the
-    perimeter of the can.  Some shield cans additionally contain *inner
-    walls* — elongated pads placed **inside** the outer-wall ring that form
-    internal dividers (L, T, cross, etc.).  This function identifies those
-    inner-wall pads.
+    Concept
+    -------
+    A shield-can package has a **single connected outline** (the body of
+    the can).  Its pads fall into two spatial groups:
 
-    A pin is classified as an inner wall when ALL of the following hold:
+    * **Outer wall** — pads that trace the perimeter of the outline.
+      Their outer edge coincides with (or sits immediately against) the
+      outline's exterior boundary, so ``pad.distance(outline.exterior) ≈ 0``.
+    * **Inner wall** — pads placed *inside* the outer ring, in the hollow
+      interior of the shield can.  They are separated from the outline's
+      exterior by a clear gap (typically several millimetres).
 
-    1. **Elongated**: bounding-box aspect ratio ≥ *min_aspect_ratio*.
-    2. **Axis-aligned**: the pad's major axis is within *axis_tolerance_deg*
-       of horizontal or vertical.  Diagonal pads (e.g. chamfered-corner
-       perimeter pads in some shield cans) are rejected.
-    3. **Strictly interior to the outer outline**:
-       a. ``outline.contains(pad_geom)`` — the pad's entire geometry lies
-          inside the shield-can outline (does not touch or cross the
-          boundary ring).  This alone excludes most outer-wall pads since
-          they sit on the boundary.
-       b. The centroid is at least *interior_margin* mm from the outline
-          edge.  This guards against cases where the outline is drawn with
-          a small slack around the pads and outer-wall pads happen to be
-          fully contained by it.
+    The separation gap is the sole distinguishing property and is used
+    directly here.  No aspect-ratio / orientation heuristics are applied:
+    a short square inner post is just as valid as a long internal bar, and
+    a long perimeter rail is still an outer-wall pad however elongated it
+    is.
+
+    Classification rule (applied per pin):
+
+    * The pad must be fully contained within the shield-can outline.
+    * The pad's nearest point to the outline's **exterior** must be at
+      least *boundary_proximity* mm away.
 
     Parameters
     ----------
     shield_can : Component
     packages : list[Package]
     is_bottom : bool
-    min_aspect_ratio : float
-        Bounding-box aspect ratio threshold.  Default 3.0.
-    axis_tolerance_deg : float
-        Maximum deviation (in degrees) of the pad's major axis from pure
-        horizontal or vertical.  Default 20°.
-    interior_margin : float
-        Minimum distance (mm) from the outline boundary that the pad
-        centroid must satisfy.  Default 0.5 mm.
+    boundary_proximity : float
+        Minimum distance (mm) between the pad and the outline's exterior
+        boundary for the pad to count as an inner wall.  Default 0.5 mm —
+        larger than the tolerance that outer-wall pads ever sit off the
+        exterior, smaller than the gap between the outer ring and any
+        internal divider structure.
 
     Returns
     -------
     list[Polygon]
-        Shapely Polygon objects for each detected inner wall pad.
+        Shapely Polygon objects for each detected inner-wall pad.
     """
     if not _HAS_SHAPELY:
         return []
 
     outline = _resolve_outline(shield_can, packages, is_bottom=is_bottom)
-    if outline is None:
+    if outline is None or outline.is_empty:
         return []
+
+    # Gather the OUTER exterior boundaries only (handles MultiPolygon and
+    # polygons-with-holes).  We care about the outer perimeter ring, not
+    # any interior hole boundaries.
+    exteriors = []
+    if hasattr(outline, "geoms"):
+        for g in outline.geoms:
+            if hasattr(g, "exterior"):
+                exteriors.append(g.exterior)
+    elif hasattr(outline, "exterior"):
+        exteriors.append(outline.exterior)
+    if not exteriors:
+        return []
+    exterior_union = (
+        exteriors[0] if len(exteriors) == 1 else unary_union(exteriors)
+    )
 
     if shield_can.pkg_ref < 0 or shield_can.pkg_ref >= len(packages):
         return []
     pkg = packages[shield_can.pkg_ref]
     if not pkg.pins:
         return []
-
-    boundary = outline.boundary
 
     inner_walls = []
     for pin in pkg.pins:
@@ -2847,42 +2859,14 @@ def detect_inner_walls(
         if pad_geom is None or pad_geom.is_empty:
             continue
 
-        # --- (1) aspect ratio filter ---
-        minx, miny, maxx, maxy = pad_geom.bounds
-        w, h = maxx - minx, maxy - miny
-        if w <= 1e-6 or h <= 1e-6:
-            continue
-        aspect = max(w, h) / min(w, h)
-        if aspect < min_aspect_ratio:
-            continue
-
-        # --- (2) orientation filter: horizontal or vertical only ---
-        try:
-            mrr = pad_geom.minimum_rotated_rectangle
-            coords = list(mrr.exterior.coords)
-            edge_a = (coords[1][0] - coords[0][0],
-                      coords[1][1] - coords[0][1])
-            edge_b = (coords[2][0] - coords[1][0],
-                      coords[2][1] - coords[1][1])
-            len_a = math.hypot(*edge_a)
-            len_b = math.hypot(*edge_b)
-            if len_a <= 0 or len_b <= 0:
-                continue
-            major = edge_a if len_a >= len_b else edge_b
-            angle = math.degrees(math.atan2(major[1], major[0])) % 180.0
-            # Distance from the nearest H/V axis (0°, 90°, 180°)
-            dev = min(angle, 180.0 - angle, abs(angle - 90.0))
-            if dev > axis_tolerance_deg:
-                continue
-        except Exception:
-            continue
-
-        # --- (3) strict interior filter ---
-        # (3a) entire pad geometry must be inside the outline
+        # Must be wholly within the shield-can outline.
         if not outline.contains(pad_geom):
             continue
-        # (3b) centroid must be clearly away from the boundary edge
-        if boundary.distance(pad_geom.centroid) < interior_margin:
+
+        # Must sit in the interior — separated from the outer perimeter
+        # by more than *boundary_proximity*.  Outer-wall pads have one
+        # edge on the outline.exterior, so their distance is ~0.
+        if pad_geom.distance(exterior_union) < boundary_proximity:
             continue
 
         inner_walls.append(pad_geom)
@@ -2950,7 +2934,6 @@ def is_near_inner_wall(
         inner_walls = detect_inner_walls(
             shield_can, packages,
             is_bottom=sc_is_bottom,
-            boundary_tolerance=boundary_tolerance,
         )
     if not inner_walls:
         return False
