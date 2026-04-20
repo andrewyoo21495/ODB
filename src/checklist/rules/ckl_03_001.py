@@ -214,7 +214,7 @@ class CKL03001(ChecklistRule):
                         "status": status,
                     })
 
-                # Generate via visualisation image
+                # Generate via visualisation image — only corner pins
                 img_path = image_dir / f"{safe}_{ic_layer}_via.png"
                 render_via_check_image(
                     mcp, pkg, via_positions, is_bottom, img_path,
@@ -222,6 +222,7 @@ class CKL03001(ChecklistRule):
                     comp_type="MCP IC",
                     fid_resolved=fid_resolved,
                     signal_layer_name=sig_name,
+                    pin_indices=corner_indices,
                 )
                 images.append({
                     "path": img_path,

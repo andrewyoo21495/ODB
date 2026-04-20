@@ -95,6 +95,7 @@ def render_overlap_image(
     primary_is_bottom: bool = False,
     overlap_is_bottom: bool = False,
     user_symbols: dict | None = None,
+    inner_walls: list | None = None,
 ) -> Path:
     """Render a single primary component with overlapping opposite-side parts.
 
@@ -120,6 +121,9 @@ def render_overlap_image(
     primary_label : str – Legend label for the primary component.
     overlap_label : str – Legend label for overlapping components.
     context_radius : float – Max distance for context components (mm).
+    inner_walls : list[LineString] | None
+        Optional inner wall line geometries (e.g. from detect_inner_walls).
+        Drawn in fluorescent yellow-green to make them stand out.
 
     Returns
     -------
@@ -159,6 +163,20 @@ def render_overlap_image(
     # Primary centre marker
     ax.plot(primary.x, primary.y, "s", color="navy", markersize=8,
             markeredgewidth=2, zorder=4)
+
+    # --- draw inner walls (fluorescent yellow-green) -------------------------
+    if inner_walls:
+        first = True
+        for wall in inner_walls:
+            geoms = list(wall.geoms) if hasattr(wall, "geoms") else [wall]
+            for g in geoms:
+                coords = list(g.coords)
+                xs = [c[0] for c in coords]
+                ys = [c[1] for c in coords]
+                ax.plot(xs, ys, color="#CCFF00", linewidth=4, zorder=5,
+                        solid_capstyle="round",
+                        label="Inner wall" if first else None)
+                first = False
 
     # --- draw context components (dimmed) -----------------------------------
     overlap_names = {item["comp"].comp_name for item in overlap_items}
@@ -264,6 +282,13 @@ def render_overlap_image(
                        label=f"{primary_label} outline"),
         mpatches.Patch(facecolor="#6495ED", edgecolor="navy", alpha=0.35,
                        label=f"{primary_label} pads"),
+    ]
+    if inner_walls:
+        legend_elements.append(
+            plt.Line2D([0], [0], color="#CCFF00", linewidth=4,
+                       label="Inner wall")
+        )
+    legend_elements += [
         mpatches.Patch(facecolor="#90EE90", edgecolor="darkgreen", alpha=0.55,
                        label=f"{overlap_label} (PASS)"),
         mpatches.Patch(facecolor="#FFB0B0", edgecolor="darkred", alpha=0.55,

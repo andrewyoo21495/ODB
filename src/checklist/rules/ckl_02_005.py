@@ -8,6 +8,9 @@ outline of a Shield Can (SC*) or Interposer (INP*) must have a semi-circle
 
 from __future__ import annotations
 
+import tempfile
+from pathlib import Path
+
 from src.checklist.component_classifier import (
     find_capacitors, find_interposers, find_shield_cans,
 )
@@ -17,6 +20,7 @@ from src.checklist.geometry_utils import (
 )
 from src.checklist.reference_loader import load_reference_csv
 from src.checklist.rule_base import ChecklistRule
+from src.checklist.visualizers.overlap_viz import render_overlap_image
 from src.models import PadRecord, RuleResult
 
 
@@ -95,6 +99,8 @@ class CKL02005(ChecklistRule):
 
         columns = ["comp", "comp_layer", "part_name", "d-pad", "status"]
         rows: list[dict] = []
+        images: list[dict] = []
+        image_dir = Path(tempfile.mkdtemp(prefix="ckl_02_005_"))
 
         for comps, layer_name, is_bottom in [
             (components_top, "Top", False),
@@ -109,14 +115,6 @@ class CKL02005(ChecklistRule):
             if not containers:
                 continue
 
-            container_outlines = []
-            for cont in containers:
-                outline = _resolve_outline(cont, packages, is_bottom=is_bottom)
-                if outline is not None and not outline.is_empty:
-                    container_outlines.append(outline)
-            if not container_outlines:
-                continue
-
             target_caps = [
                 c for c in find_capacitors(comps)
                 if (c.part_name or "") in dpad_parts
@@ -127,37 +125,70 @@ class CKL02005(ChecklistRule):
             mask_lf = _pick_soldermask_layer(layers_data, is_bottom=is_bottom)
             mask_pads = _iter_pad_records(mask_lf)
 
-            for cap in target_caps:
-                fp = _resolve_footprint(cap, packages, is_bottom=is_bottom)
-                if fp is None or fp.is_empty:
+            processed_caps: set[str] = set()
+
+            for cont in containers:
+                cont_outline = _resolve_outline(cont, packages, is_bottom=is_bottom)
+                if cont_outline is None or cont_outline.is_empty:
                     continue
 
-                inside_container = any(
-                    co.intersects(fp) and co.intersection(fp).area > 0
-                    for co in container_outlines
-                )
-                if not inside_container:
-                    continue
+                overlap_items: list[dict] = []
 
-                has_d_pad = False
-                bbox = fp.bounds  # (minx, miny, maxx, maxy)
-                minx, miny, maxx, maxy = bbox
-                for pad in mask_pads:
-                    if not (minx <= pad.x <= maxx and miny <= pad.y <= maxy):
+                for cap in target_caps:
+                    if cap.comp_name in processed_caps:
                         continue
-                    sym_name = _symbol_name(mask_lf, pad.symbol_idx)
-                    if _is_d_shape_symbol(sym_name, expected_geoms):
-                        has_d_pad = True
-                        break
+                    fp = _resolve_footprint(cap, packages, is_bottom=is_bottom)
+                    if fp is None or fp.is_empty:
+                        continue
+                    if not (cont_outline.intersects(fp) and
+                            cont_outline.intersection(fp).area > 0):
+                        continue
 
-                status = "PASS" if has_d_pad else "FAIL"
-                rows.append({
-                    "comp": cap.comp_name,
-                    "comp_layer": layer_name,
-                    "part_name": cap.part_name or "",
-                    "d-pad": "TRUE" if has_d_pad else "FALSE",
-                    "status": status,
-                })
+                    processed_caps.add(cap.comp_name)
+
+                    has_d_pad = False
+                    bbox = fp.bounds
+                    minx, miny, maxx, maxy = bbox
+                    for pad in mask_pads:
+                        if not (minx <= pad.x <= maxx and miny <= pad.y <= maxy):
+                            continue
+                        sym_name = _symbol_name(mask_lf, pad.symbol_idx)
+                        if _is_d_shape_symbol(sym_name, expected_geoms):
+                            has_d_pad = True
+                            break
+
+                    status = "PASS" if has_d_pad else "FAIL"
+                    rows.append({
+                        "comp": cap.comp_name,
+                        "comp_layer": layer_name,
+                        "part_name": cap.part_name or "",
+                        "d-pad": "TRUE" if has_d_pad else "FALSE",
+                        "status": status,
+                    })
+                    overlap_items.append({
+                        "comp": cap,
+                        "status": status,
+                        "detail": "D-pad: " + ("TRUE" if has_d_pad else "FALSE"),
+                    })
+
+                if overlap_items:
+                    safe_name = cont.comp_name.replace("/", "_")
+                    img_path = image_dir / f"{safe_name}_{layer_name}.png"
+                    render_overlap_image(
+                        cont, packages, overlap_items, comps, img_path,
+                        rule_id=self.rule_id,
+                        title="D-pad capacitors in container",
+                        layer_name=layer_name,
+                        primary_label="Container",
+                        overlap_label="D-pad cap",
+                        primary_is_bottom=is_bottom,
+                        overlap_is_bottom=is_bottom,
+                    )
+                    images.append({
+                        "path": img_path,
+                        "title": f"{cont.comp_name} ({layer_name})",
+                        "width": 500,
+                    })
 
         fail_count = sum(1 for r in rows if r["status"] == "FAIL")
         passed = fail_count == 0
@@ -186,4 +217,5 @@ class CKL02005(ChecklistRule):
             message=message,
             affected_components=[r["comp"] for r in rows if r["status"] == "FAIL"],
             details={"columns": columns, "rows": rows},
+            images=images,
         )

@@ -140,6 +140,7 @@ class CKL03008(ChecklistRule):
             affected_components=[
                 r["comp"] for r in rows if r["status"] == "FAIL"
             ],
-            details={"columns": columns, "rows": rows},
+            details={"columns": columns,
+                     "rows": [r for r in rows if r["status"] == "FAIL"]},
             images=images,
         )

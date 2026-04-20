@@ -6,6 +6,9 @@ be placed with a clearance of at least 0.3 mm from those inner walls.
 
 from __future__ import annotations
 
+import tempfile
+from pathlib import Path
+
 from src.checklist.component_classifier import (
     find_capacitors,
     find_inductors,
@@ -19,6 +22,7 @@ from src.checklist.geometry_utils import (
     is_near_inner_wall,
 )
 from src.checklist.rule_base import ChecklistRule
+from src.checklist.visualizers.overlap_viz import render_overlap_image
 from src.models import RuleResult
 
 _CLEARANCE_MM = 0.3   # FAIL threshold
@@ -68,6 +72,8 @@ class CKL02007(ChecklistRule):
             "distance", "status",
         ]
         rows: list[dict] = []
+        images: list[dict] = []
+        image_dir = Path(tempfile.mkdtemp(prefix="ckl_02_007_"))
 
         for sc_comps, sc_layer in [
             (components_top, "Top"),
@@ -90,6 +96,8 @@ class CKL02007(ChecklistRule):
                 )
                 if not inner_walls:
                     continue  # Shield can has no inner walls — skip
+
+                overlap_items: list[dict] = []
 
                 for comp in candidates:
                     if not is_near_inner_wall(
@@ -115,6 +123,33 @@ class CKL02007(ChecklistRule):
                         "distance": round(dist, 4),
                         "status": status,
                     })
+                    overlap_items.append({
+                        "comp": comp,
+                        "status": status,
+                        "detail": f"{dist:.3f} mm",
+                        "distance": round(dist, 4),
+                        "min_distance": _CLEARANCE_MM,
+                    })
+
+                if overlap_items:
+                    safe = sc.comp_name.replace("/", "_")
+                    img_path = image_dir / f"{safe}_{sc_layer}.png"
+                    render_overlap_image(
+                        sc, packages, overlap_items, sc_comps, img_path,
+                        rule_id=self.rule_id,
+                        title="Inner wall clearance",
+                        layer_name=sc_layer,
+                        primary_label="Shield Can",
+                        overlap_label="Cap/Inductor",
+                        primary_is_bottom=sc_is_bottom,
+                        overlap_is_bottom=sc_is_bottom,
+                        inner_walls=inner_walls,
+                    )
+                    images.append({
+                        "path": img_path,
+                        "title": f"{sc.comp_name} ({sc_layer})",
+                        "width": 500,
+                    })
 
         fail_count = sum(1 for r in rows if r["status"] == "FAIL")
         passed = fail_count == 0
@@ -135,5 +170,6 @@ class CKL02007(ChecklistRule):
                 r["neighbor_cmp"] for r in rows if r["status"] == "FAIL"
             ],
             details={"columns": columns, "rows": rows},
+            images=images,
             recommended=True,
         )

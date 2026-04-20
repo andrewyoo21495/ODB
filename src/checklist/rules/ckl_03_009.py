@@ -29,15 +29,18 @@ from src.visualizer.fid_lookup import (
 )
 
 
-def _find_perimeter_pin_indices(pins: list[Pin]) -> set[int]:
-    """Return indices of outermost (perimeter) pins of a component.
+def _find_outermost_pin_indices(pins: list[Pin]) -> set[int]:
+    """Return indices of the outermost (bounding-box-edge) pins of a SIM socket.
 
-    A pin is considered interior only if it has at least one neighbor in each
-    of the four cardinal directions (left, right, up, down) within its aligned
-    row or column.  All other pins are treated as perimeter pins.
+    A pin is "outermost" when it lies at or very near the extreme minX, maxX,
+    minY, or maxY of the pad-centre bounding box.  This identifies the isolated
+    structural/mounting pads at the perimeter of the SIM socket (corner pads,
+    side pads, bottom pads) while excluding the dense inner signal pad clusters
+    and any intermediate rows/columns of pads.
 
-    The row/column alignment tolerance is derived from the minimum
-    pin-to-pin distance to adapt to any package pitch.
+    Tolerance is set to 40 % of the minimum inter-pin distance so that minor
+    alignment variations within a column or row are tolerated without
+    accidentally capturing interior pads.
     """
     if not pins:
         return set()
@@ -47,44 +50,30 @@ def _find_perimeter_pin_indices(pins: list[Pin]) -> set[int]:
         return {0}
 
     centers = [(p.center.x, p.center.y) for p in pins]
+    xs = [c[0] for c in centers]
+    ys = [c[1] for c in centers]
 
-    # Compute alignment tolerance from the minimum inter-pin distance
+    min_x, max_x = min(xs), max(xs)
+    min_y, max_y = min(ys), max(ys)
+
+    # Alignment tolerance from the minimum inter-pin distance
     min_dist = float("inf")
     for i in range(n):
         for j in range(i + 1, n):
-            dx = centers[j][0] - centers[i][0]
-            dy = centers[j][1] - centers[i][1]
-            d = math.hypot(dx, dy)
+            d = math.hypot(centers[j][0] - centers[i][0],
+                           centers[j][1] - centers[i][1])
             if d > 1e-6:
                 min_dist = min(min_dist, d)
 
-    if min_dist == float("inf") or min_dist < 1e-6:
-        # Cannot determine spacing – treat all as perimeter
-        return set(range(n))
+    tol = (min_dist * 0.4) if min_dist < float("inf") else 0.1
 
-    align_tol = min_dist * 0.4
-
-    perimeter: set[int] = set()
+    outermost: set[int] = set()
     for i, (x, y) in enumerate(centers):
-        # Pins in the same row (similar y) and same column (similar x)
-        same_row_xs = [
-            cx for j, (cx, cy) in enumerate(centers)
-            if j != i and abs(cy - y) <= align_tol
-        ]
-        same_col_ys = [
-            cy for j, (cx, cy) in enumerate(centers)
-            if j != i and abs(cx - x) <= align_tol
-        ]
+        if (x <= min_x + tol or x >= max_x - tol
+                or y <= min_y + tol or y >= max_y - tol):
+            outermost.add(i)
 
-        has_left = any(cx < x - 1e-6 for cx in same_row_xs)
-        has_right = any(cx > x + 1e-6 for cx in same_row_xs)
-        has_down = any(cy < y - 1e-6 for cy in same_col_ys)
-        has_up = any(cy > y + 1e-6 for cy in same_col_ys)
-
-        if not (has_left and has_right and has_down and has_up):
-            perimeter.add(i)
-
-    return perimeter
+    return outermost
 
 
 @register_rule
@@ -139,7 +128,7 @@ class CKL03009(ChecklistRule):
                 if not pkg.pins:
                     continue
 
-                perimeter_indices = _find_perimeter_pin_indices(pkg.pins)
+                perimeter_indices = _find_outermost_pin_indices(pkg.pins)
                 toep_by_pin = build_toeprint_lookup(comp, pkg)
 
                 for pin_idx in sorted(perimeter_indices):
@@ -172,7 +161,7 @@ class CKL03009(ChecklistRule):
                     comp_type="SIM Socket",
                     fid_resolved=fid_resolved,
                     signal_layer_name=sig_name,
-                    pin_indices=perimeter_indices,
+                    pin_indices=perimeter_indices,  # = outermost indices
                 )
                 images.append({
                     "path": img_path,

@@ -2681,6 +2681,91 @@ def get_orientation_relative_to_shield_can(
     return "Vertical"
 
 
+def find_outline_boundary_pad_overlapping_components(
+    comp: Component,
+    candidates: Sequence[Component],
+    packages: list[Package],
+    *,
+    is_bottom_primary: bool = False,
+    is_bottom_candidates: bool = False,
+    buffer_mm: float = 0.05,
+    user_symbols: dict | None = None,
+) -> list[Component]:
+    """Return candidates whose pads intersect the outline boundary ring of comp.
+
+    Unlike pad-to-pad overlap, this checks whether each candidate's pads
+    intersect the exterior boundary of *comp*'s outline polygon (buffered
+    by *buffer_mm* to form a thin strip).  Used when the trigger condition
+    is that a component's pad crosses the physical edge of a housing outline.
+    """
+    if not _HAS_SHAPELY:
+        return []
+
+    outline = _resolve_outline(comp, packages, is_bottom=is_bottom_primary)
+    if outline is None:
+        return []
+
+    boundary_strip = outline.exterior.buffer(buffer_mm)
+
+    overlapping: list[Component] = []
+    for cand in candidates:
+        pad_union = _get_pad_union(
+            cand, packages,
+            is_bottom=is_bottom_candidates,
+            user_symbols=user_symbols,
+        )
+        if pad_union is None:
+            pad_union = ShapelyPoint(cand.x, cand.y).buffer(0.05)
+        if boundary_strip.intersects(pad_union):
+            overlapping.append(cand)
+    return overlapping
+
+
+def get_orientation_relative_to_outline_edge(
+    comp: Component,
+    outline_comp: Component,
+    packages: list[Package],
+    *,
+    comp_is_bottom: bool = False,
+    outline_is_bottom: bool = False,
+) -> str:
+    """Determine if comp is Horizontal or Vertical relative to outline_comp's nearest edge.
+
+    Finds the nearest edge segment of *outline_comp*'s outline polygon to
+    *comp*'s board centre, then compares *comp*'s major-axis angle to that
+    segment direction.
+
+    Returns:
+        ``"Horizontal"`` – comp major axis roughly parallel to the nearest edge
+        ``"Vertical"``   – comp major axis roughly perpendicular to the nearest edge
+        ``"Unknown"``    – insufficient geometry data
+    """
+    if not _HAS_SHAPELY:
+        return "Unknown"
+
+    outline = _resolve_outline(outline_comp, packages, is_bottom=outline_is_bottom)
+    if outline is None:
+        return "Unknown"
+
+    nearest_seg = _find_nearest_segment((comp.x, comp.y), outline)
+    if nearest_seg is None:
+        return "Unknown"
+
+    seg_dx = nearest_seg[1][0] - nearest_seg[0][0]
+    seg_dy = nearest_seg[1][1] - nearest_seg[0][1]
+    seg_angle = math.degrees(math.atan2(seg_dy, seg_dx)) % 180.0
+
+    cap_angle = get_major_axis_angle(comp, packages, is_bottom=comp_is_bottom)
+    if cap_angle is None:
+        return "Unknown"
+
+    diff = abs(cap_angle - seg_angle) % 180.0
+    if diff > 90.0:
+        diff = 180.0 - diff
+
+    return "Horizontal" if diff < 45.0 else "Vertical"
+
+
 # ---------------------------------------------------------------------------
 # Shield Can Inner Wall Detection
 # ---------------------------------------------------------------------------

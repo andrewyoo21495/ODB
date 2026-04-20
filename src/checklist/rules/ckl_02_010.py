@@ -16,8 +16,8 @@ from src.checklist.component_classifier import (
 from src.checklist.engine import register_rule
 from src.checklist.geometry_utils import (
     filter_by_size,
-    find_pad_overlapping_components,
-    get_component_orientation,
+    find_outline_boundary_pad_overlapping_components,
+    get_orientation_relative_to_outline_edge,
 )
 from src.checklist.reference_loader import get_part_size_map
 from src.checklist.rule_base import ChecklistRule
@@ -57,6 +57,9 @@ class CKL02010(ChecklistRule):
             (components_top, "Top", components_bot),
             (components_bot, "Bottom", components_top),
         ]:
+            sim_is_bottom = sim_layer == "Bottom"
+            cap_is_bottom = not sim_is_bottom
+
             sims = find_simsockets(sim_comps)
             opp_caps = find_capacitors(opp_comps)
             opp_inds = find_inductors(opp_comps)
@@ -66,15 +69,23 @@ class CKL02010(ChecklistRule):
                 continue
 
             for sim in sims:
-                overlaps = find_pad_overlapping_components(
-                    sim, opp_targets, packages
+                # Check if cap/ind pads cross the SIM socket outline boundary
+                overlaps = find_outline_boundary_pad_overlapping_components(
+                    sim, opp_targets, packages,
+                    is_bottom_primary=sim_is_bottom,
+                    is_bottom_candidates=cap_is_bottom,
                 )
                 # Filter to size >= 2012
                 filtered = filter_by_size(overlaps, 2012, size_maps, packages)
 
                 overlap_items: list[dict] = []
                 for comp, sz in filtered:
-                    orientation = get_component_orientation(comp, packages)
+                    # Orientation relative to the nearest SIM socket outline edge
+                    orientation = get_orientation_relative_to_outline_edge(
+                        comp, sim, packages,
+                        comp_is_bottom=cap_is_bottom,
+                        outline_is_bottom=sim_is_bottom,
+                    )
                     status = "PASS" if orientation == "Horizontal" else "FAIL"
                     rows.append({
                         "comp": sim.comp_name,

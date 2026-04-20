@@ -241,13 +241,15 @@ class CKL01001(ChecklistRule):
                 )
                 _register_overlaps(flt, "Filter", items)
 
-        # --- Generate one image per overlapping_cmp ---
+        # --- Generate one image per overlapping_cmp (only when any item is FAIL) ---
         for (ovl_name, opp_layer), data in ovl_image_map.items():
             ovl_comp = data["ovl_comp"]
             opp_is_bottom = data["opp_is_bottom"]
             same_comps = data["same_comps"]
             items = data["items"]
             if not items:
+                continue
+            if not any(item["status"] == "FAIL" for item in items):
                 continue
 
             safe = ovl_name.replace("/", "_")
