@@ -2775,40 +2775,40 @@ def detect_inner_walls(
     packages: list[Package],
     *,
     is_bottom: bool = False,
-    boundary_proximity: float = 0.3,
+    boundary_proximity: float = 1.0,
 ):
     """Detect inner-wall pads of a shield can.
 
     Concept
     -------
-    In real boards the shield-can package usually has **no separate body
-    outline** — the "wall" is formed entirely by the arrangement of pads.
-    The pads split into two spatial groups:
-
-    * **Outer wall** — the closed ring of pads tracing the perimeter of
-      the can (mix of elongated rails + dot pads at corners, possibly
-      with chamfered/diagonal segments).
-    * **Inner wall** — pads placed inside this ring, forming internal
-      dividers.
+    A shield-can pad is an **outer wall** when it traces (follows) the
+    component outline's exterior boundary — i.e. it sits immediately
+    against that boundary, aligned with it.  A pad that does **not**
+    follow the outline exterior is an **inner wall**.
 
     Algorithm
     ---------
-    The outer ring encloses every pad.  Its convex hull therefore
-    approximates the outer perimeter: each outer-wall pad contributes at
-    least one vertex to the hull, so ``pad.distance(hull.exterior) ≈ 0``.
-    Inner-wall pads sit strictly inside the hull, separated from its
-    boundary by a clear gap.
+    1. Resolve the shield can's package outline.
+    2. Collect the outline's exterior ring(s).  This is the "outer
+       border" the user refers to; any interior holes are ignored.
+    3. For each pad, compute the minimum distance between the pad
+       geometry and the exterior ring(s).
+       - Distance < *boundary_proximity* → the pad hugs the outline,
+         following its border → **outer wall**, skip.
+       - Distance ≥ *boundary_proximity* → the pad is detached from the
+         outline border → **inner wall**, keep.
 
-    A pad is classified as an inner wall iff its nearest point to the
-    convex-hull boundary is at least *boundary_proximity* mm away.
+    The threshold is generous enough to tolerate the typical small offset
+    between pad edges and the outline (some PCBs draw the outline a
+    fraction of a millimetre inside or outside the pad edges), while
+    still being much smaller than the gap between the outer ring and any
+    internal divider structure (usually several mm).
 
-    No aspect-ratio / orientation heuristics are applied — inner walls
-    can be short or diagonal.  The distinction is purely spatial.
-
-    Limitations: this assumes the outer ring is (approximately) convex —
-    valid for rectangular / chamfered-rectangular shield cans.  Strongly
-    concave (L- or U-shaped) shield cans would need an alpha-shape
-    instead of a convex hull.
+    Note: convex-hull-based detection fails for shield cans whose outer
+    ring has corner pads that protrude further than the straight wall
+    pads (e.g. rounded / L-shaped chamfer pads at corners).  Using the
+    actual package outline fixes this because the outline traces each
+    pad's outer edge rather than cutting across them.
 
     Parameters
     ----------
@@ -2816,8 +2816,8 @@ def detect_inner_walls(
     packages : list[Package]
     is_bottom : bool
     boundary_proximity : float
-        Minimum distance (mm) between the pad and the hull boundary for
-        the pad to count as an inner wall.  Default 0.3 mm.
+        Distance (mm) below which a pad is considered to follow the
+        outline exterior.  Default 1.0 mm.
 
     Returns
     -------
@@ -2827,41 +2827,44 @@ def detect_inner_walls(
     if not _HAS_SHAPELY:
         return []
 
+    outline = _resolve_outline(shield_can, packages, is_bottom=is_bottom)
+    if outline is None or outline.is_empty:
+        return []
+
+    # Collect outer exterior ring(s) only (skip any interior holes).
+    exteriors = []
+    if hasattr(outline, "geoms"):
+        for g in outline.geoms:
+            if hasattr(g, "exterior"):
+                exteriors.append(g.exterior)
+    elif hasattr(outline, "exterior"):
+        exteriors.append(outline.exterior)
+    if not exteriors:
+        return []
+    exterior_union = (
+        exteriors[0] if len(exteriors) == 1 else unary_union(exteriors)
+    )
+
     if shield_can.pkg_ref < 0 or shield_can.pkg_ref >= len(packages):
         return []
     pkg = packages[shield_can.pkg_ref]
     if not pkg.pins:
         return []
 
-    pad_geoms = []
+    inner_walls = []
     for pin in pkg.pins:
         if not pin.outlines:
             continue
-        g = _outline_to_shapely(pin.outlines[0], shield_can,
-                                is_bottom=is_bottom)
-        if g is None or g.is_empty:
+        pad_geom = _outline_to_shapely(pin.outlines[0], shield_can,
+                                       is_bottom=is_bottom)
+        if pad_geom is None or pad_geom.is_empty:
             continue
-        pad_geoms.append(g)
 
-    # Need at least a handful of pads to form a ring.
-    if len(pad_geoms) < 4:
-        return []
-
-    # Convex hull of the pad union approximates the outer perimeter ring.
-    pads_union = unary_union(pad_geoms)
-    hull = pads_union.convex_hull
-    if not hasattr(hull, "exterior"):
-        return []
-    hull_boundary = hull.exterior
-
-    inner_walls = []
-    for pad_geom in pad_geoms:
-        # Outer-wall pads have at least one point on the hull boundary
-        # (distance ≈ 0).  Inner-wall pads sit inside the hull with a
-        # clear gap from the boundary.
-        if pad_geom.distance(hull_boundary) < boundary_proximity:
-            continue
-        inner_walls.append(pad_geom)
+        # Pad's nearest point to the outline exterior.  Outer-wall pads
+        # sit on or immediately against the exterior (distance ≈ 0).
+        # Inner-wall pads are detached from it by a clear gap.
+        if pad_geom.distance(exterior_union) >= boundary_proximity:
+            inner_walls.append(pad_geom)
 
     return inner_walls
 
