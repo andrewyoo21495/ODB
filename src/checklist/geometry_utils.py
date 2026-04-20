@@ -2776,30 +2776,32 @@ def detect_inner_walls(
     *,
     is_bottom: bool = False,
     min_aspect_ratio: float = 3.0,
-    interior_threshold: float = 0.05,
+    axis_tolerance_deg: float = 20.0,
+    interior_margin: float = 0.5,
 ):
     """Detect inner wall pads of a shield can.
 
-    Inner walls are large, elongated pad structures physically located
-    **inside** the shield can's outer boundary outline.  They form dividing
-    walls that separate the interior into compartments (L-shape, T-shape,
-    cross, etc.).
+    A shield can's pads typically form an outer wall that traces the
+    perimeter of the can.  Some shield cans additionally contain *inner
+    walls* — elongated pads placed **inside** the outer-wall ring that form
+    internal dividers (L, T, cross, etc.).  This function identifies those
+    inner-wall pads.
 
-    The detection logic:
-    1. Build the outer boundary polygon from ``pkg.outlines``.
-    2. For each pin in the package, convert its first outline to a Shapely
-       polygon in board coordinates.
-    3. Qualify as an inner wall when ALL of the following hold:
-       - Bounding-box aspect ratio ≥ *min_aspect_ratio* (elongated bar shape).
-       - Pad centroid lies strictly inside the outer boundary.
-       - Pad centroid is more than *interior_threshold* mm from the boundary
-         edge (distinguishes interior pads from perimeter contact pads whose
-         centres land just inside the outline polygon).
+    A pin is classified as an inner wall when ALL of the following hold:
 
-    Diagonal pads (e.g. cross-corner bar in some shield cans) are naturally
-    excluded: a rotated rectangle's axis-aligned bounding box has a much
-    lower aspect ratio than a purely horizontal or vertical bar of the same
-    dimensions.
+    1. **Elongated**: bounding-box aspect ratio ≥ *min_aspect_ratio*.
+    2. **Axis-aligned**: the pad's major axis is within *axis_tolerance_deg*
+       of horizontal or vertical.  Diagonal pads (e.g. chamfered-corner
+       perimeter pads in some shield cans) are rejected.
+    3. **Strictly interior to the outer outline**:
+       a. ``outline.contains(pad_geom)`` — the pad's entire geometry lies
+          inside the shield-can outline (does not touch or cross the
+          boundary ring).  This alone excludes most outer-wall pads since
+          they sit on the boundary.
+       b. The centroid is at least *interior_margin* mm from the outline
+          edge.  This guards against cases where the outline is drawn with
+          a small slack around the pads and outer-wall pads happen to be
+          fully contained by it.
 
     Parameters
     ----------
@@ -2807,12 +2809,13 @@ def detect_inner_walls(
     packages : list[Package]
     is_bottom : bool
     min_aspect_ratio : float
-        Minimum ratio of the longer to the shorter bounding-box dimension.
-        Default 3.0 excludes roughly-square or slightly-elongated perimeter
-        contact pads while retaining bar-shaped inner-wall pads.
-    interior_threshold : float
-        Minimum distance (mm) that a pad centroid must be from the outer
-        boundary line to be considered truly interior.  Default 0.05 mm.
+        Bounding-box aspect ratio threshold.  Default 3.0.
+    axis_tolerance_deg : float
+        Maximum deviation (in degrees) of the pad's major axis from pure
+        horizontal or vertical.  Default 20°.
+    interior_margin : float
+        Minimum distance (mm) from the outline boundary that the pad
+        centroid must satisfy.  Default 0.5 mm.
 
     Returns
     -------
@@ -2822,7 +2825,6 @@ def detect_inner_walls(
     if not _HAS_SHAPELY:
         return []
 
-    # Outer body outline (from pkg.outlines, not pad geometry)
     outline = _resolve_outline(shield_can, packages, is_bottom=is_bottom)
     if outline is None:
         return []
@@ -2833,8 +2835,7 @@ def detect_inner_walls(
     if not pkg.pins:
         return []
 
-    # Use .boundary so it works for both Polygon and MultiPolygon
-    boundary_line = outline.boundary
+    boundary = outline.boundary
 
     inner_walls = []
     for pin in pkg.pins:
@@ -2846,7 +2847,7 @@ def detect_inner_walls(
         if pad_geom is None or pad_geom.is_empty:
             continue
 
-        # --- aspect ratio filter (bounding-box based) ---
+        # --- (1) aspect ratio filter ---
         minx, miny, maxx, maxy = pad_geom.bounds
         w, h = maxx - minx, maxy - miny
         if w <= 1e-6 or h <= 1e-6:
@@ -2855,13 +2856,33 @@ def detect_inner_walls(
         if aspect < min_aspect_ratio:
             continue
 
-        # --- centroid must be strictly inside the outer outline ---
-        centroid = pad_geom.centroid
-        if not outline.contains(centroid):
+        # --- (2) orientation filter: horizontal or vertical only ---
+        try:
+            mrr = pad_geom.minimum_rotated_rectangle
+            coords = list(mrr.exterior.coords)
+            edge_a = (coords[1][0] - coords[0][0],
+                      coords[1][1] - coords[0][1])
+            edge_b = (coords[2][0] - coords[1][0],
+                      coords[2][1] - coords[1][1])
+            len_a = math.hypot(*edge_a)
+            len_b = math.hypot(*edge_b)
+            if len_a <= 0 or len_b <= 0:
+                continue
+            major = edge_a if len_a >= len_b else edge_b
+            angle = math.degrees(math.atan2(major[1], major[0])) % 180.0
+            # Distance from the nearest H/V axis (0°, 90°, 180°)
+            dev = min(angle, 180.0 - angle, abs(angle - 90.0))
+            if dev > axis_tolerance_deg:
+                continue
+        except Exception:
             continue
 
-        # --- centroid must be sufficiently far from the boundary edge ---
-        if boundary_line.distance(centroid) < interior_threshold:
+        # --- (3) strict interior filter ---
+        # (3a) entire pad geometry must be inside the outline
+        if not outline.contains(pad_geom):
+            continue
+        # (3b) centroid must be clearly away from the boundary edge
+        if boundary.distance(pad_geom.centroid) < interior_margin:
             continue
 
         inner_walls.append(pad_geom)
