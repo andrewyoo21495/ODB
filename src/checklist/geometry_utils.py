@@ -2775,40 +2775,40 @@ def detect_inner_walls(
     packages: list[Package],
     *,
     is_bottom: bool = False,
-    boundary_proximity: float = 1.0,
+    boundary_proximity: float = 0.1,
 ):
     """Detect inner-wall pads of a shield can.
 
     Concept
     -------
-    A shield-can pad is an **outer wall** when it traces (follows) the
-    component outline's exterior boundary — i.e. it sits immediately
-    against that boundary, aligned with it.  A pad that does **not**
-    follow the outline exterior is an **inner wall**.
+    Mirrors the outer-wall / inner-wall distinction used for
+    IC-style components in CKL-01-001 / CKL-02-010:
+
+    * **Outer wall pads** — the pads that form the outer rim of the shield
+      can, tracing its physical perimeter.  They define the enclosing
+      boundary of the pad array.
+    * **Inner wall pads** — any pads sitting *inside* that enclosing
+      boundary.  These are the divider walls that break the shield can
+      into compartments, and are the targets of clearance checks against
+      nearby capacitors / inductors.
 
     Algorithm
     ---------
-    1. Resolve the shield can's package outline.
-    2. Collect the outline's exterior ring(s).  This is the "outer
-       border" the user refers to; any interior holes are ignored.
-    3. For each pad, compute the minimum distance between the pad
-       geometry and the exterior ring(s).
-       - Distance < *boundary_proximity* → the pad hugs the outline,
-         following its border → **outer wall**, skip.
-       - Distance ≥ *boundary_proximity* → the pad is detached from the
-         outline border → **inner wall**, keep.
+    1. Collect every pad polygon of the shield can and its centroid.
+    2. Build the **convex hull of the pad centroids** — this polygon is
+       the shield can's outer boundary expressed purely through the pad
+       layout itself (no reliance on the package outline, which can be
+       inaccurate or absent).  All outer-rim pads sit on the hull's
+       perimeter; corner chamfers naturally form their own hull edges,
+       so they remain classified as outer wall.
+    3. A pad is an **inner wall** when its centroid lies strictly inside
+       the hull — i.e. its distance from the hull's boundary ring is
+       **greater than or equal to** *boundary_proximity*.
 
-    The threshold is generous enough to tolerate the typical small offset
-    between pad edges and the outline (some PCBs draw the outline a
-    fraction of a millimetre inside or outside the pad edges), while
-    still being much smaller than the gap between the outer ring and any
-    internal divider structure (usually several mm).
-
-    Note: convex-hull-based detection fails for shield cans whose outer
-    ring has corner pads that protrude further than the straight wall
-    pads (e.g. rounded / L-shaped chamfer pads at corners).  Using the
-    actual package outline fixes this because the outline traces each
-    pad's outer edge rather than cutting across them.
+    This matches the user's mental model: "determine the boundary from
+    the outermost pads, then everything inside that boundary is the inner
+    wall" — exactly the same pattern CKL-02-010 uses when it separates
+    the outer rim from interior features.
 
     Parameters
     ----------
@@ -2816,8 +2816,11 @@ def detect_inner_walls(
     packages : list[Package]
     is_bottom : bool
     boundary_proximity : float
-        Distance (mm) below which a pad is considered to follow the
-        outline exterior.  Default 1.0 mm.
+        Minimum inward offset (mm) for a pad centroid before it counts
+        as an inner wall.  Default 0.1 mm — tight enough that any real
+        divider pad (usually several mm inside the hull) is caught,
+        loose enough to forgive floating-point noise and minor placement
+        offsets on outer-rim pads.
 
     Returns
     -------
@@ -2827,31 +2830,14 @@ def detect_inner_walls(
     if not _HAS_SHAPELY:
         return []
 
-    outline = _resolve_outline(shield_can, packages, is_bottom=is_bottom)
-    if outline is None or outline.is_empty:
-        return []
-
-    # Collect outer exterior ring(s) only (skip any interior holes).
-    exteriors = []
-    if hasattr(outline, "geoms"):
-        for g in outline.geoms:
-            if hasattr(g, "exterior"):
-                exteriors.append(g.exterior)
-    elif hasattr(outline, "exterior"):
-        exteriors.append(outline.exterior)
-    if not exteriors:
-        return []
-    exterior_union = (
-        exteriors[0] if len(exteriors) == 1 else unary_union(exteriors)
-    )
-
     if shield_can.pkg_ref < 0 or shield_can.pkg_ref >= len(packages):
         return []
     pkg = packages[shield_can.pkg_ref]
     if not pkg.pins:
         return []
 
-    inner_walls = []
+    # Step 1: collect pad polygons and their centroids (board coordinates).
+    pad_entries: list[tuple[tuple[float, float], object]] = []
     for pin in pkg.pins:
         if not pin.outlines:
             continue
@@ -2859,11 +2845,25 @@ def detect_inner_walls(
                                        is_bottom=is_bottom)
         if pad_geom is None or pad_geom.is_empty:
             continue
+        c = pad_geom.centroid
+        pad_entries.append(((c.x, c.y), pad_geom))
 
-        # Pad's nearest point to the outline exterior.  Outer-wall pads
-        # sit on or immediately against the exterior (distance ≈ 0).
-        # Inner-wall pads are detached from it by a clear gap.
-        if pad_geom.distance(exterior_union) >= boundary_proximity:
+    # At least 4 pads are required to form a meaningful 2-D boundary.
+    if len(pad_entries) < 4:
+        return []
+
+    # Step 2: convex hull of the centroids defines the outer boundary.
+    centroids = [entry[0] for entry in pad_entries]
+    hull = MultiPoint(centroids).convex_hull
+    if not hasattr(hull, "exterior"):
+        # Degenerate (collinear / point) — cannot distinguish inner vs outer.
+        return []
+    hull_boundary = hull.exterior
+
+    # Step 3: inner wall = centroid strictly inside the hull.
+    inner_walls = []
+    for (cx, cy), pad_geom in pad_entries:
+        if ShapelyPoint(cx, cy).distance(hull_boundary) >= boundary_proximity:
             inner_walls.append(pad_geom)
 
     return inner_walls
