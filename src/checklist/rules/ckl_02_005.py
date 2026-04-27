@@ -75,6 +75,20 @@ def _package_name(comp: Component, packages: list[Package]) -> str:
     return ""
 
 
+def _matches_dpad(actual: str, expected: str) -> bool:
+    """True if *actual* package equals *expected* or is a suffixed variant.
+
+    EDA tools sometimes append suffixes to the canonical D-pad geom name
+    (e.g. ``DE115070_CAP_THMC`` → ``DE115070_CAP_THMC_OSP``).  We treat any
+    such ``<expected>_<suffix>`` as the same D-pad package.  The underscore
+    boundary prevents accidental matches against unrelated names that
+    happen to share the same prefix characters.
+    """
+    if not expected or not actual:
+        return False
+    return actual == expected or actual.startswith(expected + "_")
+
+
 @register_rule
 class CKL02005(ChecklistRule):
     rule_id = "CKL-02-005"
@@ -99,9 +113,10 @@ class CKL02005(ChecklistRule):
             "comp", "comp_layer", "part_name", "container",
             "location", "expected_pkg", "actual_pkg", "status",
         ]
-        rows: list[dict] = []
+        rows: list[dict] = []          # FAIL rows only — PASS is omitted
         images: list[dict] = []
         image_dir = Path(tempfile.mkdtemp(prefix="ckl_02_005_"))
+        total_evaluated = 0             # total caps evaluated across both sides
 
         for comps, layer_name, is_bottom in [
             (components_top, "Top", False),
@@ -140,7 +155,7 @@ class CKL02005(ChecklistRule):
 
                 expected_pkg = dpad_map[cap.part_name]
                 actual_pkg   = _package_name(cap, packages)
-                is_dpad      = (actual_pkg == expected_pkg)
+                is_dpad      = _matches_dpad(actual_pkg, expected_pkg)
 
                 passed   = (is_inside == is_dpad)
                 status   = "PASS" if passed else "FAIL"
@@ -151,16 +166,22 @@ class CKL02005(ChecklistRule):
                 expected_disp = (expected_pkg if is_inside
                                  else f"!= {expected_pkg}")
 
-                rows.append({
-                    "comp":         cap.comp_name,
-                    "comp_layer":   layer_name,
-                    "part_name":    cap.part_name or "",
-                    "container":    host.comp_name if host else "",
-                    "location":     location,
-                    "expected_pkg": expected_disp,
-                    "actual_pkg":   actual_pkg,
-                    "status":       status,
-                })
+                total_evaluated += 1
+
+                # Result table: only FAIL rows are reported. PASS caps are
+                # still drawn on the side image (via cap_items below) so
+                # reviewers can see the full population.
+                if not passed:
+                    rows.append({
+                        "comp":         cap.comp_name,
+                        "comp_layer":   layer_name,
+                        "part_name":    cap.part_name or "",
+                        "container":    host.comp_name if host else "",
+                        "location":     location,
+                        "expected_pkg": expected_disp,
+                        "actual_pkg":   actual_pkg,
+                        "status":       status,
+                    })
                 cap_items.append({
                     "cap":      cap,
                     "host":     host,
@@ -195,20 +216,20 @@ class CKL02005(ChecklistRule):
                 "width": 700,
             })
 
-        fail_count = sum(1 for r in rows if r["status"] == "FAIL")
+        fail_count = len(rows)         # rows now contains only FAIL entries
         passed_all = fail_count == 0
 
-        if not rows:
+        if total_evaluated == 0:
             message = "No D-pad list capacitors found on the board to evaluate."
         elif passed_all:
             message = (
-                f"All {len(rows)} D-pad list capacitor(s) use the correct "
+                f"All {total_evaluated} D-pad list capacitor(s) use the correct "
                 f"package for their location (inside vs outside containers)."
             )
         else:
             message = (
-                f"{fail_count} of {len(rows)} D-pad list capacitor(s) use an "
-                f"incorrect package for their location."
+                f"{fail_count} of {total_evaluated} D-pad list capacitor(s) use "
+                f"an incorrect package for their location."
             )
 
         return RuleResult(
@@ -217,7 +238,7 @@ class CKL02005(ChecklistRule):
             category=self.category,
             passed=passed_all,
             message=message,
-            affected_components=[r["comp"] for r in rows if r["status"] == "FAIL"],
+            affected_components=[r["comp"] for r in rows],
             details={"columns": columns, "rows": rows},
             images=images,
         )
