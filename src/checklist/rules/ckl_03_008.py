@@ -1,7 +1,7 @@
-"""CKL-03-008: Sensor component pads must each have at least one VIA.
+"""CKL-03-008: Sensor component pads must each have at least 4 VIAs.
 
 For each sensor component identified by part_name in references/regular_sensors.csv,
-every pad must have at least one VIA applied.  A pad with zero VIAs is flagged FAIL.
+every pad must have at least 4 VIAs applied.  A pad with 3 or fewer VIAs is flagged FAIL.
 """
 
 from __future__ import annotations
@@ -105,7 +105,7 @@ class CKL03008(ChecklistRule):
                         "cmp_layer": layer_name,
                         "pad": pin.name,
                         "via": str(via_count),
-                        "status": "PASS" if via_count >= 1 else "FAIL",
+                        "status": "PASS" if via_count >= 4 else "FAIL",
                     })
 
                 # Generate visualisation image for this sensor
@@ -133,9 +133,9 @@ class CKL03008(ChecklistRule):
             category=self.category,
             passed=passed,
             message=(
-                f"{fail_count} sensor pad(s) without a VIA detected."
+                f"{fail_count} sensor pad(s) with fewer than 4 VIAs detected."
                 if not passed
-                else "All sensor component pads have at least one VIA."
+                else "All sensor component pads have at least 4 VIAs."
             ),
             affected_components=[
                 r["comp"] for r in rows if r["status"] == "FAIL"

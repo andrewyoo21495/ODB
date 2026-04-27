@@ -2561,6 +2561,63 @@ def _find_nearest_segment(
     return best_seg
 
 
+def _find_segment_overlapping_geom(
+    geom,
+    outline_poly,
+    *,
+    buffer_mm: float = 0.05,
+) -> tuple[tuple[float, float], tuple[float, float]] | None:
+    """Return the outline edge segment with the greatest overlap with *geom*.
+
+    Walks each segment of *outline_poly*'s exterior ring(s), buffers the
+    segment by *buffer_mm* to form a thin strip, and measures intersection
+    area against *geom*.  The segment with the largest intersection wins.
+
+    This is used to identify *which* edge of an outline a component's pads
+    are physically straddling, rather than just the closest edge to the
+    component's centroid (which can pick the wrong edge near corners).
+
+    Returns ``((x1, y1), (x2, y2))`` or ``None`` if no segment overlaps.
+    """
+    if geom is None or geom.is_empty:
+        return None
+
+    all_rings: list[list[tuple[float, float]]] = []
+    if hasattr(outline_poly, "geoms"):
+        for g in outline_poly.geoms:
+            if hasattr(g, "exterior"):
+                all_rings.append(list(g.exterior.coords[:-1]))
+    elif hasattr(outline_poly, "exterior"):
+        all_rings.append(list(outline_poly.exterior.coords[:-1]))
+
+    if not all_rings:
+        return None
+
+    best_seg = None
+    best_area = 0.0
+
+    for coords in all_rings:
+        n = len(coords)
+        if n < 2:
+            continue
+        for i in range(n):
+            p1 = coords[i]
+            p2 = coords[(i + 1) % n]
+            seg_strip = LineString([p1, p2]).buffer(buffer_mm)
+            try:
+                inter = seg_strip.intersection(geom)
+            except Exception:
+                continue
+            if inter.is_empty:
+                continue
+            area = getattr(inter, "area", 0.0)
+            if area > best_area:
+                best_area = area
+                best_seg = (p1, p2)
+
+    return best_seg
+
+
 def _is_diagonal_segment(
     p1: tuple[float, float],
     p2: tuple[float, float],
@@ -2728,16 +2785,23 @@ def get_orientation_relative_to_outline_edge(
     *,
     comp_is_bottom: bool = False,
     outline_is_bottom: bool = False,
+    user_symbols: dict | None = None,
 ) -> str:
-    """Determine if comp is Horizontal or Vertical relative to outline_comp's nearest edge.
+    """Determine if comp is Horizontal or Vertical relative to the outline edge it overlaps.
 
-    Finds the nearest edge segment of *outline_comp*'s outline polygon to
-    *comp*'s board centre, then compares *comp*'s major-axis angle to that
-    segment direction.
+    Identifies the specific edge segment of *outline_comp*'s outline polygon
+    that *comp*'s pads physically straddle, then compares *comp*'s major-axis
+    angle to that segment's direction.  When no pad-vs-edge intersection is
+    detectable (e.g. fallback paths), falls back to the nearest edge segment
+    to *comp*'s board centre.
+
+    The orientation is judged against the *specific* edge the component is
+    crossing — not the outline's overall major axis — so corner-adjacent
+    components are evaluated against the side they actually overlap.
 
     Returns:
-        ``"Horizontal"`` – comp major axis roughly parallel to the nearest edge
-        ``"Vertical"``   – comp major axis roughly perpendicular to the nearest edge
+        ``"Horizontal"`` – comp major axis roughly parallel to the overlapping edge
+        ``"Vertical"``   – comp major axis roughly perpendicular to the overlapping edge
         ``"Unknown"``    – insufficient geometry data
     """
     if not _HAS_SHAPELY:
@@ -2747,12 +2811,24 @@ def get_orientation_relative_to_outline_edge(
     if outline is None:
         return "Unknown"
 
-    nearest_seg = _find_nearest_segment((comp.x, comp.y), outline)
-    if nearest_seg is None:
+    # Prefer the edge segment the component's pads actually straddle.
+    seg = None
+    pad_union = _get_pad_union(
+        comp, packages,
+        is_bottom=comp_is_bottom,
+        user_symbols=user_symbols,
+    )
+    if pad_union is not None and not pad_union.is_empty:
+        seg = _find_segment_overlapping_geom(pad_union, outline)
+
+    # Fallback: nearest segment to the component's board centre.
+    if seg is None:
+        seg = _find_nearest_segment((comp.x, comp.y), outline)
+    if seg is None:
         return "Unknown"
 
-    seg_dx = nearest_seg[1][0] - nearest_seg[0][0]
-    seg_dy = nearest_seg[1][1] - nearest_seg[0][1]
+    seg_dx = seg[1][0] - seg[0][0]
+    seg_dy = seg[1][1] - seg[0][1]
     seg_angle = math.degrees(math.atan2(seg_dy, seg_dx)) % 180.0
 
     cap_angle = get_major_axis_angle(comp, packages, is_bottom=comp_is_bottom)
