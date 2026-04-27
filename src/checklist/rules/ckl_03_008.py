@@ -117,6 +117,7 @@ class CKL03008(ChecklistRule):
                     comp_type="Sensor",
                     fid_resolved=fid_resolved,
                     signal_layer_name=sig_name,
+                    min_via_count=4,
                 )
                 images.append({
                     "path": img_path,

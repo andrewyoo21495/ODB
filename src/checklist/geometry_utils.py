@@ -1362,26 +1362,61 @@ def find_empty_center_ics(
 # 8. Component Size Utilities
 # ---------------------------------------------------------------------------
 
+def _size_from_properties(comp: Component) -> int | None:
+    """Read a numeric size code from *comp*'s properties dict.
+
+    Looks for a ``SIZE`` key (case-insensitive) in ``comp.properties`` and
+    returns the value parsed as an int.  Strips whitespace and tolerates
+    common variants (e.g. ``"2012"``, ``" 2012 "``, ``"02012"``).  Returns
+    ``None`` when no usable SIZE property is present so the caller can fall
+    through to the next resolution path.
+    """
+    props = getattr(comp, "properties", None) or {}
+    if not props:
+        return None
+    for key, value in props.items():
+        if isinstance(key, str) and key.strip().upper() == "SIZE":
+            if value is None:
+                continue
+            sv = str(value).strip()
+            if sv.isdigit():
+                return int(sv)
+            # Tolerate decimal-like values such as "2012.0"
+            try:
+                return int(round(float(sv)))
+            except (TypeError, ValueError):
+                continue
+    return None
+
+
 def get_component_size(comp: Component,
                        size_maps: list[dict[str, int]] | None = None,
                        packages: list[Package] | None = None) -> int:
     """Return the numeric size code for *comp*.
 
     Resolution order:
-        1. Lookup ``comp.part_name`` in the provided *size_maps*
+        1. ``comp.properties["SIZE"]`` (case-insensitive) when present and
+           parseable as a number — the most authoritative source when the
+           ODB++ PRP records carry an explicit size code.
+        2. Lookup ``comp.part_name`` in the provided *size_maps*
            (list of ``{part_name: size}`` dicts from reference CSVs).
-        2. Parse from package bbox dimensions (metric LLWW code).
-        3. Return 0 if unknown.
+        3. Parse from package bbox dimensions (metric LLWW code).
+        4. Return 0 if unknown.
     """
+    # 1. Component property SIZE (preferred when supplied)
+    sz = _size_from_properties(comp)
+    if sz is not None:
+        return sz
+
     part = comp.part_name or ""
 
-    # 1. Reference CSV lookup
+    # 2. Reference CSV lookup
     if size_maps:
         for sm in size_maps:
             if part in sm:
                 return sm[part]
 
-    # 2. Infer from package bbox
+    # 3. Infer from package bbox
     if packages and 0 <= comp.pkg_ref < len(packages):
         pkg = packages[comp.pkg_ref]
         if pkg.bbox:

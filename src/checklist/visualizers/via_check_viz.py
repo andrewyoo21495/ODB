@@ -110,6 +110,7 @@ def render_via_check_image(
     pin_indices=None,
     eda_data=None,
     layers_data=None,
+    min_via_count: int = 1,
 ) -> Path:
     """Render a single component's pads + vias to a PNG file.
 
@@ -132,6 +133,9 @@ def render_via_check_image(
     layers_data : dict | None
         When provided together with *signal_layer_name*, signal-layer
         traces are drawn as a green overlay for visual verification.
+    min_via_count : int
+        Minimum via count for a pad to be considered passing.  Pads with
+        fewer vias are coloured red (FAIL).  Default 1.
 
     Returns
     -------
@@ -249,7 +253,7 @@ def render_via_check_image(
             fill_color = "#ADD8E6"
             edge_color = "#1560BD"
             label_color = "#1560BD"
-        elif r["via_count"] > 0:
+        elif r["via_count"] >= min_via_count:
             fill_color = "#90EE90"
             edge_color = "darkgreen"
             label_color = "darkgreen"
@@ -289,11 +293,17 @@ def render_via_check_image(
     ax.plot(comp.x, comp.y, "x", color="blue", markersize=10, markeredgewidth=2)
 
     # --- legend --------------------------------------------------------------
+    if min_via_count > 1:
+        pass_label = f"Pad with >={min_via_count} vias"
+        fail_label = f"Pad with <{min_via_count} vias"
+    else:
+        pass_label = "Pad WITH via(s)"
+        fail_label = "Pad WITHOUT via"
     legend_elements = [
         mpatches.Patch(facecolor="#90EE90", edgecolor="darkgreen", alpha=0.5,
-                       label="Pad WITH via(s)"),
+                       label=pass_label),
         mpatches.Patch(facecolor="#FFB0B0", edgecolor="darkred", alpha=0.5,
-                       label="Pad WITHOUT via"),
+                       label=fail_label),
     ]
     if has_nc:
         legend_elements.append(
