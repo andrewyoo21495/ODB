@@ -176,7 +176,7 @@ def _draw_line(ax: Axes, line: LineRecord, sym_lookup: dict[int, SymbolRef],
     if length < 1e-10:
         # Zero-length line → filled circle
         ax.add_patch(Circle((xs, ys), radius,
-                            color=color, alpha=alpha, edgecolor="none"))
+                            facecolor=color, alpha=alpha, edgecolor="none"))
         return
 
     # Unit left-perpendicular normal scaled to radius
@@ -208,7 +208,7 @@ def _draw_line(ax: Axes, line: LineRecord, sym_lookup: dict[int, SymbolRef],
         pts.append((xs + radius * math.cos(theta),
                     ys + radius * math.sin(theta)))
 
-    ax.add_patch(Polygon(pts, closed=True, color=color, alpha=alpha,
+    ax.add_patch(Polygon(pts, closed=True, facecolor=color, alpha=alpha,
                          edgecolor="none"))
 
 
@@ -263,7 +263,7 @@ def _draw_arc(ax: Axes, arc: ArcRecord, sym_lookup: dict[int, SymbolRef],
         inner[i] = pts[i, 0] - nx, pts[i, 1] - ny
 
     verts = np.concatenate([outer, inner[::-1]])
-    ax.add_patch(Polygon(verts, closed=True, color=color, alpha=alpha,
+    ax.add_patch(Polygon(verts, closed=True, facecolor=color, alpha=alpha,
                          edgecolor="none"))
 
 
@@ -417,7 +417,7 @@ def _draw_surface(ax: Axes, surface: SurfaceRecord,
         if not hole_list:
             # Simple island without holes – plain Polygon is sufficient
             ax.add_patch(Polygon(island_verts, closed=True,
-                                 color=fill_color, alpha=fill_alpha,
+                                 facecolor=fill_color, alpha=fill_alpha,
                                  edgecolor="none"))
         else:
             # Build a compound Path: island boundary + hole boundaries

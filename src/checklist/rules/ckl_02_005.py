@@ -4,13 +4,17 @@ For every capacitor whose part_name appears in
 ``references/dpad_capacitors.csv``:
 
 * If the capacitor sits **inside** a Shield Can (SC*) or Interposer (INP*)
-  outline, its EDA package name (PKG) must equal the ``option_geom_after``
+  region, its EDA package name (PKG) must equal the ``option_geom_after``
   value from the CSV (= D-pad applied).
 * If it sits **outside**, the package must NOT equal ``option_geom_after``
   (= regular pad, D-pad must not be applied).
 
 The verdict therefore reduces to ``passed = (is_inside == is_dpad)``.
 The ``option_geom_before`` column is not used in evaluation.
+
+"Inside" is judged by the cap centre being contained within the convex
+hull of the container's pad/outline points — this gives a filled region
+even for SC frames or INP rings whose ``pkg.outlines`` are hollow.
 """
 
 from __future__ import annotations
@@ -18,16 +22,16 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
+from shapely.geometry import Point as ShapelyPoint
+
 from src.checklist.component_classifier import (
     find_capacitors, find_interposers, find_shield_cans,
 )
 from src.checklist.engine import register_rule
-from src.checklist.geometry_utils import (
-    _resolve_footprint, _resolve_outline,
-)
+from src.checklist.geometry_utils import _resolve_footprint
 from src.checklist.reference_loader import load_reference_csv
 from src.checklist.rule_base import ChecklistRule
-from src.checklist.visualizers.dpad_mask_viz import render_dpad_mask_image
+from src.checklist.visualizers.dpad_mask_viz import render_dpad_side_image
 from src.models import Component, Package, RuleResult
 
 
@@ -113,25 +117,23 @@ class CKL02005(ChecklistRule):
             if not target_caps:
                 continue
 
-            # Container outlines on the same side
-            cont_outlines: list[tuple] = []
-            for cont in find_interposers(comps) + find_shield_cans(comps):
-                o = _resolve_outline(cont, packages, is_bottom=is_bottom)
-                if o is not None and not o.is_empty:
-                    cont_outlines.append((o, cont))
+            # Container "inside regions" = convex hulls of all pad/outline
+            # points. This handles hollow SC frames and INP rings correctly,
+            # whereas the union of pkg.outlines alone would be empty in the
+            # interior space.
+            containers = find_interposers(comps) + find_shield_cans(comps)
+            cont_hulls: list[tuple] = []
+            for cont in containers:
+                hull = _resolve_footprint(cont, packages, is_bottom=is_bottom)
+                if hull is not None and not hull.is_empty:
+                    cont_hulls.append((hull, cont))
 
-            mask_layer_name, mask_lf = _pick_soldermask_layer(
-                layers_data, is_bottom=is_bottom
-            )
-
+            cap_items: list[dict] = []
             for cap in target_caps:
-                fp = _resolve_footprint(cap, packages, is_bottom=is_bottom)
-                if fp is None or fp.is_empty:
-                    continue
-
+                # "inside" = cap centre lies within at least one container hull
+                cap_pt = ShapelyPoint(cap.x, cap.y)
                 host = next(
-                    (c for o, c in cont_outlines
-                     if o.intersects(fp) and o.intersection(fp).area > 0),
+                    (c for h, c in cont_hulls if h.contains(cap_pt)),
                     None,
                 )
                 is_inside = host is not None
@@ -140,13 +142,14 @@ class CKL02005(ChecklistRule):
                 actual_pkg   = _package_name(cap, packages)
                 is_dpad      = (actual_pkg == expected_pkg)
 
-                passed = (is_inside == is_dpad)
-                status = "PASS" if passed else "FAIL"
+                passed   = (is_inside == is_dpad)
+                status   = "PASS" if passed else "FAIL"
                 location = "INSIDE" if is_inside else "OUTSIDE"
 
-                # In INSIDE rows the expected pkg is the D-pad geom;
-                # in OUTSIDE rows the expectation is "anything but" that geom.
-                expected_disp = expected_pkg if is_inside else f"!= {expected_pkg}"
+                # In INSIDE rows, expected pkg is the D-pad geom.
+                # In OUTSIDE rows, expectation is "anything but" that geom.
+                expected_disp = (expected_pkg if is_inside
+                                 else f"!= {expected_pkg}")
 
                 rows.append({
                     "comp":         cap.comp_name,
@@ -158,28 +161,39 @@ class CKL02005(ChecklistRule):
                     "actual_pkg":   actual_pkg,
                     "status":       status,
                 })
-
-                safe = cap.comp_name.replace("/", "_")
-                img_path = image_dir / f"{safe}_{layer_name}.png"
-                render_dpad_mask_image(
-                    cap, host, packages,
-                    mask_lf, mask_layer_name or "soldermask",
-                    img_path,
-                    rule_id=self.rule_id,
-                    layer_name=layer_name,
-                    is_bottom=is_bottom,
-                    location=location,
-                    expected_pkg=expected_disp,
-                    actual_pkg=actual_pkg,
-                    status=status,
-                    user_symbols=user_symbols,
-                    font=font,
-                )
-                images.append({
-                    "path": img_path,
-                    "title": f"{cap.comp_name} ({layer_name}) — {status}",
-                    "width": 500,
+                cap_items.append({
+                    "cap":      cap,
+                    "host":     host,
+                    "location": location,
+                    "status":   status,
                 })
+
+            if not cap_items:
+                continue
+
+            mask_layer_name, mask_lf = _pick_soldermask_layer(
+                layers_data, is_bottom=is_bottom
+            )
+            img_path = image_dir / f"dpad_{layer_name.lower()}.png"
+            render_dpad_side_image(
+                cap_items, containers, packages,
+                mask_lf, mask_layer_name or "soldermask",
+                img_path,
+                rule_id=self.rule_id,
+                layer_name=layer_name,
+                is_bottom=is_bottom,
+                user_symbols=user_symbols,
+                font=font,
+            )
+            n_fail = sum(1 for it in cap_items if it["status"] == "FAIL")
+            images.append({
+                "path": img_path,
+                "title": (
+                    f"{layer_name} side ({mask_layer_name or 'soldermask'}) — "
+                    f"{len(cap_items)} cap(s), {n_fail} FAIL"
+                ),
+                "width": 700,
+            })
 
         fail_count = sum(1 for r in rows if r["status"] == "FAIL")
         passed_all = fail_count == 0
