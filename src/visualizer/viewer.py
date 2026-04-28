@@ -348,11 +348,15 @@ class PcbViewer:
                 continue
             features, matrix_layer = self.layers_data[layer_name]
             color = LAYER_COLORS.get(matrix_layer.type, "#CC0000")
+            # PcbViewer shows the full stackup from above — all layers (top
+            # and bottom) are rendered in native board coordinates without
+            # flipping.  flip_x is only applied in single-layer viewers
+            # (CopperRatioViewer, NetViewer) where a "view from below"
+            # convention makes sense.
             render_layer(self.ax, features, color=color,
                          layer_type=matrix_layer.type,
                          alpha=0.7, user_symbols=self.user_symbols,
-                         font=self.font,
-                         flip_x=is_bottom_layer(layer_name))
+                         font=self.font)
 
         packages = self.eda_data.packages if self.eda_data else None
         if COMP_TOP_KEY in self._visible_set and self.components_top:
@@ -1242,8 +1246,9 @@ class CopperRatioViewer:
         self.ax.clear()
         _style_axes(self.ax)
 
+        flip = is_bottom_layer(self._selected_layer or "")
         if self.profile and self.profile.surface:
-            _draw_profile(self.ax, self.profile)
+            _draw_profile(self.ax, self.profile, flip_x=flip)
 
         if self._selected_layer and self._selected_layer in self.layers_data:
             features, matrix_layer = self.layers_data[self._selected_layer]
@@ -1252,7 +1257,7 @@ class CopperRatioViewer:
                          layer_type=matrix_layer.type,
                          alpha=0.85, user_symbols=self.user_symbols,
                          font=self.font,
-                         flip_x=is_bottom_layer(self._selected_layer))
+                         flip_x=flip)
 
         if self._subsection_ratios is not None:
             self._draw_subsection_overlay()
@@ -1977,7 +1982,7 @@ class NetViewer:
         self.ax.clear()
         _style_axes(self.ax)
         if self.profile and self.profile.surface:
-            _draw_profile(self.ax, self.profile)
+            _draw_profile(self.ax, self.profile, flip_x=flip)
 
         # Background: full layer at low opacity
         color = LAYER_COLORS.get(matrix_layer.type, "#008E5C")
@@ -2026,10 +2031,11 @@ class NetViewer:
     def _draw_board_only(self):
         self.ax.clear()
         _style_axes(self.ax)
-        if self.profile and self.profile.surface:
-            _draw_profile(self.ax, self.profile)
 
         layer = self._selected_layer or ""
+        flip = is_bottom_layer(layer)
+        if self.profile and self.profile.surface:
+            _draw_profile(self.ax, self.profile, flip_x=flip)
         if layer and layer in self.layers_data:
             _, matrix_layer = self.layers_data[layer]
             color = LAYER_COLORS.get(matrix_layer.type, "#008E5C")
@@ -2041,7 +2047,7 @@ class NetViewer:
                 alpha=0.4,
                 user_symbols=self.user_symbols,
                 font=self.font,
-                flip_x=is_bottom_layer(layer),
+                flip_x=flip,
             )
 
         self.ax.set_xlabel("X", color="#000000")

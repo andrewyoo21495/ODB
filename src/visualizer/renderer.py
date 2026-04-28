@@ -120,8 +120,15 @@ def render_single_layer(features: LayerFeatures,
 
 
 def _draw_profile(ax: Axes, profile: Profile,
-                  fill: bool = True, outline_color: str = "#FF0000"):
-    """Draw the board outline from profile data."""
+                  fill: bool = True, outline_color: str = "#FF0000",
+                  flip_x: bool = False):
+    """Draw the board outline from profile data.
+
+    Args:
+        flip_x: When True, negate all X coordinates so the outline matches
+            a layer rendered with ``render_layer(flip_x=True)`` (bottom-side
+            single-layer view).
+    """
     if not profile.surface:
         return
 
@@ -129,6 +136,10 @@ def _draw_profile(ax: Axes, profile: Profile,
         verts = contour_to_vertices(contour)
         if len(verts) < 3:
             continue
+
+        if flip_x:
+            verts = verts.copy()
+            verts[:, 0] = -verts[:, 0]
 
         if fill and contour.is_island:
             from matplotlib.patches import Polygon
