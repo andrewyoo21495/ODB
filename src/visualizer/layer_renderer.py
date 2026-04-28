@@ -55,8 +55,7 @@ def render_layer(ax: Axes, features: LayerFeatures,
                  user_symbols: dict[str, UserSymbol] = None,
                  font: StrokeFont = None,
                  max_features: int = None,
-                 flip_x: bool = False,
-                 flip_shape: bool = False):
+                 flip_x: bool = False):
     """Render all features of a layer onto a matplotlib axes.
 
     Args:
@@ -92,8 +91,7 @@ def render_layer(ax: Axes, features: LayerFeatures,
 
         if isinstance(feature, PadRecord):
             _draw_pad(ax, feature, sym_lookup, features.units,
-                      user_symbols, eff_color, eff_alpha,
-                      flip_x=flip_x, flip_shape=flip_shape)
+                      user_symbols, eff_color, eff_alpha, flip_x=flip_x)
         elif isinstance(feature, LineRecord):
             _draw_line(ax, feature, sym_lookup, features.units,
                        eff_color, eff_alpha, flip_x=flip_x)
@@ -113,24 +111,15 @@ def render_layer(ax: Axes, features: LayerFeatures,
 def _draw_pad(ax: Axes, pad: PadRecord, sym_lookup: dict[int, SymbolRef],
               units: str, user_symbols: dict = None,
               color: str = "blue", alpha: float = 0.7,
-              flip_x: bool = False, flip_shape: bool = False):
-    """Draw a pad feature.
-
-    flip_x: mirror the entire pad about x=0 — moves position and flips shape.
-        Used by single-layer viewers (CopperRatioViewer, NetViewer) to display
-        bottom-side layers in "view from below" mode.
-    flip_shape: flip the pad shape in-place without moving its position —
-        negates rotation and inverts mirror but keeps x unchanged.
-        Used by PcbViewer for bottom-side layers whose orient_def is stored in
-        bottom-view convention (component-side perspective).
-    """
+              flip_x: bool = False):
+    """Draw a pad feature."""
     sym_ref = sym_lookup.get(pad.symbol_idx)
     if not sym_ref:
         return
 
-    x      = -pad.x       if flip_x else pad.x
-    rot    = -pad.rotation if (flip_x or flip_shape) else pad.rotation
-    mirror = (not pad.mirror) if (flip_x or flip_shape) else pad.mirror
+    x       = -pad.x        if flip_x else pad.x
+    rot     = -pad.rotation  if flip_x else pad.rotation
+    mirror  = (not pad.mirror) if flip_x else pad.mirror
 
     # Check if it's a user-defined symbol
     if user_symbols and sym_ref.name in user_symbols:
