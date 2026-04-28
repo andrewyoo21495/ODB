@@ -1,10 +1,9 @@
 """Visualization for CKL-02-005 D-pad capacitor checks.
 
-Produces one image per board side (Top/Bottom) showing the SMT or SMB
-solder-mask layer as the background, with all evaluated D-pad list
-capacitors drawn over it — green for PASS, red for FAIL — and the
-Shield Can / Interposer "inside regions" (convex hulls of their
-pad/outline points) drawn faintly behind for context.
+Renders the SMT (top) or SMB (bottom) solder-mask layer features as the
+background near the target capacitor, with the capacitor footprint and the
+optional Shield Can / Interposer outline overlaid.  Used to visually confirm
+whether the D-pad / regular pad opening is correctly applied for each cap.
 """
 
 from __future__ import annotations
@@ -71,7 +70,7 @@ def _feature_in_bbox(feat, bbox) -> bool:
 
 
 def _filter_features(features: LayerFeatures, bbox) -> LayerFeatures:
-    """Return a LayerFeatures with only features near *bbox*."""
+    """Return a LayerFeatures with only features overlapping *bbox*."""
     return LayerFeatures(
         units=features.units,
         id=features.id,
@@ -87,9 +86,9 @@ def _filter_features(features: LayerFeatures, bbox) -> LayerFeatures:
 # Main render function
 # ---------------------------------------------------------------------------
 
-def render_dpad_side_image(
-    cap_items: list[dict],
-    containers: list,
+def render_dpad_mask_image(
+    cap,
+    container,
     packages,
     mask_lf: LayerFeatures | None,
     mask_layer_name: str,
@@ -98,157 +97,127 @@ def render_dpad_side_image(
     rule_id: str,
     layer_name: str,
     is_bottom: bool,
+    location: str,            # "INSIDE" or "OUTSIDE"
+    expected_pkg: str,
+    actual_pkg: str,
+    status: str,              # "PASS" or "FAIL"
     user_symbols: dict | None = None,
     font=None,
-    margin: float = 2.0,
+    margin: float = 1.5,
 ) -> Path:
-    """Render one side's D-pad evaluation as a single PNG.
+    """Render one capacitor on top of the SMT/SMB solder-mask layer.
 
     Parameters
     ----------
-    cap_items : list[dict]
-        One entry per evaluated capacitor on this side. Each dict must have:
-          - "cap":    Component
-          - "status": "PASS" or "FAIL"
-          - "location": "INSIDE" or "OUTSIDE"
-        Optional:
-          - "host":   Component (the container this cap sits inside, if any)
-    containers : list[Component]
-        All Shield Cans / Interposers on this side (used for context overlay).
+    cap : Component
+        The capacitor under evaluation.
+    container : Component | None
+        The Shield Can / Interposer that hosts *cap* (None if outside).
+    packages : list[Package]
     mask_lf : LayerFeatures | None
-        Solder-mask features for the same side as the caps.
+        Solder-mask layer features for the same side as *cap*.  When None,
+        only the geometric overlay (cap + container) is drawn.
     mask_layer_name : str
-        Layer name shown in title / legend (e.g. "smt", "smb").
+        Layer name shown in the title / legend (e.g. "smt", "smb").
+    margin : float
+        Extra space (mm) around the cap+container bbox.
     """
-    # Pre-compute container hulls (= "inside region") and frame outlines
-    cont_hulls   = []
-    cont_frames  = []
-    for cont in containers:
-        hull = _resolve_footprint(cont, packages, is_bottom=is_bottom)
-        if hull is not None and not hull.is_empty:
-            cont_hulls.append((cont, hull))
-        frame = _resolve_outline(cont, packages, is_bottom=is_bottom)
-        if frame is not None and not frame.is_empty:
-            cont_frames.append((cont, frame))
-
-    # Pre-compute cap footprints
-    cap_geoms: list[tuple[dict, object]] = []
-    for item in cap_items:
-        fp = _resolve_footprint(item["cap"], packages, is_bottom=is_bottom)
-        if fp is not None and not fp.is_empty:
-            cap_geoms.append((item, fp))
-
-    # Compute viewport bbox covering caps + container hulls
-    geoms_for_bbox = [g for _, g in cap_geoms]
-    geoms_for_bbox += [h for _, h in cont_hulls]
-    if not geoms_for_bbox:
+    cap_outline = _resolve_outline(cap, packages, is_bottom=is_bottom)
+    cap_fp      = _resolve_footprint(cap, packages, is_bottom=is_bottom)
+    cap_display = cap_fp or cap_outline
+    if cap_display is None or cap_display.is_empty:
         return output_path
-    minx = min(g.bounds[0] for g in geoms_for_bbox) - margin
-    miny = min(g.bounds[1] for g in geoms_for_bbox) - margin
-    maxx = max(g.bounds[2] for g in geoms_for_bbox) + margin
-    maxy = max(g.bounds[3] for g in geoms_for_bbox) + margin
 
-    # Figure
-    fig_w = max(8.0, min(16.0, (maxx - minx) * 0.5 + 4))
-    fig_h = max(8.0, min(16.0, (maxy - miny) * 0.5 + 4))
-    fig, ax = plt.subplots(1, 1, figsize=(fig_w, fig_h))
+    cont_outline = None
+    if container is not None:
+        cont_outline = _resolve_outline(container, packages, is_bottom=is_bottom)
+
+    # Build viewport bbox covering cap and (optional) container.
+    geoms = [g for g in (cap_display, cont_outline)
+             if g is not None and not g.is_empty]
+    minx = min(g.bounds[0] for g in geoms) - margin
+    miny = min(g.bounds[1] for g in geoms) - margin
+    maxx = max(g.bounds[2] for g in geoms) + margin
+    maxy = max(g.bounds[3] for g in geoms) + margin
+
+    fig, ax = plt.subplots(1, 1, figsize=(10, 10))
     ax.set_facecolor("white")
     ax.set_aspect("equal")
 
-    n_pass = sum(1 for it in cap_items if it["status"] == "PASS")
-    n_fail = sum(1 for it in cap_items if it["status"] == "FAIL")
-    overall = "FAIL" if n_fail else ("PASS" if n_pass else "N/A")
-
-    ax.set_title(
-        f"{rule_id}  —  {mask_layer_name} ({layer_name})\n"
-        f"D-pad caps:  PASS={n_pass}  FAIL={n_fail}   overall=[{overall}]",
-        fontsize=11, fontweight="bold",
+    title = (
+        f"{cap.comp_name} ({cap.part_name or ''})  —  "
+        f"{mask_layer_name} ({layer_name})\n"
+        f"{rule_id}: D-pad / regular pad on solder mask  [{status}]"
     )
+    ax.set_title(title, fontsize=11, fontweight="bold")
 
-    # --- background: solder-mask features within viewport ------------------
+    # --- background: solder-mask features in viewport ----------------------
     if mask_lf is not None:
         local = _filter_features(mask_lf, (minx, miny, maxx, maxy))
         if local.features:
             render_layer(
                 ax, local,
-                color="#00AA00", layer_type="SOLDER_MASK", alpha=0.35,
+                color="#00AA00", layer_type="SOLDER_MASK", alpha=0.45,
                 user_symbols=user_symbols, font=font,
             )
 
-    # --- container "inside regions" (faint blue fill) ----------------------
-    for cont, hull in cont_hulls:
-        _draw_geom(
-            ax, hull,
-            facecolor="#B0C4DE", edgecolor="steelblue",
-            alpha=0.18, linewidth=1.0,
-        )
-
-    # --- container frame outlines (dashed grey) ----------------------------
-    for cont, frame in cont_frames:
+    # --- container outline (dashed grey) -----------------------------------
+    if cont_outline is not None and not cont_outline.is_empty:
         first = True
-        for xs, ys in _shapely_to_arrays(frame):
+        for xs, ys in _shapely_to_arrays(cont_outline):
             ax.plot(
                 xs, ys,
-                color="#444444", linewidth=1.2, linestyle="--",
-                zorder=3,
-                label=("Container frame" if first else None),
+                color="#444444", linewidth=1.5, linestyle="--",
+                label=("Container outline" if first else None),
+                zorder=4,
             )
             first = False
-        # label container name at its centroid
-        try:
-            cx, cy = frame.centroid.x, frame.centroid.y
-            ax.text(cx, cy, cont.comp_name,
-                    fontsize=7, color="#222222",
-                    ha="center", va="center",
-                    alpha=0.8, zorder=4,
-                    bbox=dict(boxstyle="round,pad=0.2",
-                              facecolor="white", edgecolor="#888888",
-                              alpha=0.7))
-        except Exception:
-            pass
 
-    # --- caps coloured by PASS/FAIL ---------------------------------------
-    for item, fp in cap_geoms:
-        cap   = item["cap"]
-        fail  = (item["status"] == "FAIL")
-        edge  = "darkred" if fail else "darkgreen"
-        fill  = "#FFB0B0" if fail else "#90EE90"
-        _draw_geom(
-            ax, fp,
-            facecolor=fill, edgecolor=edge,
-            alpha=0.7, linewidth=1.4, zorder=5,
-        )
-        # small annotation with comp_name and status
-        label = f"{cap.comp_name}\n{item['location']}/{item['status']}"
-        ax.annotate(
-            label,
-            (cap.x, cap.y),
-            textcoords="offset points", xytext=(8, 8),
-            fontsize=6, color=edge,
-            bbox=dict(boxstyle="round,pad=0.2",
-                      facecolor="white", edgecolor=edge, alpha=0.85),
-            arrowprops=dict(arrowstyle="-", color=edge, lw=0.6),
-            zorder=6,
-        )
+    # --- capacitor footprint (PASS green / FAIL red) -----------------------
+    fail = (status == "FAIL")
+    edge = "darkred" if fail else "darkgreen"
+    fill = "#FFB0B0" if fail else "#90EE90"
+    _draw_geom(
+        ax, cap_display,
+        facecolor=fill, edgecolor=edge,
+        alpha=0.55, linewidth=1.6,
+    )
+    ax.plot(cap.x, cap.y, "s", color=edge, markersize=7,
+            markeredgewidth=1.5, zorder=5)
 
-    # --- viewport ---------------------------------------------------------
+    # --- info text (location + expected vs actual pkg) ---------------------
+    info_lines = [
+        f"location:     {location}",
+        f"expected pkg: {expected_pkg}",
+        f"actual pkg:   {actual_pkg}",
+    ]
+    ax.text(
+        0.02, 0.02, "\n".join(info_lines),
+        transform=ax.transAxes,
+        fontsize=9, family="monospace",
+        verticalalignment="bottom",
+        bbox=dict(boxstyle="round,pad=0.4", facecolor="white",
+                  edgecolor=edge, alpha=0.9),
+        zorder=6,
+    )
+
+    # --- viewport ----------------------------------------------------------
     ax.set_xlim(minx, maxx)
     ax.set_ylim(miny, maxy)
 
-    # --- legend -----------------------------------------------------------
+    # --- legend ------------------------------------------------------------
     legend_elements = [
-        mpatches.Patch(facecolor="#00AA00", alpha=0.35,
+        mpatches.Patch(facecolor="#00AA00", alpha=0.45,
                        label=f"{mask_layer_name} (solder mask)"),
-        mpatches.Patch(facecolor="#B0C4DE", edgecolor="steelblue",
-                       alpha=0.5,
-                       label="Container inside region (convex hull)"),
-        plt.Line2D([0], [0], color="#444444", linewidth=1.2,
-                   linestyle="--", label="Container frame"),
-        mpatches.Patch(facecolor="#90EE90", edgecolor="darkgreen",
-                       alpha=0.7, label="Cap PASS"),
-        mpatches.Patch(facecolor="#FFB0B0", edgecolor="darkred",
-                       alpha=0.7, label="Cap FAIL"),
+        mpatches.Patch(facecolor=fill, edgecolor=edge, alpha=0.55,
+                       label=f"Capacitor [{status}]"),
     ]
+    if cont_outline is not None and not cont_outline.is_empty:
+        legend_elements.append(
+            plt.Line2D([0], [0], color="#444444", linewidth=1.5,
+                       linestyle="--",
+                       label=f"Container ({container.comp_name})")
+        )
     ax.legend(handles=legend_elements, loc="upper left", fontsize=8)
     ax.set_xlabel("X (mm)")
     ax.set_ylabel("Y (mm)")
