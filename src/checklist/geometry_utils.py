@@ -771,7 +771,7 @@ def _get_outermost_pad_union(comp: Component, packages: list[Package],
         pad_polys = []
         for tp in outer_tps:
             geom = tp.geom
-            pad_rot = geom.rotation
+            pad_rot = -geom.rotation if is_bottom else geom.rotation
             if geom.is_user_symbol and geom.symbol_name in user_symbols:
                 g = _user_symbol_to_shapely(
                     user_symbols[geom.symbol_name],
@@ -1158,7 +1158,9 @@ def _get_pad_union(comp: Component, packages: list[Package],
         if tp.geom is None:
             continue
         geom = tp.geom
-        pad_rot = geom.rotation
+        # is_bottom rotation correction mirrors the view-path logic in
+        # component_overlay._draw_component_geometry().
+        pad_rot = -geom.rotation if is_bottom else geom.rotation
 
         if geom.is_user_symbol and geom.symbol_name in user_symbols:
             g = _user_symbol_to_shapely(
