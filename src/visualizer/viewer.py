@@ -351,7 +351,8 @@ class PcbViewer:
             render_layer(self.ax, features, color=color,
                          layer_type=matrix_layer.type,
                          alpha=0.7, user_symbols=self.user_symbols,
-                         font=self.font)
+                         font=self.font,
+                         flip_shape=is_bottom_layer(layer_name))
 
         packages = self.eda_data.packages if self.eda_data else None
         if COMP_TOP_KEY in self._visible_set and self.components_top:
