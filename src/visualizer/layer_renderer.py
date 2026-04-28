@@ -55,7 +55,8 @@ def render_layer(ax: Axes, features: LayerFeatures,
                  user_symbols: dict[str, UserSymbol] = None,
                  font: StrokeFont = None,
                  max_features: int = None,
-                 flip_x: bool = False):
+                 flip_x: bool = False,
+                 flip_shape: bool = False):
     """Render all features of a layer onto a matplotlib axes.
 
     Args:
@@ -67,6 +68,13 @@ def render_layer(ax: Axes, features: LayerFeatures,
         user_symbols: Dict of user-defined symbols for resolving references
         font: Stroke font for text rendering
         max_features: Limit number of features rendered (for performance)
+        flip_x: Mirror the entire layer about x=0 (negates x, rotation, mirror).
+            Used in single-layer viewers to display bottom-side layers in
+            "view from below" mode.
+        flip_shape: Flip each pad's shape in-place without moving its position
+            (negates rotation, inverts mirror, keeps x unchanged).
+            Used for bottom-side layers whose orient_def is stored in
+            bottom-view convention, when positions must stay in board coords.
     """
     if color is None:
         color = LAYER_COLORS.get(layer_type, "#CC0000")
@@ -91,7 +99,8 @@ def render_layer(ax: Axes, features: LayerFeatures,
 
         if isinstance(feature, PadRecord):
             _draw_pad(ax, feature, sym_lookup, features.units,
-                      user_symbols, eff_color, eff_alpha, flip_x=flip_x)
+                      user_symbols, eff_color, eff_alpha,
+                      flip_x=flip_x, flip_shape=flip_shape)
         elif isinstance(feature, LineRecord):
             _draw_line(ax, feature, sym_lookup, features.units,
                        eff_color, eff_alpha, flip_x=flip_x)
@@ -111,15 +120,15 @@ def render_layer(ax: Axes, features: LayerFeatures,
 def _draw_pad(ax: Axes, pad: PadRecord, sym_lookup: dict[int, SymbolRef],
               units: str, user_symbols: dict = None,
               color: str = "blue", alpha: float = 0.7,
-              flip_x: bool = False):
+              flip_x: bool = False, flip_shape: bool = False):
     """Draw a pad feature."""
     sym_ref = sym_lookup.get(pad.symbol_idx)
     if not sym_ref:
         return
 
-    x       = -pad.x        if flip_x else pad.x
-    rot     = -pad.rotation  if flip_x else pad.rotation
-    mirror  = (not pad.mirror) if flip_x else pad.mirror
+    x      = -pad.x       if flip_x else pad.x
+    rot    = -pad.rotation if (flip_x or flip_shape) else pad.rotation
+    mirror = (not pad.mirror) if (flip_x or flip_shape) else pad.mirror
 
     # Check if it's a user-defined symbol
     if user_symbols and sym_ref.name in user_symbols:

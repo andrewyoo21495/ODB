@@ -9,14 +9,9 @@ Coordinate convention
 ---------------------
 ODB++ stores ALL layer features (top and bottom) in the same absolute
 top-view board coordinate system.  All geometries — layer features and
-cap/container footprints — are therefore already in native board coords
-and need no additional coordinate transformation.
-
-For Bottom-side images the X axis is visually reversed with
-``ax.invert_xaxis()`` so the image reads as "view from below" without
-modifying any coordinates.  The solder-mask layer is rendered with
-``flip_x=False`` for both sides so it remains aligned with the overlaid
-footprint geometries.
+cap/container footprints — are in native board coordinates.  No flipping
+or axis inversion is applied; the image is always shown in top-view,
+consistent with PcbViewer and all other visualizations in this project.
 """
 
 from __future__ import annotations
@@ -132,8 +127,8 @@ def render_dpad_side_image(
     mask_layer_name : str
         Layer name shown in title / legend (e.g. "smt", "smb").
     is_bottom : bool
-        When True, ``ax.invert_xaxis()`` is called after drawing to
-        produce a "view from below" without shifting any coordinates.
+        Indicates which board side is being shown. Used only for the
+        image title; all coordinates are in native board coords regardless.
     """
     # Resolve geometries — all in top-view board coordinates.
     cont_hulls:  list[tuple] = []
@@ -177,8 +172,8 @@ def render_dpad_side_image(
     )
 
     # Background: solder-mask features near the viewport.
-    # Rendered at native board coordinates (flip_x=False) for both sides
-    # so features stay aligned with the cap/container footprint overlays.
+    # All coordinates are in native board coordinate system (top-view),
+    # consistent with PcbViewer and all other visualizations.
     if mask_lf is not None:
         local = _filter_features(mask_lf, (minx, miny, maxx, maxy))
         if local.features:
@@ -186,7 +181,6 @@ def render_dpad_side_image(
                 ax, local,
                 color="#00AA00", layer_type="SOLDER_MASK", alpha=0.35,
                 user_symbols=user_symbols, font=font,
-                flip_x=False,
             )
 
     # Container "inside regions" (convex hull, faint blue fill).
@@ -243,14 +237,9 @@ def render_dpad_side_image(
             zorder=6,
         )
 
-    # Viewport — native board coordinates.
+    # Viewport — native board coordinates (top-view) for all sides.
     ax.set_xlim(minx, maxx)
     ax.set_ylim(miny, maxy)
-
-    # For bottom-side images, invert the X axis to present a "view from
-    # below" without displacing any geometry coordinates.
-    if is_bottom:
-        ax.invert_xaxis()
 
     # Legend.
     legend_elements = [
@@ -267,9 +256,7 @@ def render_dpad_side_image(
                        alpha=0.7, label="Cap FAIL"),
     ]
     ax.legend(handles=legend_elements, loc="upper left", fontsize=8)
-    ax.set_xlabel(
-        "X (mm)" + ("  [X axis reversed — bottom view]" if is_bottom else "")
-    )
+    ax.set_xlabel("X (mm)")
     ax.set_ylabel("Y (mm)")
     ax.grid(True, alpha=0.3)
 
