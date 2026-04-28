@@ -10,14 +10,16 @@ Coordinate convention
 ---------------------
 ODB++ stores ALL layer features (top and bottom) in the same absolute
 top-view board coordinate system.  ``_resolve_footprint(is_bottom=True)``
-also returns geometries in this same coordinate system (the package mirror
-is applied around the component centroid, not around the board origin).
-Therefore no coordinate transformation is applied to either the layer
-features or the cap/container geometries.
+returns geometries in this same coordinate system (the package mirror is
+applied around the component centroid, not the board origin).  Therefore
+no coordinate transformation is needed to align layer features with cap /
+container footprints — both are already in native board coords.
 
-For Bottom-side images the X axis direction is reversed with
-``ax.invert_xaxis()`` so the image reads as a "view from below", matching
-the interactive viewer's flip_x convention without displacing geometries.
+For Bottom-side images ``render_layer(flip_shape=True)`` is used instead of
+``flip_x=True``.  This mirrors each asymmetric pad shape (D-pads, polygons,
+user-defined symbols) in-place by inverting the mirror flag and negating
+rotation, without moving the pad's board-coordinate position.  Symmetric
+standard pads (circles, squares) are visually unchanged.
 """
 
 from __future__ import annotations
@@ -181,8 +183,10 @@ def render_dpad_side_image(
     )
 
     # Background: solder-mask features near the viewport.
-    # Rendered at native board coordinates (flip_x=False); the visual
-    # mirror for the bottom side is handled by ax.invert_xaxis() below.
+    # Coordinates are left in native board space so they align with the cap
+    # and container footprints (also in native board space).  flip_shape=True
+    # for the bottom side flips asymmetric pad shapes (D-pads, polygons,
+    # user-defined symbols) in-place without moving their positions.
     if mask_lf is not None:
         local = _filter_features(mask_lf, (minx, miny, maxx, maxy))
         if local.features:
@@ -190,7 +194,7 @@ def render_dpad_side_image(
                 ax, local,
                 color="#00AA00", layer_type="SOLDER_MASK", alpha=0.35,
                 user_symbols=user_symbols, font=font,
-                flip_x=False,
+                flip_x=False, flip_shape=is_bottom,
             )
 
     # Container "inside regions" (convex hull, faint blue fill).
@@ -247,13 +251,9 @@ def render_dpad_side_image(
             zorder=6,
         )
 
-    # Viewport and axis orientation.
+    # Viewport — native board coordinates, no axis inversion.
     ax.set_xlim(minx, maxx)
     ax.set_ylim(miny, maxy)
-    if is_bottom:
-        # Invert X axis to produce a "view from below" without displacing
-        # any geometry coordinates (matching the viewer's flip convention).
-        ax.invert_xaxis()
 
     # Legend.
     legend_elements = [
@@ -270,7 +270,7 @@ def render_dpad_side_image(
                        alpha=0.7, label="Cap FAIL"),
     ]
     ax.legend(handles=legend_elements, loc="upper left", fontsize=8)
-    ax.set_xlabel("X (mm)" + ("  [X axis reversed — bottom view]" if is_bottom else ""))
+    ax.set_xlabel("X (mm)")
     ax.set_ylabel("Y (mm)")
     ax.grid(True, alpha=0.3)
 
