@@ -1,16 +1,9 @@
-"""CKL-02-005: D-pad application on capacitors — bidirectional check.
+"""CKL-02-005: D-pad application on capacitors inside Shield Cans / Interposers.
 
-For every capacitor whose part_name appears in
-``references/dpad_capacitors.csv``:
-
-* If the capacitor sits **inside** a Shield Can (SC*) or Interposer (INP*)
-  outline, its EDA package name (PKG) must equal the ``option_geom_after``
-  value from the CSV (= D-pad applied).
-* If it sits **outside**, the package must NOT equal ``option_geom_after``
-  (= regular pad, D-pad must not be applied).
-
-The verdict therefore reduces to ``passed = (is_inside == is_dpad)``.
-The ``option_geom_before`` column is not used in evaluation.
+Capacitors listed in ``references/dpad_capacitors.csv`` that sit inside the
+outline of a Shield Can (SC*) or Interposer (INP*) must have a semi-circle
+(D-shape) pad opening on the same-side solder-mask layer (``smt`` for Top,
+``smb`` for Bottom).
 """
 
 from __future__ import annotations
@@ -27,28 +20,36 @@ from src.checklist.geometry_utils import (
 )
 from src.checklist.reference_loader import load_reference_csv
 from src.checklist.rule_base import ChecklistRule
-from src.checklist.visualizers.dpad_mask_viz import render_dpad_mask_image
-from src.models import Component, Package, RuleResult
+from src.checklist.visualizers.overlap_viz import render_overlap_image
+from src.models import PadRecord, RuleResult
+
+
+_D_SHAPE_TOKENS = ("_D_THMC", "_D_", "DE_")
 
 
 def _load_dpad_part_map() -> dict[str, str]:
-    """Return {part_name: option_geom_after} from dpad_capacitors.csv.
+    """Return {part_name: option_geom_after} from dpad_capacitors.csv."""
+    rows = load_reference_csv("dpad_capacitors.csv")
+    return {
+        r["part_name"]: (r.get("option_geom_after") or "").strip()
+        for r in rows if r.get("part_name")
+    }
 
-    Rows missing either column are dropped — they cannot be evaluated.
-    """
-    out: dict[str, str] = {}
-    for r in load_reference_csv("dpad_capacitors.csv"):
-        pn = (r.get("part_name") or "").strip()
-        gm = (r.get("option_geom_after") or "").strip()
-        if pn and gm:
-            out[pn] = gm
-    return out
+
+def _is_d_shape_symbol(symbol_name: str, expected_geoms: set[str]) -> bool:
+    """Return True if *symbol_name* represents a semi-circle (D-shape) pad."""
+    if not symbol_name:
+        return False
+    if symbol_name in expected_geoms:
+        return True
+    upper = symbol_name.upper()
+    return any(tok in upper for tok in _D_SHAPE_TOKENS)
 
 
 def _pick_soldermask_layer(layers_data: dict, *, is_bottom: bool):
-    """Return (layer_name, LayerFeatures) for the side's solder mask, or (None, None)."""
+    """Return the top/bottom solder-mask LayerFeatures, excluding coverlays."""
     if not layers_data:
-        return None, None
+        return None
     side_hints_bot = ("bottom", "_bot", "_b", "smb", "bot")
     side_hints_top = ("top", "_top", "_t", "smt")
     side_hints = side_hints_bot if is_bottom else side_hints_top
@@ -60,41 +61,43 @@ def _pick_soldermask_layer(layers_data: dict, *, is_bottom: bool):
             continue
         if (ml.add_type or "").upper() == "COVERLAY":
             continue
-        if any(h in name.lower() for h in side_hints):
-            return name, lf
-    return None, None
+        lname = name.lower()
+        if any(h in lname for h in side_hints):
+            return lf
+    return None
 
 
-def _package_name(comp: Component, packages: list[Package]) -> str:
-    if 0 <= comp.pkg_ref < len(packages):
-        return packages[comp.pkg_ref].name or ""
-    return ""
+def _iter_pad_records(lf) -> list[PadRecord]:
+    return [f for f in (lf.features if lf else []) if isinstance(f, PadRecord)]
+
+
+def _symbol_name(lf, symbol_idx: int) -> str:
+    if lf is None or symbol_idx < 0 or symbol_idx >= len(lf.symbols):
+        return ""
+    return lf.symbols[symbol_idx].name or ""
 
 
 @register_rule
 class CKL02005(ChecklistRule):
     rule_id = "CKL-02-005"
     description = (
-        "D-pad list capacitors must use the D-pad package only when located "
-        "inside a Shield Can / Interposer; outside, the regular package is required."
+        "D-pad list capacitors located inside Shield Cans or Interposers must "
+        "have a semi-circle (D-shape) opening on the SMT/SMB solder-mask layer."
     )
     category = "Placement"
 
     def evaluate(self, job_data: dict) -> RuleResult:
         components_top = job_data.get("components_top", [])
         components_bot = job_data.get("components_bot", [])
-        eda            = job_data.get("eda_data")
-        layers_data    = job_data.get("layers_data", {})
-        user_symbols   = job_data.get("user_symbols")
-        font           = job_data.get("font")
-        packages       = eda.packages if eda else []
+        eda = job_data.get("eda_data")
+        layers_data = job_data.get("layers_data", {})
+        packages = eda.packages if eda else []
 
         dpad_map = _load_dpad_part_map()
+        dpad_parts = set(dpad_map.keys())
+        expected_geoms = {g for g in dpad_map.values() if g}
 
-        columns = [
-            "comp", "comp_layer", "part_name", "container",
-            "location", "expected_pkg", "actual_pkg", "status",
-        ]
+        columns = ["comp", "comp_layer", "part_name", "d-pad", "status"]
         rows: list[dict] = []
         images: list[dict] = []
         image_dir = Path(tempfile.mkdtemp(prefix="ckl_02_005_"))
@@ -106,102 +109,111 @@ class CKL02005(ChecklistRule):
             if not comps:
                 continue
 
+            interposers = find_interposers(comps)
+            shield_cans = find_shield_cans(comps)
+            containers = interposers + shield_cans
+            if not containers:
+                continue
+
             target_caps = [
                 c for c in find_capacitors(comps)
-                if (c.part_name or "") in dpad_map
+                if (c.part_name or "") in dpad_parts
             ]
             if not target_caps:
                 continue
 
-            # Container outlines on the same side
-            cont_outlines: list[tuple] = []
-            for cont in find_interposers(comps) + find_shield_cans(comps):
-                o = _resolve_outline(cont, packages, is_bottom=is_bottom)
-                if o is not None and not o.is_empty:
-                    cont_outlines.append((o, cont))
+            mask_lf = _pick_soldermask_layer(layers_data, is_bottom=is_bottom)
+            mask_pads = _iter_pad_records(mask_lf)
 
-            mask_layer_name, mask_lf = _pick_soldermask_layer(
-                layers_data, is_bottom=is_bottom
-            )
+            processed_caps: set[str] = set()
 
-            for cap in target_caps:
-                fp = _resolve_footprint(cap, packages, is_bottom=is_bottom)
-                if fp is None or fp.is_empty:
+            for cont in containers:
+                cont_outline = _resolve_outline(cont, packages, is_bottom=is_bottom)
+                if cont_outline is None or cont_outline.is_empty:
                     continue
 
-                host = next(
-                    (c for o, c in cont_outlines
-                     if o.intersects(fp) and o.intersection(fp).area > 0),
-                    None,
-                )
-                is_inside = host is not None
+                overlap_items: list[dict] = []
 
-                expected_pkg = dpad_map[cap.part_name]
-                actual_pkg   = _package_name(cap, packages)
-                is_dpad      = (actual_pkg == expected_pkg)
+                for cap in target_caps:
+                    if cap.comp_name in processed_caps:
+                        continue
+                    fp = _resolve_footprint(cap, packages, is_bottom=is_bottom)
+                    if fp is None or fp.is_empty:
+                        continue
+                    if not (cont_outline.intersects(fp) and
+                            cont_outline.intersection(fp).area > 0):
+                        continue
 
-                passed = (is_inside == is_dpad)
-                status = "PASS" if passed else "FAIL"
-                location = "INSIDE" if is_inside else "OUTSIDE"
+                    processed_caps.add(cap.comp_name)
 
-                # In INSIDE rows the expected pkg is the D-pad geom;
-                # in OUTSIDE rows the expectation is "anything but" that geom.
-                expected_disp = expected_pkg if is_inside else f"!= {expected_pkg}"
+                    has_d_pad = False
+                    bbox = fp.bounds
+                    minx, miny, maxx, maxy = bbox
+                    for pad in mask_pads:
+                        if not (minx <= pad.x <= maxx and miny <= pad.y <= maxy):
+                            continue
+                        sym_name = _symbol_name(mask_lf, pad.symbol_idx)
+                        if _is_d_shape_symbol(sym_name, expected_geoms):
+                            has_d_pad = True
+                            break
 
-                rows.append({
-                    "comp":         cap.comp_name,
-                    "comp_layer":   layer_name,
-                    "part_name":    cap.part_name or "",
-                    "container":    host.comp_name if host else "",
-                    "location":     location,
-                    "expected_pkg": expected_disp,
-                    "actual_pkg":   actual_pkg,
-                    "status":       status,
-                })
+                    status = "PASS" if has_d_pad else "FAIL"
+                    rows.append({
+                        "comp": cap.comp_name,
+                        "comp_layer": layer_name,
+                        "part_name": cap.part_name or "",
+                        "d-pad": "TRUE" if has_d_pad else "FALSE",
+                        "status": status,
+                    })
+                    overlap_items.append({
+                        "comp": cap,
+                        "status": status,
+                        "detail": "D-pad: " + ("TRUE" if has_d_pad else "FALSE"),
+                    })
 
-                safe = cap.comp_name.replace("/", "_")
-                img_path = image_dir / f"{safe}_{layer_name}.png"
-                render_dpad_mask_image(
-                    cap, host, packages,
-                    mask_lf, mask_layer_name or "soldermask",
-                    img_path,
-                    rule_id=self.rule_id,
-                    layer_name=layer_name,
-                    is_bottom=is_bottom,
-                    location=location,
-                    expected_pkg=expected_disp,
-                    actual_pkg=actual_pkg,
-                    status=status,
-                    user_symbols=user_symbols,
-                    font=font,
-                )
-                images.append({
-                    "path": img_path,
-                    "title": f"{cap.comp_name} ({layer_name}) — {status}",
-                    "width": 500,
-                })
+                if overlap_items:
+                    safe_name = cont.comp_name.replace("/", "_")
+                    img_path = image_dir / f"{safe_name}_{layer_name}.png"
+                    render_overlap_image(
+                        cont, packages, overlap_items, comps, img_path,
+                        rule_id=self.rule_id,
+                        title="D-pad capacitors in container",
+                        layer_name=layer_name,
+                        primary_label="Container",
+                        overlap_label="D-pad cap",
+                        primary_is_bottom=is_bottom,
+                        overlap_is_bottom=is_bottom,
+                    )
+                    images.append({
+                        "path": img_path,
+                        "title": f"{cont.comp_name} ({layer_name})",
+                        "width": 500,
+                    })
 
         fail_count = sum(1 for r in rows if r["status"] == "FAIL")
-        passed_all = fail_count == 0
+        passed = fail_count == 0
 
         if not rows:
-            message = "No D-pad list capacitors found on the board to evaluate."
-        elif passed_all:
             message = (
-                f"All {len(rows)} D-pad list capacitor(s) use the correct "
-                f"package for their location (inside vs outside containers)."
+                "No D-pad list capacitors located inside Shield Cans or "
+                "Interposers."
+            )
+        elif passed:
+            message = (
+                f"All {len(rows)} D-pad list capacitor(s) inside Shield Cans "
+                f"or Interposers have a D-shape opening on the solder-mask layer."
             )
         else:
             message = (
-                f"{fail_count} of {len(rows)} D-pad list capacitor(s) use an "
-                f"incorrect package for their location."
+                f"{fail_count} D-pad list capacitor(s) inside Shield Cans or "
+                f"Interposers are missing a D-shape solder-mask opening."
             )
 
         return RuleResult(
             rule_id=self.rule_id,
             description=self.description,
             category=self.category,
-            passed=passed_all,
+            passed=passed,
             message=message,
             affected_components=[r["comp"] for r in rows if r["status"] == "FAIL"],
             details={"columns": columns, "rows": rows},
