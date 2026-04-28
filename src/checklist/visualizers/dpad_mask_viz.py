@@ -15,9 +15,11 @@ applied around the component centroid, not the board origin).  Therefore
 no coordinate transformation is needed to align layer features with cap /
 container footprints — both are already in native board coords.
 
-The mask layer is rendered at native board coordinates (``flip_x=False``)
-for both Top and Bottom side so that it stays aligned with the component
-footprint overlays.
+For Bottom-side images ``render_layer(flip_shape=True)`` is used instead of
+``flip_x=True``.  This mirrors each asymmetric pad shape (D-pads, polygons,
+user-defined symbols) in-place by inverting the mirror flag and negating
+rotation, without moving the pad's board-coordinate position.  Symmetric
+standard pads (circles, squares) are visually unchanged.
 """
 
 from __future__ import annotations
@@ -181,8 +183,10 @@ def render_dpad_side_image(
     )
 
     # Background: solder-mask features near the viewport.
-    # Rendered at native board coordinates (flip_x=False) so they stay
-    # aligned with the cap and container footprint overlays.
+    # Coordinates are left in native board space so they align with the cap
+    # and container footprints (also in native board space).  flip_shape=True
+    # for the bottom side flips asymmetric pad shapes (D-pads, polygons,
+    # user-defined symbols) in-place without moving their positions.
     if mask_lf is not None:
         local = _filter_features(mask_lf, (minx, miny, maxx, maxy))
         if local.features:
@@ -190,7 +194,7 @@ def render_dpad_side_image(
                 ax, local,
                 color="#00AA00", layer_type="SOLDER_MASK", alpha=0.35,
                 user_symbols=user_symbols, font=font,
-                flip_x=False,
+                flip_x=False, flip_shape=is_bottom,
             )
 
     # Container "inside regions" (convex hull, faint blue fill).
