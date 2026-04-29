@@ -120,15 +120,19 @@ def _draw_pad(ax: Axes, pad: PadRecord, sym_lookup: dict[int, SymbolRef],
     if not sym_ref:
         return
 
-    x      = -pad.x       if flip_x else pad.x
+    # ODB++ pad coordinates are in global top-view board space, same as
+    # component toeprint coordinates — no position X-flip or mirror toggle
+    # is needed.  Only the rotation direction must be negated for bottom
+    # layers (CW from below appears CCW from above), matching the convention
+    # used in component_overlay.py for bottom-component pads.
     rot    = -pad.rotation if flip_x else pad.rotation
-    mirror = (not pad.mirror) if flip_x else pad.mirror
+    mirror = pad.mirror
 
     # Check if it's a user-defined symbol
     if user_symbols and sym_ref.name in user_symbols:
         patches = user_symbol_to_patches(
             user_symbols[sym_ref.name],
-            x, pad.y, rot, mirror,
+            pad.x, pad.y, rot, mirror,
             color, alpha,
         )
         for p in patches:
@@ -137,7 +141,7 @@ def _draw_pad(ax: Axes, pad: PadRecord, sym_lookup: dict[int, SymbolRef],
 
     # Standard symbol
     patch = symbol_to_patch(
-        sym_ref.name, x, pad.y,
+        sym_ref.name, pad.x, pad.y,
         rot, mirror,
         units, sym_ref.unit_override,
         color, alpha, pad.resize_factor,
