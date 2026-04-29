@@ -55,7 +55,8 @@ def render_layer(ax: Axes, features: LayerFeatures,
                  user_symbols: dict[str, UserSymbol] = None,
                  font: StrokeFont = None,
                  max_features: int = None,
-                 flip_x: bool = False):
+                 flip_x: bool = False,
+                 flip_pad: bool = False):
     """Render all features of a layer onto a matplotlib axes.
 
     Args:
@@ -67,9 +68,12 @@ def render_layer(ax: Axes, features: LayerFeatures,
         user_symbols: Dict of user-defined symbols for resolving references
         font: Stroke font for text rendering
         max_features: Limit number of features rendered (for performance)
-        flip_x: Mirror the entire layer about x=0 (negates x, rotation, mirror).
-            Used in single-layer viewers to display bottom-side layers in
-            "view from below" mode.
+        flip_x: Flip non-pad feature coordinates for bottom-layer display
+            (negates x in surfaces, lines, arcs, text, barcodes).
+        flip_pad: Apply the bottom-layer orientation correction to pad symbols
+            (negate rotation, toggle mirror).  Should be True only for SIGNAL
+            type bottom layers whose pad orient_def is in physical bottom-face
+            convention (same convention as component toeprint pads).
     """
     if color is None:
         color = LAYER_COLORS.get(layer_type, "#CC0000")
@@ -94,7 +98,7 @@ def render_layer(ax: Axes, features: LayerFeatures,
 
         if isinstance(feature, PadRecord):
             _draw_pad(ax, feature, sym_lookup, features.units,
-                      user_symbols, eff_color, eff_alpha, flip_x=flip_x)
+                      user_symbols, eff_color, eff_alpha, flip_pad=flip_pad)
         elif isinstance(feature, LineRecord):
             _draw_line(ax, feature, sym_lookup, features.units,
                        eff_color, eff_alpha, flip_x=flip_x)
@@ -114,19 +118,22 @@ def render_layer(ax: Axes, features: LayerFeatures,
 def _draw_pad(ax: Axes, pad: PadRecord, sym_lookup: dict[int, SymbolRef],
               units: str, user_symbols: dict = None,
               color: str = "blue", alpha: float = 0.7,
-              flip_x: bool = False):
-    """Draw a pad feature."""
+              flip_pad: bool = False):
+    """Draw a pad feature.
+
+    When flip_pad=True the pad symbol is rendered in top-view orientation for
+    a physical bottom-side layer: rotation is negated (CW from below = CCW
+    from above) and mirror is toggled (X-flip of the symbol shape).  This
+    matches the convention used by component_overlay.py for bottom-component
+    toeprint pads, and is only correct for SIGNAL-type bottom layers whose
+    pad orient_def is stored in physical bottom-face convention.
+    """
     sym_ref = sym_lookup.get(pad.symbol_idx)
     if not sym_ref:
         return
 
-    # ODB++ pad coordinates are in global top-view board space, same as
-    # component toeprint coordinates — no position X-flip or mirror toggle
-    # is needed.  Only the rotation direction must be negated for bottom
-    # layers (CW from below appears CCW from above), matching the convention
-    # used in component_overlay.py for bottom-component pads.
-    rot    = -pad.rotation if flip_x else pad.rotation
-    mirror = pad.mirror
+    rot    = -pad.rotation    if flip_pad else pad.rotation
+    mirror = (not pad.mirror) if flip_pad else pad.mirror
 
     # Check if it's a user-defined symbol
     if user_symbols and sym_ref.name in user_symbols:
