@@ -55,7 +55,6 @@ def render_layer(ax: Axes, features: LayerFeatures,
                  user_symbols: dict[str, UserSymbol] = None,
                  font: StrokeFont = None,
                  max_features: int = None,
-                 flip_x: bool = False,
                  flip_pad: bool = False):
     """Render all features of a layer onto a matplotlib axes.
 
@@ -68,12 +67,10 @@ def render_layer(ax: Axes, features: LayerFeatures,
         user_symbols: Dict of user-defined symbols for resolving references
         font: Stroke font for text rendering
         max_features: Limit number of features rendered (for performance)
-        flip_x: Flip non-pad feature coordinates for bottom-layer display
-            (negates x in surfaces, lines, arcs, text, barcodes).
-        flip_pad: Apply the bottom-layer orientation correction to pad symbols
-            (negate rotation, toggle mirror).  Should be True only for SIGNAL
-            type bottom layers whose pad orient_def is in physical bottom-face
-            convention (same convention as component toeprint pads).
+        flip_pad: Apply bottom-layer orientation correction to pad symbols
+            (negate rotation, toggle mirror).  True only for SIGNAL-type
+            bottom layers whose pad orient_def is in physical bottom-face
+            convention (same as component toeprint pads).
     """
     if color is None:
         color = LAYER_COLORS.get(layer_type, "#CC0000")
@@ -101,16 +98,16 @@ def render_layer(ax: Axes, features: LayerFeatures,
                       user_symbols, eff_color, eff_alpha, flip_pad=flip_pad)
         elif isinstance(feature, LineRecord):
             _draw_line(ax, feature, sym_lookup, features.units,
-                       eff_color, eff_alpha, flip_x=flip_x)
+                       eff_color, eff_alpha)
         elif isinstance(feature, ArcRecord):
             _draw_arc(ax, feature, sym_lookup, features.units,
-                      eff_color, eff_alpha, flip_x=flip_x)
+                      eff_color, eff_alpha)
         elif isinstance(feature, TextRecord):
-            _draw_text(ax, feature, font, eff_color, eff_alpha, flip_x=flip_x)
+            _draw_text(ax, feature, font, eff_color, eff_alpha)
         elif isinstance(feature, BarcodeRecord):
-            _draw_barcode(ax, feature, eff_color, eff_alpha, flip_x=flip_x)
+            _draw_barcode(ax, feature, eff_color, eff_alpha)
         elif isinstance(feature, SurfaceRecord):
-            _draw_surface(ax, feature, color, alpha, flip_x=flip_x)
+            _draw_surface(ax, feature, color, alpha)
 
         count += 1
 
@@ -159,7 +156,7 @@ def _draw_pad(ax: Axes, pad: PadRecord, sym_lookup: dict[int, SymbolRef],
 
 def _draw_line(ax: Axes, line: LineRecord, sym_lookup: dict[int, SymbolRef],
                units: str, color: str = "blue", alpha: float = 0.7,
-               n_cap: int = 16, flip_x: bool = False):
+               n_cap: int = 16):
     """Draw a line feature as a swept stadium polygon with rounded end-caps.
 
     A circle of *radius* (= half the aperture width) is swept along the line
@@ -178,8 +175,7 @@ def _draw_line(ax: Axes, line: LineRecord, sym_lookup: dict[int, SymbolRef],
     if width <= 0:
         width = 0.001
 
-    xs = -line.xs if flip_x else line.xs
-    xe = -line.xe if flip_x else line.xe
+    xs, xe = line.xs, line.xe
     ys, ye = line.ys, line.ye
 
     radius = width / 2
@@ -227,8 +223,7 @@ def _draw_line(ax: Axes, line: LineRecord, sym_lookup: dict[int, SymbolRef],
 
 
 def _draw_arc(ax: Axes, arc: ArcRecord, sym_lookup: dict[int, SymbolRef],
-              units: str, color: str = "blue", alpha: float = 0.7,
-              flip_x: bool = False):
+              units: str, color: str = "blue", alpha: float = 0.7):
     """Draw an arc feature as a filled polygon with data-coordinate width."""
     sym_ref = sym_lookup.get(arc.symbol_idx)
     width = 0.001
@@ -237,17 +232,10 @@ def _draw_arc(ax: Axes, arc: ArcRecord, sym_lookup: dict[int, SymbolRef],
     if width <= 0:
         width = 0.001
 
-    if flip_x:
-        xs, xe, xc = -arc.xs, -arc.xe, -arc.xc
-        clockwise = not arc.clockwise
-    else:
-        xs, xe, xc = arc.xs, arc.xe, arc.xc
-        clockwise = arc.clockwise
-
     from src.visualizer.symbol_renderer import _arc_to_points
     points = _arc_to_points(
-        xs, arc.ys, xe, arc.ye,
-        xc, arc.yc, clockwise, 32,
+        arc.xs, arc.ys, arc.xe, arc.ye,
+        arc.xc, arc.yc, arc.clockwise, 32,
     )
 
     if len(points) < 2:
@@ -282,86 +270,74 @@ def _draw_arc(ax: Axes, arc: ArcRecord, sym_lookup: dict[int, SymbolRef],
 
 
 def _draw_text(ax: Axes, text: TextRecord, font: StrokeFont = None,
-               color: str = "blue", alpha: float = 0.7,
-               flip_x: bool = False):
+               color: str = "blue", alpha: float = 0.7):
     """Draw a text feature using stroke font or matplotlib text."""
     if font and text.font == "standard" and text.text:
-        _draw_stroke_text(ax, text, font, color, alpha, flip_x=flip_x)
+        _draw_stroke_text(ax, text, font, color, alpha)
     elif text.text:
-        tx = -text.x if flip_x else text.x
-        rot = text.rotation if not flip_x else -text.rotation
         ax.text(
-            tx, text.y, text.text,
+            text.x, text.y, text.text,
             fontsize=max(2, text.ysize * 200),
             color=color, alpha=alpha,
-            rotation=-rot,
+            rotation=-text.rotation,
             ha="left", va="bottom",
         )
 
 
 def _draw_stroke_text(ax: Axes, text: TextRecord, font: StrokeFont,
-                      color: str, alpha: float, flip_x: bool = False):
+                      color: str, alpha: float):
     """Draw text using the ODB++ stroke font."""
     scale_x = text.xsize / font.xsize if font.xsize > 0 else 1.0
     scale_y = text.ysize / font.ysize if font.ysize > 0 else 1.0
 
-    origin_x = -text.x if flip_x else text.x
-    cursor_x = origin_x
-    rot = -text.rotation if flip_x else text.rotation
-    angle_rad = math.radians(-rot)
+    cursor_x = text.x
+    angle_rad = math.radians(-text.rotation)
     cos_a = math.cos(angle_rad)
     sin_a = math.sin(angle_rad)
-    x_sign = -1 if flip_x else 1
 
     for ch in text.text:
         font_char = font.characters.get(ch)
         if font_char is None:
-            cursor_x += text.xsize * x_sign
+            cursor_x += text.xsize
             continue
 
         for stroke in font_char.strokes:
-            x1 = cursor_x + stroke.x1 * scale_x * x_sign
+            x1 = cursor_x + stroke.x1 * scale_x
             y1 = text.y + stroke.y1 * scale_y
-            x2 = cursor_x + stroke.x2 * scale_x * x_sign
+            x2 = cursor_x + stroke.x2 * scale_x
             y2 = text.y + stroke.y2 * scale_y
 
             # Apply rotation if needed
-            if rot:
-                dx1, dy1 = x1 - origin_x, y1 - text.y
-                dx2, dy2 = x2 - origin_x, y2 - text.y
-                x1 = origin_x + dx1 * cos_a - dy1 * sin_a
-                y1 = text.y   + dx1 * sin_a + dy1 * cos_a
-                x2 = origin_x + dx2 * cos_a - dy2 * sin_a
-                y2 = text.y   + dx2 * sin_a + dy2 * cos_a
+            if text.rotation:
+                dx1, dy1 = x1 - text.x, y1 - text.y
+                dx2, dy2 = x2 - text.x, y2 - text.y
+                x1 = text.x + dx1 * cos_a - dy1 * sin_a
+                y1 = text.y + dx1 * sin_a + dy1 * cos_a
+                x2 = text.x + dx2 * cos_a - dy2 * sin_a
+                y2 = text.y + dx2 * sin_a + dy2 * cos_a
 
             ax.plot([x1, x2], [y1, y2], color=color, alpha=alpha,
                     linewidth=0.5, solid_capstyle="round")
 
-        cursor_x += text.xsize * x_sign
+        cursor_x += text.xsize
 
 
 def _draw_barcode(ax: Axes, barcode: BarcodeRecord,
-                  color: str = "blue", alpha: float = 0.7,
-                  flip_x: bool = False):
+                  color: str = "blue", alpha: float = 0.7):
     """Draw a barcode feature as a rectangle with text label."""
     w = barcode.width if barcode.width > 0 else 0.1
     h = barcode.height if barcode.height > 0 else 0.05
 
-    x0 = -barcode.x if flip_x else barcode.x
-    y0 = barcode.y
-    w_signed = -w if flip_x else w
-
-    # Build rectangle corners, then apply rotation
+    x0, y0 = barcode.x, barcode.y
     corners = np.array([
-        [x0,           y0],
-        [x0 + w_signed, y0],
-        [x0 + w_signed, y0 + h],
-        [x0,           y0 + h],
+        [x0,     y0],
+        [x0 + w, y0],
+        [x0 + w, y0 + h],
+        [x0,     y0 + h],
     ])
 
-    rot = -barcode.rotation if flip_x else barcode.rotation
-    if rot:
-        angle_rad = math.radians(-rot)
+    if barcode.rotation:
+        angle_rad = math.radians(-barcode.rotation)
         cos_a, sin_a = math.cos(angle_rad), math.sin(angle_rad)
         rel = corners - [x0, y0]
         rotated = np.column_stack([
@@ -374,19 +350,17 @@ def _draw_barcode(ax: Axes, barcode: BarcodeRecord,
                     edgecolor=color, linewidth=0.8)
     ax.add_patch(patch)
 
-    # Draw text label if present
     if barcode.text:
-        cx = x0 + w_signed / 2
+        cx = x0 + w / 2
         cy = y0 + h / 2
         ax.text(cx, cy, barcode.text,
                 fontsize=max(2, h * 100), color=color, alpha=alpha,
-                rotation=-rot,
+                rotation=-barcode.rotation,
                 ha="center", va="center")
 
 
 def _draw_surface(ax: Axes, surface: SurfaceRecord,
-                  color: str = "blue", alpha: float = 0.7,
-                  flip_x: bool = False):
+                  color: str = "blue", alpha: float = 0.7):
     """Draw a surface (filled polygon with potential holes).
 
     ODB++ surfaces consist of islands (outer boundaries, clockwise) and
@@ -409,9 +383,6 @@ def _draw_surface(ax: Axes, surface: SurfaceRecord,
         verts = contour_to_vertices(contour)
         if len(verts) < 3:
             continue
-        if flip_x:
-            verts = verts.copy()
-            verts[:, 0] = -verts[:, 0]
         if contour.is_island:
             groups.append((verts, []))
         else:
