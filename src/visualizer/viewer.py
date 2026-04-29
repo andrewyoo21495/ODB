@@ -336,38 +336,12 @@ class PcbViewer:
     # Redraw
     # ------------------------------------------------------------------
 
-    def _flip_pad_layers(self) -> set[str]:
-        """Return the set of layer names that need pad orientation correction.
-
-        Only SIGNAL-type bottom layers store pad orient_def in physical
-        bottom-face convention (same as component toeprint pads) and therefore
-        need rotation negation + mirror toggle for correct top-view display.
-        Non-copper bottom layers (smb, spb, ssb …) already use global top-view
-        orientation and must NOT be corrected.
-
-        ODB++ coordinates are always in global top-view board space, so no
-        coordinate X-flip (flip_x) is ever needed for any layer.
-        """
-        from src.visualizer.fid_lookup import _find_top_bottom_signal_layers
-        # Name-based detection (sigb, ssb ends in b — but only SIGNAL matters)
-        candidates = {n for n in self.layers_data if is_bottom_layer(n)}
-        # Matrix-based: add the outermost signal layer even if not named 'b'
-        _, bot_sig = _find_top_bottom_signal_layers(self.layers_data)
-        if bot_sig:
-            candidates.add(bot_sig)
-        return {
-            n for n in candidates
-            if self.layers_data[n][1].type == "SIGNAL"
-        }
-
     def _redraw(self):
         self.ax.clear()
         _style_axes(self.ax)
 
         if self.profile and self.profile.surface:
             _draw_profile(self.ax, self.profile)
-
-        flip_pad_layers = self._flip_pad_layers()
 
         for layer_name in self._visible_set:
             if layer_name not in self.layers_data:
@@ -377,8 +351,7 @@ class PcbViewer:
             render_layer(self.ax, features, color=color,
                          layer_type=matrix_layer.type,
                          alpha=0.7, user_symbols=self.user_symbols,
-                         font=self.font,
-                         flip_pad=layer_name in flip_pad_layers)
+                         font=self.font)
 
         packages = self.eda_data.packages if self.eda_data else None
         if COMP_TOP_KEY in self._visible_set and self.components_top:
@@ -1274,15 +1247,10 @@ class CopperRatioViewer:
         if self._selected_layer and self._selected_layer in self.layers_data:
             features, matrix_layer = self.layers_data[self._selected_layer]
             color = LAYER_COLORS.get(matrix_layer.type, "#00CC00")
-            from src.visualizer.fid_lookup import _find_top_bottom_signal_layers
-            _, bot_sig = _find_top_bottom_signal_layers(self.layers_data)
-            lname = self._selected_layer
-            is_bot_sig = (is_bottom_layer(lname) or lname == bot_sig) and matrix_layer.type == "SIGNAL"
             render_layer(self.ax, features, color=color,
                          layer_type=matrix_layer.type,
                          alpha=0.85, user_symbols=self.user_symbols,
-                         font=self.font,
-                         flip_pad=is_bot_sig)
+                         font=self.font)
 
         if self._subsection_ratios is not None:
             self._draw_subsection_overlay()
