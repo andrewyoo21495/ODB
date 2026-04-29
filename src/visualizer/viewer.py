@@ -336,20 +336,17 @@ class PcbViewer:
     # Redraw
     # ------------------------------------------------------------------
 
-    def _signal_bottom_layers(self) -> set[str]:
-        """Return names of SIGNAL-type bottom layers that need pad rotation negation.
+    def _bottom_layers(self) -> set[str]:
+        """Return names of all bottom layers that need pad rotation negation.
 
         Combines name-based detection (ends with 'b') with matrix-based
         detection to also catch bottom signal layers named by number
         (e.g. 'signal_4', 'sig2') that don't end with 'b'.
-        Only SIGNAL-type layers are included — non-copper bottom layers
-        (smb, spb, ssb …) store pad orientation in global top-view
-        convention and must NOT have rotation negated.
+        All bottom layer types (SIGNAL, SOLDER_MASK, SOLDER_PASTE,
+        SILK_SCREEN …) need pad rotation negated for correct top-view display.
         """
         from src.visualizer.fid_lookup import _find_top_bottom_signal_layers
-        candidates = {n for n in self.layers_data
-                      if is_bottom_layer(n)
-                      and self.layers_data[n][1].type == "SIGNAL"}
+        candidates = {n for n in self.layers_data if is_bottom_layer(n)}
         _, bot_sig = _find_top_bottom_signal_layers(self.layers_data)
         if bot_sig:
             candidates.add(bot_sig)
@@ -362,7 +359,7 @@ class PcbViewer:
         if self.profile and self.profile.surface:
             _draw_profile(self.ax, self.profile)
 
-        signal_bot = self._signal_bottom_layers()
+        signal_bot = self._bottom_layers()
 
         for layer_name in self._visible_set:
             if layer_name not in self.layers_data:
@@ -1272,7 +1269,7 @@ class CopperRatioViewer:
             from src.visualizer.fid_lookup import _find_top_bottom_signal_layers
             _, bot_sig = _find_top_bottom_signal_layers(self.layers_data)
             lname = self._selected_layer
-            neg = (is_bottom_layer(lname) or lname == bot_sig) and matrix_layer.type == "SIGNAL"
+            neg = is_bottom_layer(lname) or lname == bot_sig
             render_layer(self.ax, features, color=color,
                          layer_type=matrix_layer.type,
                          alpha=0.85, user_symbols=self.user_symbols,
@@ -2000,7 +1997,7 @@ class NetViewer:
         from src.visualizer.fid_lookup import _find_top_bottom_signal_layers
         _, bot_sig = _find_top_bottom_signal_layers(self.layers_data)
         lname = self._selected_layer
-        neg = (is_bottom_layer(lname) or lname == bot_sig) and matrix_layer.type == "SIGNAL"
+        neg = is_bottom_layer(lname) or lname == bot_sig
 
         self.ax.clear()
         _style_axes(self.ax)
@@ -2069,7 +2066,7 @@ class NetViewer:
                 alpha=0.4,
                 user_symbols=self.user_symbols,
                 font=self.font,
-                negate_pad_rotation=is_bottom_layer(layer) and matrix_layer.type == "SIGNAL",
+                negate_pad_rotation=is_bottom_layer(layer),
             )
 
         self.ax.set_xlabel("X", color="#000000")
