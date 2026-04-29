@@ -54,7 +54,8 @@ def render_layer(ax: Axes, features: LayerFeatures,
                  alpha: float = 0.7,
                  user_symbols: dict[str, UserSymbol] = None,
                  font: StrokeFont = None,
-                 max_features: int = None):
+                 max_features: int = None,
+                 negate_pad_rotation: bool = False):
     """Render all features of a layer onto a matplotlib axes.
 
     Args:
@@ -66,6 +67,11 @@ def render_layer(ax: Axes, features: LayerFeatures,
         user_symbols: Dict of user-defined symbols for resolving references
         font: Stroke font for text rendering
         max_features: Limit number of features rendered (for performance)
+        negate_pad_rotation: Negate pad rotation angles.  Set True for
+            SIGNAL-type bottom layers — the orient_def is stored in
+            physical bottom-face convention (same as component toeprint
+            pads), so the rotation must be negated for correct top-view
+            display, matching component_overlay.py.
     """
     if color is None:
         color = LAYER_COLORS.get(layer_type, "#CC0000")
@@ -90,7 +96,8 @@ def render_layer(ax: Axes, features: LayerFeatures,
 
         if isinstance(feature, PadRecord):
             _draw_pad(ax, feature, sym_lookup, features.units,
-                      user_symbols, eff_color, eff_alpha)
+                      user_symbols, eff_color, eff_alpha,
+                      negate_rotation=negate_pad_rotation)
         elif isinstance(feature, LineRecord):
             _draw_line(ax, feature, sym_lookup, features.units,
                        eff_color, eff_alpha)
@@ -109,16 +116,25 @@ def render_layer(ax: Axes, features: LayerFeatures,
 
 def _draw_pad(ax: Axes, pad: PadRecord, sym_lookup: dict[int, SymbolRef],
               units: str, user_symbols: dict = None,
-              color: str = "blue", alpha: float = 0.7):
-    """Draw a pad feature."""
+              color: str = "blue", alpha: float = 0.7,
+              negate_rotation: bool = False):
+    """Draw a pad feature.
+
+    negate_rotation=True negates pad.rotation for top-view display of
+    bottom-layer pads, matching component_overlay.py's convention:
+      pad_rot = -geom.rotation if is_bottom else geom.rotation
+    Mirror is left unchanged (same as component_overlay).
+    """
     sym_ref = sym_lookup.get(pad.symbol_idx)
     if not sym_ref:
         return
 
+    rot = -pad.rotation if negate_rotation else pad.rotation
+
     if user_symbols and sym_ref.name in user_symbols:
         patches = user_symbol_to_patches(
             user_symbols[sym_ref.name],
-            pad.x, pad.y, pad.rotation, pad.mirror,
+            pad.x, pad.y, rot, pad.mirror,
             color, alpha,
         )
         for p in patches:
@@ -127,7 +143,7 @@ def _draw_pad(ax: Axes, pad: PadRecord, sym_lookup: dict[int, SymbolRef],
 
     patch = symbol_to_patch(
         sym_ref.name, pad.x, pad.y,
-        pad.rotation, pad.mirror,
+        rot, pad.mirror,
         units, sym_ref.unit_override,
         color, alpha, pad.resize_factor,
     )

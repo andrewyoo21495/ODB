@@ -336,12 +336,33 @@ class PcbViewer:
     # Redraw
     # ------------------------------------------------------------------
 
+    def _signal_bottom_layers(self) -> set[str]:
+        """Return names of SIGNAL-type bottom layers that need pad rotation negation.
+
+        Combines name-based detection (ends with 'b') with matrix-based
+        detection to also catch bottom signal layers named by number
+        (e.g. 'signal_4', 'sig2') that don't end with 'b'.
+        Only SIGNAL-type layers are included — non-copper bottom layers
+        (smb, spb, ssb …) store pad orientation in global top-view
+        convention and must NOT have rotation negated.
+        """
+        from src.visualizer.fid_lookup import _find_top_bottom_signal_layers
+        candidates = {n for n in self.layers_data
+                      if is_bottom_layer(n)
+                      and self.layers_data[n][1].type == "SIGNAL"}
+        _, bot_sig = _find_top_bottom_signal_layers(self.layers_data)
+        if bot_sig:
+            candidates.add(bot_sig)
+        return candidates
+
     def _redraw(self):
         self.ax.clear()
         _style_axes(self.ax)
 
         if self.profile and self.profile.surface:
             _draw_profile(self.ax, self.profile)
+
+        signal_bot = self._signal_bottom_layers()
 
         for layer_name in self._visible_set:
             if layer_name not in self.layers_data:
@@ -351,7 +372,8 @@ class PcbViewer:
             render_layer(self.ax, features, color=color,
                          layer_type=matrix_layer.type,
                          alpha=0.7, user_symbols=self.user_symbols,
-                         font=self.font)
+                         font=self.font,
+                         negate_pad_rotation=layer_name in signal_bot)
 
         packages = self.eda_data.packages if self.eda_data else None
         if COMP_TOP_KEY in self._visible_set and self.components_top:
@@ -1247,10 +1269,15 @@ class CopperRatioViewer:
         if self._selected_layer and self._selected_layer in self.layers_data:
             features, matrix_layer = self.layers_data[self._selected_layer]
             color = LAYER_COLORS.get(matrix_layer.type, "#00CC00")
+            from src.visualizer.fid_lookup import _find_top_bottom_signal_layers
+            _, bot_sig = _find_top_bottom_signal_layers(self.layers_data)
+            lname = self._selected_layer
+            neg = (is_bottom_layer(lname) or lname == bot_sig) and matrix_layer.type == "SIGNAL"
             render_layer(self.ax, features, color=color,
                          layer_type=matrix_layer.type,
                          alpha=0.85, user_symbols=self.user_symbols,
-                         font=self.font)
+                         font=self.font,
+                         negate_pad_rotation=neg)
 
         if self._subsection_ratios is not None:
             self._draw_subsection_overlay()
@@ -1970,7 +1997,10 @@ class NetViewer:
 
         layer_features, matrix_layer = self.layers_data[self._selected_layer]
         filtered = filter_layer_features(layer_features, allowed)
-        flip = is_bottom_layer(self._selected_layer)
+        from src.visualizer.fid_lookup import _find_top_bottom_signal_layers
+        _, bot_sig = _find_top_bottom_signal_layers(self.layers_data)
+        lname = self._selected_layer
+        neg = (is_bottom_layer(lname) or lname == bot_sig) and matrix_layer.type == "SIGNAL"
 
         self.ax.clear()
         _style_axes(self.ax)
@@ -1986,7 +2016,7 @@ class NetViewer:
             alpha=0.25,
             user_symbols=self.user_symbols,
             font=self.font,
-            flip_x=flip,
+            negate_pad_rotation=neg,
         )
 
         # Foreground: selected net features in red
@@ -1997,7 +2027,7 @@ class NetViewer:
             alpha=0.95,
             user_symbols=self.user_symbols,
             font=self.font,
-            flip_x=flip,
+            negate_pad_rotation=neg,
         )
 
         self.ax.set_xlabel("X", color="#000000")
@@ -2039,7 +2069,7 @@ class NetViewer:
                 alpha=0.4,
                 user_symbols=self.user_symbols,
                 font=self.font,
-                flip_x=is_bottom_layer(layer),
+                negate_pad_rotation=is_bottom_layer(layer) and matrix_layer.type == "SIGNAL",
             )
 
         self.ax.set_xlabel("X", color="#000000")
