@@ -72,6 +72,8 @@ from .via import (
     build_toeprint_lookup,
     lookup_resolved_pads_for_pin,
     count_vias_at_pad,
+    _get_pad_polygon_board,
+    _resolved_pad_polygon,
 )
 
 from .bending import (
