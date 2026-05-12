@@ -181,6 +181,7 @@ def render_dpad_side_image(
                 ax, local,
                 color="#00AA00", layer_type="SOLDER_MASK", alpha=0.35,
                 user_symbols=user_symbols, font=font,
+                negate_pad_rotation=is_bottom,
             )
 
     # Container "inside regions" (convex hull, faint blue fill).
