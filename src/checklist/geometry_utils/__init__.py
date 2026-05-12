@@ -82,6 +82,7 @@ from .bending import (
 
 from .nc_pad import (
     is_pad_nc,
+    is_pad_nc_by_signal_layer,
 )
 
 from .shield_can import (

@@ -1,9 +1,10 @@
-"""CKL-01-002: VIA presence check for outermost PMIC pads.
+"""CKL-01-002: VIA presence check for outermost NC pads on PMICs.
 
 For PMIC components (identified by part_name in references/pmic_list.csv),
-the outermost (outer perimeter) pads must each have at least one VIA.
-A pad on the outer perimeter with zero VIAs is flagged FAIL,
-unless the pad is NC (Not Connected) — NC pads are excluded from failure.
+each outermost (outer perimeter) pad that is NC (Not Connected) must have
+at least one VIA.  An NC pad is one with no traces, lines, or copper planes
+on the component's signal layer.  Connected pads are excluded from the
+check entirely.
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ from src.checklist.geometry_utils import (
     build_via_position_set,
     count_vias_at_pad,
     find_outermost_pin_indices,
-    is_pad_nc,
+    is_pad_nc_by_signal_layer,
     lookup_resolved_pads_for_pin,
 )
 from src.checklist.reference_loader import get_managed_part_names
@@ -66,7 +67,7 @@ class CKL01002(ChecklistRule):
             top_sig_name, bot_sig_name = _find_top_bottom_signal_layers(
                 layers_data)
 
-        columns = ["comp", "cmp_layer", "pad_name", "via", "nc", "status"]
+        columns = ["comp", "cmp_layer", "pad_name", "via", "status"]
         rows: list[dict] = []
         images: list[dict] = []
         image_dir = Path(tempfile.mkdtemp(prefix="ckl_01_002_"))
@@ -104,6 +105,18 @@ class CKL01002(ChecklistRule):
                         fid_resolved, comp, is_bottom,
                         pin_idx, signal_layer_name=sig_name,
                     )
+
+                    nc = is_pad_nc_by_signal_layer(
+                        comp, pin, is_bottom, layers_data,
+                        signal_layer_name=sig_name,
+                        resolved_pads=rpads,
+                        toeprint=tp,
+                    )
+
+                    # Only NC pads are checked; connected pads are skipped.
+                    if not nc:
+                        continue
+
                     via_count = count_vias_at_pad(
                         comp, pin.center.x, pin.center.y,
                         via_positions, is_bottom=is_bottom,
@@ -111,21 +124,13 @@ class CKL01002(ChecklistRule):
                         resolved_pads=rpads,
                     )
                     has_via = via_count > 0
-                    nc = is_pad_nc(tp, eda)
-
-                    if nc:
-                        status = "NC"
-                    elif has_via:
-                        status = "PASS"
-                    else:
-                        status = "FAIL"
+                    status = "PASS" if has_via else "FAIL"
 
                     rows.append({
                         "comp": comp.comp_name,
                         "cmp_layer": layer_name,
                         "pad_name": pin.name,
                         "via": "TRUE" if has_via else "FALSE",
-                        "nc": "TRUE" if nc else "FALSE",
                         "status": status,
                     })
 
@@ -149,19 +154,17 @@ class CKL01002(ChecklistRule):
                 })
 
         fail_count = sum(1 for r in rows if r["status"] == "FAIL")
-        nc_count = sum(1 for r in rows if r["status"] == "NC")
         passed = fail_count == 0
 
-        if not passed:
+        if not rows:
+            msg = "No NC outermost pads found on PMIC components."
+        elif not passed:
             msg = (
-                f"{fail_count} outermost PMIC pad(s) without a VIA detected."
+                f"{fail_count} NC outermost PMIC pad(s) without a VIA"
+                f" detected."
             )
-            if nc_count:
-                msg += f" ({nc_count} NC pad(s) excluded.)"
         else:
-            msg = "All outermost PMIC pads have VIA designs applied."
-            if nc_count:
-                msg += f" ({nc_count} NC pad(s) excluded.)"
+            msg = "All NC outermost PMIC pads have VIA designs applied."
 
         return RuleResult(
             rule_id=self.rule_id,
