@@ -105,18 +105,40 @@ def _pad_to_shapely(
     return ShapelyPoint(bx, by).buffer(tolerance)
 
 
-def _non_pad_feature_to_geometry(feat, sym_lookup: dict):
+def _sym_scale(units: str, unit_override: str | None) -> float:
+    """Return the factor that converts raw symbol dimensions to MM.
+
+    Standard symbol name numbers are in the *sub-unit* of the layer's
+    declared unit system:
+      - INCH → mils  (×0.0254 → mm)
+      - MM   → µm    (÷1000  → mm)
+
+    A per-symbol ``unit_override`` (``"I"`` or ``"M"``) takes precedence.
+    """
+    if unit_override == "I":
+        return 0.0254
+    if unit_override == "M":
+        return 0.001
+    return 0.0254 if units == "INCH" else 0.001
+
+
+def _non_pad_feature_to_geometry(feat, sym_lookup: dict, layer_units: str):
     """Convert a non-pad layer feature to a Shapely geometry.
 
     Handles LineRecord, ArcRecord, and SurfaceRecord.  PadRecords are
     intentionally excluded (the caller skips them).
+
+    *layer_units* is the original unit system of the feature file (before
+    coordinate scaling) and is needed to correctly convert symbol dimensions
+    (encoded as mils or µm) to MM.
     """
     if isinstance(feat, LineRecord):
         sym_ref = sym_lookup.get(feat.symbol_idx)
         half_w = 0.0
         if sym_ref is not None:
             ss = resolve_symbol(sym_ref.name)
-            half_w = ss.width / 2.0 if ss.width > 0 else 0.0
+            scale = _sym_scale(layer_units, sym_ref.unit_override)
+            half_w = ss.width * scale / 2.0 if ss.width > 0 else 0.0
         line = LineString([(feat.xs, feat.ys), (feat.xe, feat.ye)])
         return line.buffer(half_w) if half_w > 0 else line
 
@@ -125,7 +147,8 @@ def _non_pad_feature_to_geometry(feat, sym_lookup: dict):
         half_w = 0.0
         if sym_ref is not None:
             ss = resolve_symbol(sym_ref.name)
-            half_w = ss.width / 2.0 if ss.width > 0 else 0.0
+            scale = _sym_scale(layer_units, sym_ref.unit_override)
+            half_w = ss.width * scale / 2.0 if ss.width > 0 else 0.0
         pts = _arc_to_points(feat)
         if len(pts) >= 2:
             line = LineString(pts)
@@ -210,6 +233,7 @@ def is_pad_nc_by_signal_layer(
     prep_buffered = buffered  # Shapely intersects is fast enough here
 
     sym_lookup = {s.index: s for s in lf.symbols}
+    layer_units = lf.units  # original unit system for symbol dimension scaling
 
     from src.models import PadRecord
     for feat in lf.features:
@@ -217,7 +241,7 @@ def is_pad_nc_by_signal_layer(
             continue
         if isinstance(feat, PadRecord):
             continue
-        geom = _non_pad_feature_to_geometry(feat, sym_lookup)
+        geom = _non_pad_feature_to_geometry(feat, sym_lookup, layer_units)
         if geom is None or geom.is_empty:
             continue
         if prep_buffered.intersects(geom):
