@@ -5,6 +5,7 @@ Usage:
     python main.py view               <odb_path> [--layers L1 L2 ...]    Launch visualizer
     python main.py view-comp          <odb_path>                         Launch component viewer
     python main.py check              <odb_path> [--rules R1 R2 ...]     Run checklist
+    python main.py compare            <odb_old> <odb_new>                Compare two revisions
     python main.py info               <odb_path>                         Print job summary
     python main.py copper             <odb_path>                         Display layer thickness
     python main.py copper-ratio       <odb_path>                         Launch copper ratio viewer
@@ -1064,6 +1065,54 @@ def cmd_copper_calculate(args):
     viewer.show()
 
 
+def cmd_compare(args):
+    """Compare two ODB++ revisions and generate a diff report."""
+    # Import comparators to trigger registration
+    import src.comparator.comparators.component_diff   # noqa: F401
+    import src.comparator.comparators.checklist_diff    # noqa: F401
+
+    from src.comparator.engine import run_comparison
+    from src.comparator.reporter import generate_comparison_report
+
+    cache_dir = Path(getattr(args, "cache_dir", None) or "cache")
+
+    # Ensure caches for both revisions
+    old_cache_name = _ensure_cache(args.odb_path_old, cache_dir)
+    new_cache_name = _ensure_cache(args.odb_path_new, cache_dir)
+
+    # Load both from cache
+    print(f"\nLoading old revision: {old_cache_name}")
+    old_data = _load_from_cache(cache_dir, old_cache_name)
+
+    print(f"Loading new revision: {new_cache_name}")
+    new_data = _load_from_cache(cache_dir, new_cache_name)
+
+    # Run all comparators
+    print(f"\nRunning revision comparison...")
+    results = run_comparison(old_data, new_data)
+
+    # Print console summary
+    print(f"\n{'='*60}")
+    print(f"COMPARISON RESULTS")
+    print(f"{'='*60}")
+    for r in results:
+        print(f"  [{r.comparator_id}] {r.title}: {r.summary}")
+
+    # Generate report
+    old_name = Path(args.odb_path_old).stem
+    new_name = Path(args.odb_path_new).stem
+    default_output = Path(f"output/[CMP_report]{old_name}_vs_{new_name}.xlsx")
+    output_path = Path(args.output) if args.output else default_output
+
+    old_job_info = old_data.get("job_info")
+    new_job_info = new_data.get("job_info")
+    generate_comparison_report(
+        results, output_path,
+        old_job_name=old_job_info.job_name if old_job_info else old_name,
+        new_job_name=new_job_info.job_name if new_job_info else new_name,
+    )
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="ODB++ Processing System",
@@ -1118,6 +1167,13 @@ def main():
     p_copper_calc = subparsers.add_parser("copper-calculate", help="Launch copper ratio batch calculator")
     p_copper_calc.add_argument("--cache-dir", default="cache", help="Cache directory")
 
+    # compare command
+    p_compare = subparsers.add_parser("compare", help="Compare two ODB++ revisions")
+    p_compare.add_argument("odb_path_old", help="Path to old revision ODB++ archive")
+    p_compare.add_argument("odb_path_new", help="Path to new revision ODB++ archive")
+    p_compare.add_argument("--output", help="Output Excel path")
+    p_compare.add_argument("--cache-dir", default="cache", help="Cache directory")
+
     args = parser.parse_args()
 
     if args.command == "info":
@@ -1138,6 +1194,8 @@ def main():
         cmd_copper_ratio(args)
     elif args.command == "copper-calculate":
         cmd_copper_calculate(args)
+    elif args.command == "compare":
+        cmd_compare(args)
     else:
         parser.print_help()
 
