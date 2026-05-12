@@ -97,6 +97,7 @@ class CKL01002(ChecklistRule):
 
                 outermost_indices = find_outermost_pin_indices(pkg.pins)
                 toep_by_pin = build_toeprint_lookup(comp, pkg)
+                nc_map: dict[int, bool] = {}
 
                 for pin_idx in sorted(outermost_indices):
                     pin = pkg.pins[pin_idx]
@@ -112,6 +113,7 @@ class CKL01002(ChecklistRule):
                         resolved_pads=rpads,
                         toeprint=tp,
                     )
+                    nc_map[pin_idx] = nc
 
                     # Only NC pads are checked; connected pads are skipped.
                     if not nc:
@@ -146,6 +148,8 @@ class CKL01002(ChecklistRule):
                     pin_indices=outermost_indices,
                     eda_data=eda,
                     layers_data=layers_data,
+                    nc_map=nc_map,
+                    nc_is_fail=True,
                 )
                 images.append({
                     "path": img_path,

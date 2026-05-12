@@ -33,7 +33,8 @@ from src.visualizer.component_overlay import transform_point
 
 def _build_pin_viz_data(comp, pkg, via_positions, is_bottom,
                         fid_resolved=None, signal_layer_name=None,
-                        pin_indices=None, eda_data=None):
+                        pin_indices=None, eda_data=None,
+                        nc_map=None):
     """Analyse each pin of *comp* and return per-pin visualisation data.
 
     Parameters
@@ -43,6 +44,9 @@ def _build_pin_viz_data(comp, pkg, via_positions, is_bottom,
         check only a subset of pads (e.g. outermost pads).
     eda_data : EdaData | None
         When provided, NC detection is performed for each pin.
+    nc_map : dict[int, bool] | None
+        When provided, overrides the built-in ``is_pad_nc`` call.
+        Maps pin index → NC status (True = NC, False = connected).
 
     Returns a list of dicts with keys:
         pin_name, bx, by, via_count, poly, nc.
@@ -76,7 +80,12 @@ def _build_pin_viz_data(comp, pkg, via_positions, is_bottom,
             resolved_pads=rpads,
         )
 
-        nc = is_pad_nc(tp, eda_data) if eda_data is not None else False
+        if nc_map is not None:
+            nc = nc_map.get(pin_idx, False)
+        elif eda_data is not None:
+            nc = is_pad_nc(tp, eda_data)
+        else:
+            nc = False
 
         # Pad polygon: prefer FID-resolved, fallback to EDA pin outline
         poly = None
@@ -111,6 +120,8 @@ def render_via_check_image(
     eda_data=None,
     layers_data=None,
     min_via_count: int = 1,
+    nc_map=None,
+    nc_is_fail: bool = False,
 ) -> Path:
     """Render a single component's pads + vias to a PNG file.
 
@@ -136,6 +147,14 @@ def render_via_check_image(
     min_via_count : int
         Minimum via count for a pad to be considered passing.  Pads with
         fewer vias are coloured red (FAIL).  Default 1.
+    nc_map : dict[int, bool] | None
+        Pre-computed NC status per pin index, overriding the internal
+        ``is_pad_nc`` call when provided.
+    nc_is_fail : bool
+        When True the colour scheme is inverted for NC pads:
+        NC pads without a via are drawn in **red** (FAIL) and connected
+        pads without a via are drawn in **blue** (informational).  This
+        is used by rules where only NC pads require vias (e.g. CKL-01-002).
 
     Returns
     -------
@@ -147,6 +166,7 @@ def render_via_check_image(
         signal_layer_name=signal_layer_name,
         pin_indices=pin_indices,
         eda_data=eda_data,
+        nc_map=nc_map,
     )
 
     if not pin_data:
@@ -197,6 +217,9 @@ def render_via_check_image(
             trace_color = "#00cc66"
             trace_alpha = 0.7
 
+            # Scale factor: convert raw symbol sub-units to MM.
+            from src.checklist.geometry_utils.nc_pad import _sym_scale
+
             for feat in lf.features:
                 if isinstance(feat, LineRecord):
                     fxmin = min(feat.xs, feat.xe)
@@ -213,7 +236,8 @@ def render_via_check_image(
                     if sym:
                         ss = resolve_symbol(sym.name)
                         if ss.width > 0:
-                            lw_pts = max(0.2, ss.width * 2.5)
+                            scale = _sym_scale(lf.units, sym.unit_override)
+                            lw_pts = max(0.2, ss.width * scale * 2.5)
 
                     ax.plot([feat.xs, feat.xe], [feat.ys, feat.ye],
                             color=trace_color, alpha=trace_alpha,
@@ -247,20 +271,35 @@ def render_via_check_image(
 
     # --- draw pads -----------------------------------------------------------
     has_nc = False
+    has_connected = False
     for r in pin_data:
-        if r["nc"]:
-            has_nc = True
-            fill_color = "#ADD8E6"
-            edge_color = "#1560BD"
-            label_color = "#1560BD"
-        elif r["via_count"] >= min_via_count:
+        if r["via_count"] >= min_via_count:
             fill_color = "#90EE90"
             edge_color = "darkgreen"
             label_color = "darkgreen"
+        elif nc_is_fail:
+            # NC-is-fail mode: NC pads without via = red, connected = blue
+            if r["nc"]:
+                has_nc = True
+                fill_color = "#FFB0B0"
+                edge_color = "darkred"
+                label_color = "darkred"
+            else:
+                has_connected = True
+                fill_color = "#ADD8E6"
+                edge_color = "#1560BD"
+                label_color = "#1560BD"
         else:
-            fill_color = "#FFB0B0"
-            edge_color = "darkred"
-            label_color = "darkred"
+            # Default mode: NC pads = blue (excluded), no-via pads = red
+            if r["nc"]:
+                has_nc = True
+                fill_color = "#ADD8E6"
+                edge_color = "#1560BD"
+                label_color = "#1560BD"
+            else:
+                fill_color = "#FFB0B0"
+                edge_color = "darkred"
+                label_color = "darkred"
 
         if r["poly"] is not None:
             ax.add_patch(Polygon(r["poly"], closed=True,
@@ -275,7 +314,7 @@ def render_via_check_image(
 
         label = f"Pin {r['pin_name']}\n"
         if r["nc"]:
-            label += "[NC]"
+            label += f"[NC] vias={r['via_count']}"
         else:
             label += f"vias={r['via_count']}"
 
@@ -295,21 +334,38 @@ def render_via_check_image(
     # --- legend --------------------------------------------------------------
     if min_via_count > 1:
         pass_label = f"Pad with >={min_via_count} vias"
-        fail_label = f"Pad with <{min_via_count} vias"
     else:
         pass_label = "Pad WITH via(s)"
-        fail_label = "Pad WITHOUT via"
     legend_elements = [
         mpatches.Patch(facecolor="#90EE90", edgecolor="darkgreen", alpha=0.5,
                        label=pass_label),
-        mpatches.Patch(facecolor="#FFB0B0", edgecolor="darkred", alpha=0.5,
-                       label=fail_label),
     ]
-    if has_nc:
+    if nc_is_fail:
         legend_elements.append(
-            mpatches.Patch(facecolor="#ADD8E6", edgecolor="#1560BD", alpha=0.5,
-                           label="NC — Not Connected (excluded)"),
+            mpatches.Patch(facecolor="#FFB0B0", edgecolor="darkred", alpha=0.5,
+                           label="NC pad WITHOUT via"),
         )
+        if has_connected:
+            legend_elements.append(
+                mpatches.Patch(facecolor="#ADD8E6", edgecolor="#1560BD",
+                               alpha=0.5,
+                               label="Connected pad (no via needed)"),
+            )
+    else:
+        if min_via_count > 1:
+            fail_label = f"Pad with <{min_via_count} vias"
+        else:
+            fail_label = "Pad WITHOUT via"
+        legend_elements.append(
+            mpatches.Patch(facecolor="#FFB0B0", edgecolor="darkred", alpha=0.5,
+                           label=fail_label),
+        )
+        if has_nc:
+            legend_elements.append(
+                mpatches.Patch(facecolor="#ADD8E6", edgecolor="#1560BD",
+                               alpha=0.5,
+                               label="NC — Not Connected (excluded)"),
+            )
     legend_elements.append(
         mpatches.Patch(facecolor="gray", edgecolor="dimgray", alpha=0.7,
                        label=f"Via ({layer_str} layer only)"),
