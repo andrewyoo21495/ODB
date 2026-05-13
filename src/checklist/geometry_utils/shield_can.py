@@ -176,10 +176,41 @@ def is_on_corner_or_diagonal(
     cap_is_bottom: bool = False,
     sc_is_bottom: bool = False,
 ) -> bool:
-    """Check if cap is near a corner vertex or diagonal section of shield_can."""
+    """Check if cap overlaps a curved end-cap (fill-cut) of a shield-can pad.
+
+    Only the semicircular curved sections of each shield-can pad count as
+    "edge" positions.  Straight portions of the pad are not considered edges.
+
+    Falls back to the legacy vertex-buffer / diagonal-segment method when
+    fill-cut geometry is unavailable (e.g. circular pads without sufficient
+    aspect ratio).
+    """
     if not _HAS_SHAPELY:
         return False
 
+    # --- Primary: fill-cut (curved end-cap) based check ---
+    fill_cuts = detect_fill_cuts(
+        shield_can, packages, is_bottom=sc_is_bottom,
+    )
+
+    if fill_cuts:
+        cap_geom = _get_pad_union(
+            cap, packages, is_bottom=cap_is_bottom,
+        )
+        if cap_geom is None or cap_geom.is_empty:
+            pad_centers = _get_pad_centers(cap, packages, is_bottom=cap_is_bottom)
+            if not pad_centers:
+                return False
+            cap_geom = MultiPoint(
+                [ShapelyPoint(px, py) for px, py in pad_centers]
+            )
+
+        for fc in fill_cuts:
+            if fc.intersects(cap_geom):
+                return True
+        return False
+
+    # --- Fallback: legacy vertex-buffer / diagonal-segment method ---
     outline = _get_shield_can_outline(shield_can, packages, is_bottom=sc_is_bottom)
     if outline is None:
         return False
