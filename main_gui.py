@@ -51,6 +51,20 @@ class ChecklistGUI:
         )
         tk.Button(out_frame, text="Browse", command=self._browse_output).pack(side=tk.LEFT)
 
+        # --- Report format selection ---
+        fmt_frame = tk.Frame(self.root)
+        fmt_frame.pack(fill=tk.X, **pad)
+
+        tk.Label(fmt_frame, text="Format:", width=10, anchor="w").pack(side=tk.LEFT)
+        self.fmt_var = tk.StringVar(value="excel")
+        fmt_combo = ttk.Combobox(
+            fmt_frame, textvariable=self.fmt_var, state="readonly",
+            values=["excel", "html", "excel html"],
+            width=15,
+        )
+        fmt_combo.pack(side=tk.LEFT, padx=(0, 5))
+        fmt_combo.bind("<<ComboboxSelected>>", self._on_file_changed)
+
         # --- Run button ---
         self.run_btn = tk.Button(
             self.root, text="Run Checklist", font=("Arial", 11, "bold"),
@@ -88,13 +102,23 @@ class ChecklistGUI:
         if odb_path:
             parent = Path(odb_path).parent
             odb_name = Path(odb_path).name
-            self.out_var.set(str(parent / f"[CKL_report]{odb_name}.xlsx"))
+            fmt = self.fmt_var.get().strip()
+            ext = ".html" if fmt == "html" else ".xlsx"
+            self.out_var.set(str(parent / f"[CKL_report]{odb_name}{ext}"))
 
     def _browse_output(self):
+        fmt = self.fmt_var.get().strip()
+        if fmt == "html":
+            default_ext = ".html"
+            filetypes = [("HTML files", "*.html"), ("All files", "*.*")]
+        else:
+            default_ext = ".xlsx"
+            filetypes = [("Excel files", "*.xlsx"), ("HTML files", "*.html"),
+                         ("All files", "*.*")]
         path = filedialog.asksaveasfilename(
             title="Select Output Location",
-            defaultextension=".xlsx",
-            filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")],
+            defaultextension=default_ext,
+            filetypes=filetypes,
         )
         if path:
             self.out_var.set(path)
@@ -122,6 +146,9 @@ class ChecklistGUI:
         cmd = [sys.executable, "-u", "main.py", "check", odb_path]
         if output_path:
             cmd += ["--output", output_path]
+        fmt = self.fmt_var.get().strip()
+        if fmt:
+            cmd += ["--format"] + fmt.split()
 
         try:
             process = subprocess.Popen(

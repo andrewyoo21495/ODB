@@ -957,19 +957,42 @@ def cmd_check(args):
 
     print(f"\nSummary: {passed} passed, {failed} failed out of {len(results)} rules")
 
-    # Generate Excel report
+    # Generate report(s)
+    from src.checklist.html_reporter import generate_html_report
+    from src.checklist.reporter import _cleanup_images
+
+    formats = set(args.format)
     odb_filename = Path(args.odb_path).name
-    default_output = Path(f"output/[CKL_report]{odb_filename}.xlsx")
-    output_path = Path(args.output) if args.output else default_output
     job_info = job_data.get("job_info")
     job_name = job_info.job_name if job_info else cache_name
     references_dir = Path(__file__).parent / "references"
-    generate_report(
-        results, output_path, job_name=job_name,
+
+    if args.output:
+        user_path = Path(args.output)
+        excel_path = user_path.with_suffix(".xlsx")
+        html_path = user_path.with_suffix(".html")
+    else:
+        default_stem = f"output/[CKL_report]{odb_filename}"
+        excel_path = Path(f"{default_stem}.xlsx")
+        html_path = Path(f"{default_stem}.html")
+
+    report_kwargs = dict(
+        job_name=job_name,
         components_top=job_data.get("components_top", []),
         components_bot=job_data.get("components_bot", []),
         references_dir=references_dir,
     )
+
+    # HTML first (needs image files on disk for base64 encoding)
+    if "html" in formats:
+        generate_html_report(results, html_path, **report_kwargs)
+
+    # Excel (cleans up temp images internally)
+    if "excel" in formats:
+        generate_report(results, excel_path, **report_kwargs)
+    else:
+        # No Excel pass — clean up temp images explicitly
+        _cleanup_images(results)
 
 
 def cmd_copper_ratio(args):
@@ -1151,7 +1174,10 @@ def main():
     p_check = subparsers.add_parser("check", help="Run design checklist")
     p_check.add_argument("odb_path", help="Path to ODB++ archive or directory")
     p_check.add_argument("--rules", nargs="*", help="Rule IDs to run (default: all)")
-    p_check.add_argument("--output", help="Output Excel path")
+    p_check.add_argument("--output", help="Output report path")
+    p_check.add_argument("--format", nargs="+", default=["excel"],
+                         choices=["excel", "html"],
+                         help="Output format(s): excel, html, or both (default: excel)")
     p_check.add_argument("--cache-dir", default="cache", help="Cache directory")
 
     # copper command
