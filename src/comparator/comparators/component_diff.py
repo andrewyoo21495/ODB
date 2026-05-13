@@ -162,16 +162,13 @@ class ComponentDiffComparator(ComparatorBase):
     title = "Component Changes"
 
     def compare(self, old_data: dict, new_data: dict) -> ComparisonResult:
-        top_changes = _diff_layer(
-            old_data.get("components_top", []),
-            new_data.get("components_top", []),
-            "Top",
-        )
-        bot_changes = _diff_layer(
-            old_data.get("components_bot", []),
-            new_data.get("components_bot", []),
-            "Bottom",
-        )
+        old_top = old_data.get("components_top", [])
+        old_bot = old_data.get("components_bot", [])
+        new_top = new_data.get("components_top", [])
+        new_bot = new_data.get("components_bot", [])
+
+        top_changes = _diff_layer(old_top, new_top, "Top")
+        bot_changes = _diff_layer(old_bot, new_bot, "Bottom")
 
         top_counts = _count_by_type(top_changes)
         bot_counts = _count_by_type(bot_changes)
@@ -189,6 +186,45 @@ class ComponentDiffComparator(ComparatorBase):
             f"{bot_counts.get('MODIFIED', 0)}M)"
         )
 
+        # Generate diff overlay images
+        from src.comparator.diff_visualizer import render_diff_overlay
+
+        # Use profile and packages from new revision (board outline typically
+        # stays the same; packages needed for pad geometry rendering)
+        profile = new_data.get("profile")
+        eda_data = new_data.get("eda_data")
+        packages = eda_data.packages if eda_data else None
+        user_symbols = new_data.get("user_symbols")
+
+        top_images: list[dict] = []
+        bot_images: list[dict] = []
+
+        if top_changes:
+            img_path = render_diff_overlay(
+                old_top, new_top, top_changes,
+                profile, packages, user_symbols,
+                layer="Top", comp_side="T",
+            )
+            if img_path:
+                top_images.append({
+                    "path": str(img_path),
+                    "title": "Component Diff Overlay \u2014 Top Layer",
+                    "width": 700,
+                })
+
+        if bot_changes:
+            img_path = render_diff_overlay(
+                old_bot, new_bot, bot_changes,
+                profile, packages, user_symbols,
+                layer="Bottom", comp_side="B",
+            )
+            if img_path:
+                bot_images.append({
+                    "path": str(img_path),
+                    "title": "Component Diff Overlay \u2014 Bottom Layer",
+                    "width": 700,
+                })
+
         sheets: list[SheetConfig] = []
 
         # Comp Top sheet
@@ -200,9 +236,10 @@ class ComponentDiffComparator(ComparatorBase):
             stats={
                 "layer": "Top",
                 **top_counts,
-                "old_total": len(old_data.get("components_top", [])),
-                "new_total": len(new_data.get("components_top", [])),
+                "old_total": len(old_top),
+                "new_total": len(new_top),
             },
+            images=top_images,
         ))
 
         # Comp Bottom sheet
@@ -214,9 +251,10 @@ class ComponentDiffComparator(ComparatorBase):
             stats={
                 "layer": "Bottom",
                 **bot_counts,
-                "old_total": len(old_data.get("components_bot", [])),
-                "new_total": len(new_data.get("components_bot", [])),
+                "old_total": len(old_bot),
+                "new_total": len(new_bot),
             },
+            images=bot_images,
         ))
 
         return ComparisonResult(

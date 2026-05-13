@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from openpyxl import Workbook
+from openpyxl.drawing.image import Image as XlImage
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
@@ -107,6 +108,9 @@ def generate_comparison_report(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     wb.save(str(output_path))
     print(f"Comparison report saved: {output_path}")
+
+    # Clean up temporary image files
+    _cleanup_images(results)
 
 
 # ---------------------------------------------------------------------------
@@ -236,6 +240,9 @@ def _create_data_sheet(wb: Workbook, cfg: SheetConfig):
     if not cfg.columns or not cfg.rows:
         if not cfg.rows:
             ws["A3"] = "No changes detected."
+        # Still insert images even if no tabular data
+        if cfg.images:
+            _insert_images(ws, cfg.images, start_row=5)
         _auto_fit_columns(ws)
         return
 
@@ -294,7 +301,73 @@ def _create_data_sheet(wb: Workbook, cfg: SheetConfig):
                     cell.font = _FAIL_FONT
                 cell.alignment = Alignment(horizontal="center")
 
+    # Insert images after the data table
+    if cfg.images:
+        end_row = header_row + len(cfg.rows) + 2  # +2 for spacing
+        _insert_images(ws, cfg.images, start_row=end_row)
+
     _auto_fit_columns(ws)
+
+
+# ---------------------------------------------------------------------------
+# Image handling
+# ---------------------------------------------------------------------------
+
+_IMG_TITLE_FILL = PatternFill(
+    start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
+
+
+def _insert_images(ws, images: list[dict], start_row: int):
+    """Insert visualisation images into the worksheet.
+
+    Each entry in *images* is a dict with keys:
+    - ``path``  -- Path to a PNG file
+    - ``title`` -- caption shown above the image
+    - ``width`` -- desired width in pixels (default 700)
+    """
+    row = start_row
+    for img_info in images:
+        img_path = Path(img_info["path"])
+        if not img_path.exists():
+            continue
+
+        # Title row
+        title = img_info.get("title", img_path.stem)
+        title_cell = ws.cell(row=row, column=1, value=title)
+        title_cell.font = Font(bold=True, size=11)
+        title_cell.fill = _IMG_TITLE_FILL
+        row += 1
+
+        # Insert image
+        img = XlImage(str(img_path))
+        target_width = img_info.get("width", 700)
+        scale = target_width / img.width
+        img.width = target_width
+        img.height = int(img.height * scale)
+        ws.add_image(img, f"A{row}")
+
+        # Skip enough rows to accommodate the image (~20 px per row)
+        row += max(1, img.height // 20) + 2
+
+    return row
+
+
+def _cleanup_images(results: list[ComparisonResult]):
+    """Remove temporary visualisation image files after the report is saved."""
+    dirs_to_remove: set[Path] = set()
+    for r in results:
+        for sheet_cfg in r.sheet_configs:
+            for img_info in sheet_cfg.images:
+                p = Path(img_info["path"])
+                if p.exists():
+                    dirs_to_remove.add(p.parent)
+                    p.unlink(missing_ok=True)
+    for d in dirs_to_remove:
+        try:
+            if d.exists() and not any(d.iterdir()):
+                d.rmdir()
+        except OSError:
+            pass
 
 
 # ---------------------------------------------------------------------------

@@ -83,6 +83,8 @@ class SheetConfig:
     columns: list[str] = field(default_factory=list)
     rows: list[dict] = field(default_factory=list)
     stats: dict = field(default_factory=dict)
+    images: list[dict] = field(default_factory=list)
+    # Each image dict: {"path": Path, "title": str, "width": int}
 
 
 @dataclass

@@ -1104,12 +1104,13 @@ def cmd_compare(args):
     default_output = Path(f"output/[CMP_report]{old_name}_vs_{new_name}.xlsx")
     output_path = Path(args.output) if args.output else default_output
 
-    old_job_info = old_data.get("job_info")
-    new_job_info = new_data.get("job_info")
+    # Use file names (not step names) for revision identification
+    old_filename = Path(args.odb_path_old).name
+    new_filename = Path(args.odb_path_new).name
     generate_comparison_report(
         results, output_path,
-        old_job_name=old_job_info.job_name if old_job_info else old_name,
-        new_job_name=new_job_info.job_name if new_job_info else new_name,
+        old_job_name=old_filename,
+        new_job_name=new_filename,
     )
 
 
