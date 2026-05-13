@@ -29,8 +29,8 @@ from src.models import RuleResult
 class CKL02010(ChecklistRule):
     rule_id = "CKL-02-010"
     description = (
-        "SIM sockets: capacitors/inductors >=2012 on the opposite side "
-        "must be horizontally oriented"
+        "SIM 소켓: 반대면의 2012 이상 캐패시터/인덕터는 "
+        "수평 방향이어야 합니다"
     )
     category = "Placement"
 
@@ -124,9 +124,9 @@ class CKL02010(ChecklistRule):
             category=self.category,
             passed=passed,
             message=(
-                f"{fail_count} component(s) near SIM socket not horizontally oriented."
+                f"SIM 소켓 인근에서 수평 방향이 아닌 부품이 {fail_count}건 발견되었습니다."
                 if not passed
-                else "All components near SIM sockets are properly oriented."
+                else "SIM 소켓 인근 모든 부품이 적절한 방향으로 배치되어 있습니다."
             ),
             affected_components=[
                 r["overlapping_cmp"] for r in rows if r["status"] == "FAIL"

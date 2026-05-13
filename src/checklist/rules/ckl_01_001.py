@@ -155,8 +155,8 @@ def _check_overlaps(comp, comp_layer, interposers, full_pad_targets,
 class CKL01001(ChecklistRule):
     rule_id = "CKL-01-001"
     description = (
-        "ICs and Filters must not have pad-to-pad overlaps with interposers, "
-        "connectors, SIM sockets, or shield cans on the opposite side"
+        "IC 및 필터는 반대면의 인터포저, 커넥터, SIM 소켓, "
+        "쉴드캔과 패드 간 중첩이 없어야 합니다"
     )
     category = "Placement"
 
@@ -277,10 +277,9 @@ class CKL01001(ChecklistRule):
             category=self.category,
             passed=passed,
             message=(
-                f"{fail_count} pad-to-pad overlap(s) with opposite-side "
-                f"components found."
+                f"반대면 부품과의 패드 간 중첩이 {fail_count}건 발견되었습니다."
                 if not passed
-                else "No pad-to-pad overlaps with opposite-side components detected."
+                else "반대면 부품과의 패드 간 중첩이 감지되지 않았습니다."
             ),
             affected_components=[
                 r["comp"] for r in rows if r["status"] == "FAIL"

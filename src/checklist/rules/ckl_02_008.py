@@ -28,8 +28,8 @@ from src.models import RuleResult
 class CKL02008(ChecklistRule):
     rule_id = "CKL-02-008"
     description = (
-        "2S Inductors >=2012 overlapping connectors on the opposite side: "
-        "edge and orientation check"
+        "반대면 커넥터와 중첩되는 2012 이상 2S 인덕터: "
+        "엣지 및 방향 검사"
     )
     category = "Placement"
 
@@ -123,9 +123,9 @@ class CKL02008(ChecklistRule):
             category=self.category,
             passed=passed,
             message=(
-                f"{fail_count} 2S inductor placement issue(s) near connectors."
+                f"커넥터 인근 2S 인덕터 배치 문제가 {fail_count}건 발견되었습니다."
                 if not passed
-                else "All 2S inductors near connectors are properly placed."
+                else "커넥터 인근 모든 2S 인덕터가 적절히 배치되어 있습니다."
             ),
             affected_components=[
                 r["overlapping_ind"] for r in rows if r["status"] == "FAIL"

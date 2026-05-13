@@ -28,8 +28,8 @@ from src.models import RuleResult
 class CKL02002(ChecklistRule):
     rule_id = "CKL-02-002"
     description = (
-        "Managed capacitors (41 types) overlapping connectors on the "
-        "opposite side must be aligned horizontally"
+        "41종 관리 캐패시터가 반대면 커넥터와 중첩될 경우 "
+        "수평으로 정렬되어야 합니다"
     )
     category = "Placement"
 
@@ -160,10 +160,10 @@ class CKL02002(ChecklistRule):
             category=self.category,
             passed=passed,
             message=(
-                f"{fail_count} managed capacitor(s) not horizontally aligned "
-                f"with opposite-side connector."
+                f"반대면 커넥터와 수평 정렬되지 않은 관리 캐패시터가 "
+                f"{fail_count}건 발견되었습니다."
                 if not passed
-                else "All managed capacitors near connectors are horizontally aligned."
+                else "커넥터 인근 모든 관리 캐패시터가 수평으로 정렬되어 있습니다."
             ),
             affected_components=[
                 r["overlapping_cap"] for r in rows if r["status"] == "FAIL"

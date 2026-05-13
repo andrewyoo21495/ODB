@@ -46,9 +46,8 @@ def _get_51_managed_part_names() -> set[str]:
 class CKL02006(ChecklistRule):
     rule_id = "CKL-02-006"
     description = (
-        "General capacitors (not in 51 managed types) overlapping "
-        "connectors or shield cans on the opposite side: edge, orientation, "
-        "and diagonal-region check"
+        "일반 캐패시터(51종 관리 대상 제외)가 반대면 커넥터 또는 쉴드캔과 "
+        "중첩될 경우: 엣지, 방향, 대각선 영역 검사"
     )
     category = "Placement"
 
@@ -215,10 +214,10 @@ class CKL02006(ChecklistRule):
             category=self.category,
             passed=passed,
             message=(
-                f"{fail_count} general capacitor placement issue(s) near "
-                f"connectors or shield cans."
+                f"커넥터 또는 쉴드캔 인근 일반 캐패시터 배치 문제가 "
+                f"{fail_count}건 발견되었습니다."
                 if not passed
-                else "All general capacitors near connectors and shield cans are properly placed."
+                else "커넥터 및 쉴드캔 인근 모든 일반 캐패시터가 적절히 배치되어 있습니다."
             ),
             affected_components=[
                 r["overlapping_cap"] for r in fail_rows

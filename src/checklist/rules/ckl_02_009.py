@@ -33,8 +33,8 @@ from src.models import RuleResult
 class CKL02009(ChecklistRule):
     rule_id = "CKL-02-009"
     description = (
-        "General inductors >=2012 (excluding 2S): edge/orientation check vs "
-        "opposite-side connectors, and avoidance check vs opposite-side shield cans"
+        "2012 이상 일반 인덕터(2S 제외): 반대면 커넥터 대비 엣지/방향 검사, "
+        "반대면 쉴드캔 대비 회피 검사"
     )
     category = "Placement"
 
@@ -192,10 +192,10 @@ class CKL02009(ChecklistRule):
             category=self.category,
             passed=passed,
             message=(
-                f"{fail_count} general inductor placement issue(s) "
-                "(connector edge/orientation or shield can avoidance)."
+                f"일반 인덕터 배치 문제(커넥터 엣지/방향 또는 쉴드캔 회피)가 "
+                f"{fail_count}건 발견되었습니다."
                 if not passed
-                else "All general inductors near connectors/shield cans are properly placed."
+                else "커넥터/쉴드캔 인근 모든 일반 인덕터가 적절히 배치되어 있습니다."
             ),
             affected_components=[
                 r["overlapping_ind"] for r in rows if r["status"] == "FAIL"

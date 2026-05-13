@@ -39,8 +39,8 @@ def _find_ap_memory(components: list[Component]) -> list[Component]:
 class CKL02011(ChecklistRule):
     rule_id = "CKL-02-011"
     description = (
-        "Capacitor sandwiched between AP/Memory (same or opposite layer): "
-        "if overlapping an outline, placement is flagged"
+        "AP/메모리 사이에 끼인 캐패시터(동일면 또는 반대면): "
+        "외곽선과 중첩될 경우 배치 문제로 표시됩니다"
     )
     category = "Placement"
 
@@ -173,10 +173,10 @@ class CKL02011(ChecklistRule):
             category=self.category,
             passed=passed,
             message=(
-                f"{fail_count} capacitor(s) sandwiched between AP/Memory "
-                f"overlap an outline."
+                f"AP/메모리 사이에 끼여 외곽선과 중첩되는 캐패시터가 "
+                f"{fail_count}건 발견되었습니다."
                 if not passed
-                else "No sandwiched capacitors overlapping AP/Memory outlines."
+                else "AP/메모리 외곽선과 중첩되는 샌드위치 캐패시터가 없습니다."
             ),
             affected_components=[
                 r["comp"] for r in rows if r["status"] == "FAIL"

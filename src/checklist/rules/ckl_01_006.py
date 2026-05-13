@@ -21,8 +21,8 @@ from src.models import RuleResult
 class CKL01006(ChecklistRule):
     rule_id = "CKL-01-006"
     description = (
-        "RF Receptacle pads must not overlap with 5-pin filter pads "
-        "on the opposite layer"
+        "RF 리셉터클 패드는 반대면 5핀 필터 패드와 "
+        "중첩되지 않아야 합니다"
     )
     category = "Placement"
 
@@ -99,10 +99,10 @@ class CKL01006(ChecklistRule):
             category=self.category,
             passed=passed,
             message=(
-                f"{fail_count} RF Receptacle pad overlap(s) with opposite-layer "
-                f"5-pin filter pad(s) found."
+                f"RF 리셉터클 패드와 반대면 5핀 필터 패드의 중첩이 "
+                f"{fail_count}건 발견되었습니다."
                 if not passed
-                else "No RF Receptacle pad overlaps with opposite-layer 5-pin filters."
+                else "RF 리셉터클 패드와 반대면 5핀 필터의 중첩이 없습니다."
             ),
             affected_components=[
                 r["comp"] for r in rows if r["status"] == "FAIL"

@@ -30,7 +30,7 @@ from src.visualizer.fid_lookup import (
 @register_rule
 class CKL03013(ChecklistRule):
     rule_id = "CKL-03-013"
-    description = "Each MIC pad must have at least one VIA"
+    description = "각 MIC 패드에는 최소 1개의 VIA가 있어야 합니다"
     category = "Placement"
 
     def evaluate(self, job_data: dict) -> RuleResult:
@@ -122,9 +122,9 @@ class CKL03013(ChecklistRule):
             category=self.category,
             passed=passed,
             message=(
-                f"{fail_count} MIC pad(s) without a VIA detected."
+                f"VIA가 없는 MIC 패드가 {fail_count}건 감지되었습니다."
                 if not passed
-                else "All MIC pads have at least one VIA."
+                else "모든 MIC 패드에 최소 1개의 VIA가 있습니다."
             ),
             affected_components=[
                 r["comp"] for r in rows if r["status"] == "FAIL"

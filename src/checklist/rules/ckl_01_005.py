@@ -34,8 +34,8 @@ def _find_ap_memory(components: list[Component]) -> list[Component]:
 class CKL01005(ChecklistRule):
     rule_id = "CKL-01-005"
     description = (
-        "Inductors >=2012 overlapping opposite side of AP/Memory: "
-        "review corner placement and orientation"
+        "반대면 AP/메모리와 중첩되는 2012 이상 인덕터: "
+        "코너 배치 및 방향 검토"
     )
     category = "Placement"
 
@@ -125,9 +125,9 @@ class CKL01005(ChecklistRule):
             category=self.category,
             passed=passed,
             message=(
-                f"{fail_count} inductor placement issue(s) near AP/Memory."
+                f"AP/메모리 인근 인덕터 배치 문제가 {fail_count}건 발견되었습니다."
                 if not passed
-                else "All inductors near AP/Memory are properly placed."
+                else "AP/메모리 인근 모든 인덕터가 적절히 배치되어 있습니다."
             ),
             affected_components=[
                 r["overlapping_ind"] for r in rows if r["status"] == "FAIL"

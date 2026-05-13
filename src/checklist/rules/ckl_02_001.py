@@ -33,8 +33,8 @@ _MIN_DISTANCE_MM = 1.5
 class CKL02001(ChecklistRule):
     rule_id = "CKL-02-001"
     description = (
-        "10 managed capacitor types must be at least 1.5mm from "
-        "connectors, interposers, and shield cans on the opposite side"
+        "10종 관리 캐패시터는 반대면 커넥터, 인터포저, "
+        "쉴드캔과 최소 1.5mm 이격되어야 합니다"
     )
     category = "Spacing"
 
@@ -156,10 +156,10 @@ class CKL02001(ChecklistRule):
             category=self.category,
             passed=passed,
             message=(
-                f"{fail_count} capacitor(s) too close to opposite-side "
-                "connector/interposer/shield can."
+                f"반대면 커넥터/인터포저/쉴드캔과 너무 가까운 캐패시터가 "
+                f"{fail_count}건 발견되었습니다."
                 if not passed
-                else "All managed capacitors meet the 1.5mm distance requirement."
+                else "모든 관리 캐패시터가 1.5mm 이격 요건을 충족합니다."
             ),
             affected_components=[
                 r["comp"] for r in rows if r["status"] == "FAIL"

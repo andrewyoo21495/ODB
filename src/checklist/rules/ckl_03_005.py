@@ -32,7 +32,7 @@ from src.visualizer.fid_lookup import (
 class CKL03005(ChecklistRule):
     rule_id = "CKL-03-005"
     description = (
-        "Axis sensor pads must each have at least one VIA"
+        "축 센서 각 패드에는 최소 1개의 VIA가 있어야 합니다"
     )
     category = "Placement"
 
@@ -127,9 +127,9 @@ class CKL03005(ChecklistRule):
             category=self.category,
             passed=passed,
             message=(
-                f"{fail_count} axis sensor pad(s) without a VIA detected."
+                f"VIA가 없는 축 센서 패드가 {fail_count}건 감지되었습니다."
                 if not passed
-                else "All axis sensor pads have at least one VIA."
+                else "모든 축 센서 패드에 최소 1개의 VIA가 있습니다."
             ),
             affected_components=[
                 r["comp"] for r in rows if r["status"] == "FAIL"

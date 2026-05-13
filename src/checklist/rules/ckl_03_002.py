@@ -18,7 +18,7 @@ from src.models import RuleResult
 class CKL03002(ChecklistRule):
     rule_id = "CKL-03-002"
     description = (
-        "BGA-type IC components with no internal pads require resin filling"
+        "내부 패드가 없는 BGA 타입 IC 부품은 수지 충전이 필요합니다"
     )
     category = "Placement"
 
@@ -57,9 +57,9 @@ class CKL03002(ChecklistRule):
             category=self.category,
             passed=passed,
             message=(
-                f"{fail_count} BGA IC(s) with empty centre detected."
+                f"중앙이 비어 있는 BGA IC가 {fail_count}건 감지되었습니다."
                 if not passed
-                else "No BGA ICs with empty centre found."
+                else "중앙이 비어 있는 BGA IC가 발견되지 않았습니다."
             ),
             affected_components=[
                 r["comp"] for r in rows if r["status"] == "FAIL"

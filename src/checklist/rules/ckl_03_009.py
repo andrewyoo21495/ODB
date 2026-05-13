@@ -80,7 +80,7 @@ def _find_outermost_pin_indices(pins: list[Pin]) -> set[int]:
 class CKL03009(ChecklistRule):
     rule_id = "CKL-03-009"
     description = (
-        "SIM socket outermost pads must have at least 4 VIAs for tear resistance"
+        "SIM 소켓 최외곽 패드에는 인열 저항을 위해 최소 4개의 VIA가 있어야 합니다"
     )
     category = "Placement"
 
@@ -178,9 +178,9 @@ class CKL03009(ChecklistRule):
             category=self.category,
             passed=passed,
             message=(
-                f"{fail_count} SIM socket perimeter pad(s) with fewer than 4 VIAs detected."
+                f"VIA가 4개 미만인 SIM 소켓 외곽 패드가 {fail_count}건 감지되었습니다."
                 if not passed
-                else "All SIM socket perimeter pads have at least 4 VIAs."
+                else "모든 SIM 소켓 외곽 패드에 최소 4개의 VIA가 있습니다."
             ),
             affected_components=[
                 r["comp"] for r in rows if r["status"] == "FAIL"

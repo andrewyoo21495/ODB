@@ -31,7 +31,7 @@ from src.visualizer.fid_lookup import (
 class CKL03004(ChecklistRule):
     rule_id = "CKL-03-004"
     description = (
-        "Hall IC pads must each have at least one VIA"
+        "Hall IC 각 패드에는 최소 1개의 VIA가 있어야 합니다"
     )
     category = "Placement"
 
@@ -126,9 +126,9 @@ class CKL03004(ChecklistRule):
             category=self.category,
             passed=passed,
             message=(
-                f"{fail_count} Hall IC pad(s) without a VIA detected."
+                f"VIA가 없는 Hall IC 패드가 {fail_count}건 감지되었습니다."
                 if not passed
-                else "All Hall IC pads have at least one VIA."
+                else "모든 Hall IC 패드에 최소 1개의 VIA가 있습니다."
             ),
             affected_components=[
                 r["comp"] for r in rows if r["status"] == "FAIL"

@@ -31,7 +31,7 @@ from src.visualizer.fid_lookup import (
 class CKL03008(ChecklistRule):
     rule_id = "CKL-03-008"
     description = (
-        "Sensor component pads must each have at least 4 VIAs applied"
+        "센서 부품 각 패드에는 최소 4개의 VIA가 적용되어야 합니다"
     )
     category = "Placement"
 
@@ -134,9 +134,9 @@ class CKL03008(ChecklistRule):
             category=self.category,
             passed=passed,
             message=(
-                f"{fail_count} sensor pad(s) with fewer than 4 VIAs detected."
+                f"VIA가 4개 미만인 센서 패드가 {fail_count}건 감지되었습니다."
                 if not passed
-                else "All sensor component pads have at least 4 VIAs."
+                else "모든 센서 부품 패드에 최소 4개의 VIA가 있습니다."
             ),
             affected_components=[
                 r["comp"] for r in rows if r["status"] == "FAIL"

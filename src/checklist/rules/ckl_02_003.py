@@ -28,9 +28,9 @@ from src.models import RuleResult
 class CKL02003(ChecklistRule):
     rule_id = "CKL-02-003"
     description = (
-        "Managed capacitors (41 types) whose pads overlap shield can pads "
-        "on the opposite side must be aligned horizontally and not placed "
-        "on corner or diagonal sections"
+        "41종 관리 캐패시터의 패드가 반대면 쉴드캔 패드와 중첩될 경우 "
+        "수평으로 정렬되어야 하며, 코너 또는 대각선 구간에 "
+        "배치되지 않아야 합니다"
     )
     category = "Placement"
 
@@ -144,10 +144,10 @@ class CKL02003(ChecklistRule):
             category=self.category,
             passed=passed,
             message=(
-                f"{fail_count} managed capacitor(s) not horizontally aligned "
-                f"with opposite-side shield can (or on corner/diagonal section)."
+                f"반대면 쉴드캔과 수평 정렬되지 않은(또는 코너/대각선 구간에 위치한) "
+                f"관리 캐패시터가 {fail_count}건 발견되었습니다."
                 if not passed
-                else "All managed capacitors near shield cans are horizontally aligned."
+                else "쉴드캔 인근 모든 관리 캐패시터가 수평으로 정렬되어 있습니다."
             ),
             affected_components=[
                 r["overlapping_cap"] for r in rows if r["status"] == "FAIL"

@@ -27,8 +27,8 @@ from src.models import RuleResult
 class CKL03016(ChecklistRule):
     rule_id = "CKL-03-016"
     description = (
-        "Interposers, Shield Cans, SIM Sockets, and Connectors must not "
-        "overlap the opposite side of OSC components"
+        "인터포저, 쉴드캔, SIM 소켓, 커넥터는 OSC 부품의 "
+        "반대면과 중첩되지 않아야 합니다"
     )
     category = "Placement"
 
@@ -124,9 +124,9 @@ class CKL03016(ChecklistRule):
             category=self.category,
             passed=passed,
             message=(
-                f"{fail_count} component(s) overlapping the opposite side of OSC."
+                f"OSC 반대면과 중첩되는 부품이 {fail_count}건 발견되었습니다."
                 if not passed
-                else "No prohibited components overlap the opposite side of OSC."
+                else "OSC 반대면과 중첩되는 금지 부품이 없습니다."
             ),
             affected_components=[
                 r["comp"] for r in rows if r["status"] == "FAIL"

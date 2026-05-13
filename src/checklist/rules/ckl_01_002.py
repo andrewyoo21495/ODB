@@ -37,7 +37,7 @@ from src.visualizer.fid_lookup import (
 class CKL01002(ChecklistRule):
     rule_id = "CKL-01-002"
     description = (
-        "Outermost pads of PMIC components must have VIA designs applied"
+        "PMIC 부품의 최외곽 패드에 VIA 설계가 적용되어야 합니다"
     )
     category = "Placement"
 
@@ -161,14 +161,14 @@ class CKL01002(ChecklistRule):
         passed = fail_count == 0
 
         if not rows:
-            msg = "No NC outermost pads found on PMIC components."
+            msg = "PMIC 부품에서 NC 최외곽 패드가 발견되지 않았습니다."
         elif not passed:
             msg = (
-                f"{fail_count} NC outermost PMIC pad(s) without a VIA"
-                f" detected."
+                f"VIA가 없는 NC 최외곽 PMIC 패드가 {fail_count}건"
+                f" 감지되었습니다."
             )
         else:
-            msg = "All NC outermost PMIC pads have VIA designs applied."
+            msg = "모든 NC 최외곽 PMIC 패드에 VIA 설계가 적용되어 있습니다."
 
         return RuleResult(
             rule_id=self.rule_id,

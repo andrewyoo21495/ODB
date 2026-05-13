@@ -93,8 +93,8 @@ def _matches_dpad(actual: str, expected: str) -> bool:
 class CKL02005(ChecklistRule):
     rule_id = "CKL-02-005"
     description = (
-        "D-pad list capacitors must use the D-pad package only when located "
-        "inside a Shield Can / Interposer; outside, the regular package is required."
+        "D-pad 리스트 캐패시터는 쉴드캔/인터포저 내부에 위치할 때만 D-pad 패키지를 "
+        "사용해야 하며, 외부에서는 일반 패키지를 사용해야 합니다."
     )
     category = "Placement"
 
@@ -212,16 +212,16 @@ class CKL02005(ChecklistRule):
         passed_all = fail_count == 0
 
         if total_evaluated == 0:
-            message = "No D-pad list capacitors found on the board to evaluate."
+            message = "보드에서 평가할 D-pad 리스트 캐패시터가 발견되지 않았습니다."
         elif passed_all:
             message = (
-                f"All {total_evaluated} D-pad list capacitor(s) use the correct "
-                f"package for their location (inside vs outside containers)."
+                f"모든 {total_evaluated}개의 D-pad 리스트 캐패시터가 "
+                f"위치(컨테이너 내부/외부)에 맞는 올바른 패키지를 사용하고 있습니다."
             )
         else:
             message = (
-                f"{fail_count} of {total_evaluated} D-pad list capacitor(s) use "
-                f"an incorrect package for their location."
+                f"{total_evaluated}개 중 {fail_count}개의 D-pad 리스트 캐패시터가 "
+                f"위치에 맞지 않는 패키지를 사용하고 있습니다."
             )
 
         return RuleResult(

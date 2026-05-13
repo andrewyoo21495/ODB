@@ -35,7 +35,7 @@ _MIN_CLEARANCE_MM = 1.0
 class CKL03012(ChecklistRule):
     rule_id = "CKL-03-012"
     description = (
-        "OSC components must be at least 1mm from PCB edge and BOTHHOLE components"
+        "OSC 부품은 PCB 가장자리 및 BOTHHOLE 부품과 최소 1mm 이격되어야 합니다"
     )
     category = "Clearance"
 
@@ -165,9 +165,9 @@ class CKL03012(ChecklistRule):
             category=self.category,
             passed=passed,
             message=(
-                f"{fail_count} OSC component(s) too close to PCB edge or BOTHHOLE."
+                f"PCB 가장자리 또는 BOTHHOLE에 너무 가까운 OSC 부품이 {fail_count}건 발견되었습니다."
                 if not passed
-                else "All OSC components meet the 1mm clearance requirement."
+                else "모든 OSC 부품이 1mm 이격 요건을 충족합니다."
             ),
             affected_components=[
                 r["comp"] for r in rows if r["status"] == "FAIL"

@@ -29,9 +29,8 @@ _MIN_DISTANCE_MM = 0.5
 class CKL02004(ChecklistRule):
     rule_id = "CKL-02-004"
     description = (
-        "Do not place 41 managed capacitor types on the opposite side of "
-        "LED Flash components. Maintain >= 0.5mm clearance on the opposite "
-        "side of RF components."
+        "41종 관리 캐패시터를 LED Flash 부품 반대면에 배치하지 마십시오. "
+        "RF 부품 반대면에는 0.5mm 이상 이격을 유지해야 합니다."
     )
     category = "Placement"
 
@@ -160,10 +159,10 @@ class CKL02004(ChecklistRule):
             category=self.category,
             passed=passed,
             message=(
-                f"{fail_count} managed capacitor(s) violating LED Flash / RF "
-                f"opposite-side placement rule."
+                f"LED Flash / RF 반대면 배치 규정을 위반하는 관리 캐패시터가 "
+                f"{fail_count}건 발견되었습니다."
                 if not passed
-                else "All managed capacitors meet LED Flash / RF opposite-side requirements."
+                else "모든 관리 캐패시터가 LED Flash / RF 반대면 요건을 충족합니다."
             ),
             affected_components=[
                 r["overlapping_cmp"] for r in rows if r["status"] == "FAIL"

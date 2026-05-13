@@ -88,8 +88,8 @@ def _find_corner_pin_indices(pins: list[Pin], n_per_corner: int = 3) -> set[int]
 class CKL03001(ChecklistRule):
     rule_id = "CKL-03-001"
     description = (
-        "MCP ICs: no connector overlap on opposite side, "
-        "and corner pins must each have at least one VIA"
+        "MCP IC: 반대면 커넥터 중첩 불가, "
+        "코너 핀에는 각각 최소 1개의 VIA가 있어야 합니다"
     )
     category = "Clearance"
 
@@ -239,9 +239,9 @@ class CKL03001(ChecklistRule):
             category=self.category,
             passed=passed,
             message=(
-                f"{fail_count} issue(s) found: connector overlap or missing corner via on MCP IC."
+                f"MCP IC에서 커넥터 중첩 또는 코너 VIA 누락 문제가 {fail_count}건 발견되었습니다."
                 if not passed
-                else "All MCP ICs pass: no connector overlap, all corner pins have vias."
+                else "모든 MCP IC 통과: 커넥터 중첩 없음, 모든 코너 핀에 VIA 있음."
             ),
             affected_components=[
                 r["comp"] for r in rows if r["status"] == "FAIL"

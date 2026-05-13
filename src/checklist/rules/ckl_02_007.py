@@ -25,8 +25,8 @@ from src.models import RuleResult
 class CKL02007(ChecklistRule):
     rule_id = "CKL-02-007"
     description = (
-        "Shield Can inner wall detection: verify that inner wall segments "
-        "are correctly identified (fluorescent highlight in result images)"
+        "쉴드캔 내벽 검출: 내벽 구간이 올바르게 식별되었는지 "
+        "확인합니다 (결과 이미지에서 형광색으로 표시)"
     )
     category = "Placement"
 
@@ -93,10 +93,10 @@ class CKL02007(ChecklistRule):
             category=self.category,
             passed=True,
             message=(
-                f"{found_count} shield can(s) with inner walls detected "
-                f"(out of {len(rows)} total). See images for verification."
+                f"내벽이 감지된 쉴드캔이 {found_count}개입니다 "
+                f"(전체 {len(rows)}개 중). 이미지를 확인하십시오."
                 if rows
-                else "No Shield Can components found."
+                else "쉴드캔 부품이 발견되지 않았습니다."
             ),
             affected_components=[],
             details={"columns": columns, "rows": rows},

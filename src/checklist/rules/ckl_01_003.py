@@ -32,8 +32,8 @@ def _get_qualcomm_pmic_part_names() -> set[str]:
 class CKL01003(ChecklistRule):
     rule_id = "CKL-01-003"
     description = (
-        "QUALCOMM PMICs must be placed such that opposite-side components "
-        "are contained within the PMIC outline"
+        "QUALCOMM PMIC는 반대면 부품이 PMIC 외곽선 내에 "
+        "포함되도록 배치해야 합니다"
     )
     category = "Placement"
 
@@ -114,10 +114,10 @@ class CKL01003(ChecklistRule):
             category=self.category,
             passed=passed,
             message=(
-                f"{fail_count} opposite-side component(s) overlapping "
-                f"QUALCOMM PMIC outline detected."
+                f"QUALCOMM PMIC 외곽선을 벗어나는 반대면 부품이 "
+                f"{fail_count}건 감지되었습니다."
                 if not passed
-                else "No opposite-side components overlap QUALCOMM PMIC outlines."
+                else "반대면 부품이 QUALCOMM PMIC 외곽선을 벗어나지 않습니다."
             ),
             affected_components=[
                 r["comp"] for r in rows if r["status"] == "FAIL"

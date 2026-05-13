@@ -30,7 +30,7 @@ _EXCLUDED_PREFIXES = ("ANT", "CN", "TP")
 class CKL03015(ChecklistRule):
     rule_id = "CKL-03-015"
     description = (
-        "Components must have at least 0.65mm clearance from the PCB outline"
+        "부품은 PCB 외곽선으로부터 최소 0.65mm 이격되어야 합니다"
     )
     category = "Clearance"
 
@@ -48,7 +48,7 @@ class CKL03015(ChecklistRule):
                 description=self.description,
                 category=self.category,
                 passed=True,
-                message="No board profile available for clearance check.",
+                message="이격 검사에 사용할 보드 프로파일이 없습니다.",
             )
 
         inset_poly = build_inset_boundary(board_poly, _CLEARANCE_MM)
@@ -58,7 +58,7 @@ class CKL03015(ChecklistRule):
                 description=self.description,
                 category=self.category,
                 passed=True,
-                message="Could not generate inset boundary for clearance check.",
+                message="이격 검사를 위한 내측 경계를 생성할 수 없습니다.",
             )
 
         # --- Part 1: Top / Bottom component pad clearance ------------------
@@ -98,11 +98,10 @@ class CKL03015(ChecklistRule):
         passed = comp_fail == 0
 
         message = (
-            f"{comp_fail} component(s) with pads within "
-            f"{_CLEARANCE_MM}mm of PCB outline."
+            f"PCB 외곽선으로부터 {_CLEARANCE_MM}mm 이내에 패드가 있는 부품이 "
+            f"{comp_fail}건 발견되었습니다."
             if not passed
-            else f"All components meet the {_CLEARANCE_MM}mm "
-                 f"clearance requirement."
+            else f"모든 부품이 {_CLEARANCE_MM}mm 이격 요건을 충족합니다."
         )
 
         return RuleResult(

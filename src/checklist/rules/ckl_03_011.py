@@ -30,7 +30,7 @@ def _is_component_in_areas(comp: Component, areas: list) -> bool:
 class CKL03011(ChecklistRule):
     rule_id = "CKL-03-011"
     description = (
-        "OSC components must not be placed in bending-vulnerable areas"
+        "OSC 부품은 벤딩 취약 영역에 배치되지 않아야 합니다"
     )
     category = "Clearance"
 
@@ -71,9 +71,9 @@ class CKL03011(ChecklistRule):
             category=self.category,
             passed=passed,
             message=(
-                f"{fail_count} OSC component(s) placed in bending-vulnerable area."
+                f"벤딩 취약 영역에 배치된 OSC 부품이 {fail_count}건 발견되었습니다."
                 if not passed
-                else "No OSC components in bending-vulnerable areas."
+                else "벤딩 취약 영역에 배치된 OSC 부품이 없습니다."
             ),
             affected_components=[
                 r["comp"] for r in rows if r["status"] == "FAIL"

@@ -22,8 +22,8 @@ from src.models import RuleResult
 class CKL01004(ChecklistRule):
     rule_id = "CKL-01-004"
     description = (
-        "Antenna (ANT) C-Clip pads must not overlap with SIM socket pads "
-        "on the opposite side"
+        "안테나(ANT) C-Clip 패드는 반대면 SIM 소켓 패드와 "
+        "중첩되지 않아야 합니다"
     )
     category = "Placement"
 
@@ -98,10 +98,10 @@ class CKL01004(ChecklistRule):
             category=self.category,
             passed=passed,
             message=(
-                f"{fail_count} antenna component(s) with C-Clip pads "
-                f"overlapping SIM socket pads detected."
+                f"C-Clip 패드가 SIM 소켓 패드와 중첩되는 안테나 부품이 "
+                f"{fail_count}건 감지되었습니다."
                 if not passed
-                else "No antenna C-Clip pad overlaps with SIM socket pads."
+                else "안테나 C-Clip 패드와 SIM 소켓 패드의 중첩이 없습니다."
             ),
             affected_components=[
                 r["comp"] for r in rows if r["status"] == "FAIL"

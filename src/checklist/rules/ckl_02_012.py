@@ -34,8 +34,8 @@ def _find_ap_memory(components: list[Component]) -> list[Component]:
 class CKL02012(ChecklistRule):
     rule_id = "CKL-02-012"
     description = (
-        "Inductors >=2012 overlapping both AP/Memory and Shield Can "
-        "on opposite sides must be avoided"
+        "2012 이상 인덕터가 반대면에서 AP/메모리와 쉴드캔 "
+        "모두와 중첩되는 것을 피해야 합니다"
     )
     category = "Placement"
 
@@ -137,9 +137,9 @@ class CKL02012(ChecklistRule):
             category=self.category,
             passed=passed,
             message=(
-                f"{fail_count} inductor(s) overlap both AP/Memory and Shield Can."
+                f"AP/메모리와 쉴드캔 모두와 중첩되는 인덕터가 {fail_count}건 발견되었습니다."
                 if not passed
-                else "No inductors >=2012 overlap both AP/Memory and Shield Can."
+                else "AP/메모리와 쉴드캔 모두와 중첩되는 2012 이상 인덕터가 없습니다."
             ),
             affected_components=[
                 r["comp"] for r in rows if r["status"] == "FAIL"

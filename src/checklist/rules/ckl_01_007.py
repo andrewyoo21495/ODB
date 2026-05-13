@@ -36,8 +36,8 @@ def _find_air_pressure_sensors(components: list[Component]) -> list[Component]:
 class CKL01007(ChecklistRule):
     rule_id = "CKL-01-007"
     description = (
-        "Air Pressure Sensor (1209-002567) sensing area must not overlap "
-        "with IC outlines, shield can pads, or connector pads on the opposite layer"
+        "기압 센서(1209-002567) 감지 영역은 반대면 IC 외곽선, "
+        "쉴드캔 패드 또는 커넥터 패드와 중첩되지 않아야 합니다"
     )
     category = "Placement"
 
@@ -117,10 +117,10 @@ class CKL01007(ChecklistRule):
             category=self.category,
             passed=passed,
             message=(
-                f"{fail_count} Air Pressure Sensor overlap(s) with opposite-layer "
-                f"IC/shield can/connector found."
+                f"기압 센서와 반대면 IC/쉴드캔/커넥터의 중첩이 "
+                f"{fail_count}건 발견되었습니다."
                 if not passed
-                else "No Air Pressure Sensor overlaps with opposite-layer components."
+                else "기압 센서와 반대면 부품의 중첩이 없습니다."
             ),
             affected_components=[
                 r["comp"] for r in rows if r["status"] == "FAIL"
