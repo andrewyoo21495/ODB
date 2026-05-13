@@ -34,6 +34,7 @@ try:
         Polygon as ShapelyPolygon,
     )
     from shapely.ops import unary_union
+    from shapely import concave_hull as _concave_hull
     _HAS_SHAPELY = True
 except ImportError:
     _HAS_SHAPELY = False
@@ -45,10 +46,23 @@ except ImportError:
 
 def _get_shield_can_outline(comp: Component,
                             packages: list[Package],
-                            *, is_bottom: bool = False):
+                            *, is_bottom: bool = False,
+                            concave_ratio: float = 0.3):
     """Build an outline polygon for a shield can component.
 
-    Falls back to the convex hull of pad centre positions.
+    Uses the package-level component outline when available.  Otherwise
+    falls back to a **concave hull** of pad centre positions so that
+    non-convex shield can shapes (L-shapes, U-shapes, etc.) are preserved
+    rather than being inflated into a convex hull.
+
+    Parameters
+    ----------
+    concave_ratio : float
+        Ratio parameter for ``shapely.concave_hull`` (0 = tightest fit,
+        1 = convex hull).  The default 0.3 follows the pad arrangement
+        closely while avoiding overly tight concavities between adjacent
+        perimeter pads.
+
     Returns a Shapely Polygon or None.
     """
     if not _HAS_SHAPELY:
@@ -58,6 +72,9 @@ def _get_shield_can_outline(comp: Component,
         return outline
     centers = _get_pad_centers(comp, packages, is_bottom=is_bottom)
     if len(centers) >= 3:
+        hull = _concave_hull(MultiPoint(centers), ratio=concave_ratio)
+        if hull is not None and not hull.is_empty and hasattr(hull, "exterior"):
+            return hull
         return MultiPoint(centers).convex_hull
     return None
 
