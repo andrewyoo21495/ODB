@@ -359,10 +359,15 @@ def detect_inner_walls(
     """Detect inner-wall pads of a shield can.
 
     Returns a list of Shapely Polygon objects for each detected inner-wall pad.
-    A pad is an inner wall when its geometry does **not** intersect the outline
-    boundary strip (the outline ring buffered by *boundary_proximity* mm).
-    Pads that touch or overlap the perimeter are considered boundary pads and
-    are excluded.
+
+    The shield can outline is obtained from the package-level outline data
+    (``_resolve_outline``).  When no package outline exists the outline is
+    derived from the convex hull of the union of all pad geometries, which
+    represents the outermost physical extent of the shield can.
+
+    A pad whose geometry intersects the outline boundary (buffered by
+    *boundary_proximity* mm) is considered a perimeter (outer-wall) pad.
+    All remaining pads are inner walls.
     """
     if not _HAS_SHAPELY:
         return []
@@ -373,7 +378,7 @@ def detect_inner_walls(
     if not pkg.pins:
         return []
 
-    pad_entries: list[tuple[tuple[float, float], object]] = []
+    pad_geoms: list = []
     for pin in pkg.pins:
         if not pin.outlines:
             continue
@@ -381,20 +386,25 @@ def detect_inner_walls(
                                        is_bottom=is_bottom)
         if pad_geom is None or pad_geom.is_empty:
             continue
-        c = pad_geom.centroid
-        pad_entries.append(((c.x, c.y), pad_geom))
+        pad_geoms.append(pad_geom)
 
-    if len(pad_entries) < 4:
+    if len(pad_geoms) < 4:
         return []
 
-    outline = _get_shield_can_outline(shield_can, packages, is_bottom=is_bottom)
-    if outline is None or not hasattr(outline, "exterior"):
+    # 1. Prefer the actual package outline.
+    outline = _resolve_outline(shield_can, packages, is_bottom=is_bottom)
+
+    # 2. Fallback: convex hull of the union of all pad shapes.
+    if outline is None:
+        outline = unary_union(pad_geoms).convex_hull
+
+    if outline is None or outline.is_empty or not hasattr(outline, "exterior"):
         return []
 
     boundary_strip = outline.exterior.buffer(boundary_proximity)
 
     inner_walls = []
-    for (_cx, _cy), pad_geom in pad_entries:
+    for pad_geom in pad_geoms:
         if not pad_geom.intersects(boundary_strip):
             inner_walls.append(pad_geom)
 
