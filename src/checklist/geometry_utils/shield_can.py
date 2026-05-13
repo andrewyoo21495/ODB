@@ -337,13 +337,15 @@ def detect_inner_walls(
     packages: list[Package],
     *,
     is_bottom: bool = False,
-    boundary_proximity: float = 0.1,
+    boundary_proximity: float = 0.2,
 ):
     """Detect inner-wall pads of a shield can.
 
     Returns a list of Shapely Polygon objects for each detected inner-wall pad.
-    A pad is an inner wall when its centroid lies strictly inside the convex hull
-    of all pad centroids by >= boundary_proximity mm.
+    A pad is an inner wall when its geometry does **not** intersect the outline
+    boundary strip (the outline ring buffered by *boundary_proximity* mm).
+    Pads that touch or overlap the perimeter are considered boundary pads and
+    are excluded.
     """
     if not _HAS_SHAPELY:
         return []
@@ -368,15 +370,15 @@ def detect_inner_walls(
     if len(pad_entries) < 4:
         return []
 
-    centroids = [entry[0] for entry in pad_entries]
-    hull = MultiPoint(centroids).convex_hull
-    if not hasattr(hull, "exterior"):
+    outline = _get_shield_can_outline(shield_can, packages, is_bottom=is_bottom)
+    if outline is None or not hasattr(outline, "exterior"):
         return []
-    hull_boundary = hull.exterior
+
+    boundary_strip = outline.exterior.buffer(boundary_proximity)
 
     inner_walls = []
-    for (cx, cy), pad_geom in pad_entries:
-        if ShapelyPoint(cx, cy).distance(hull_boundary) >= boundary_proximity:
+    for (_cx, _cy), pad_geom in pad_entries:
+        if not pad_geom.intersects(boundary_strip):
             inner_walls.append(pad_geom)
 
     return inner_walls
