@@ -23,7 +23,11 @@ from src.checklist.geometry_utils import (
     get_component_orientation,
     is_on_edge,
 )
-from src.checklist.reference_loader import get_managed_part_names, get_part_size_map
+from src.checklist.reference_loader import (
+    get_managed_part_names,
+    get_part_size_map,
+    matches_any_reference_part,
+)
 from src.checklist.rule_base import ChecklistRule
 from src.checklist.visualizers.overlap_viz import render_overlap_image
 from src.models import RuleResult
@@ -66,7 +70,7 @@ class CKL02009(ChecklistRule):
             opp_all_ind = find_inductors(opp_comps)
             opp_general_ind = [
                 c for c in opp_all_ind
-                if (c.part_name or "") not in ind_2s_parts
+                if not matches_any_reference_part(c.part_name or "", ind_2s_parts)
             ]
             if not connectors or not opp_general_ind:
                 continue
@@ -134,7 +138,7 @@ class CKL02009(ChecklistRule):
             opp_all_ind = find_inductors(opp_comps)
             opp_general_ind = [
                 c for c in opp_all_ind
-                if (c.part_name or "") not in ind_2s_parts
+                if not matches_any_reference_part(c.part_name or "", ind_2s_parts)
             ]
             if not shield_cans or not opp_general_ind:
                 continue

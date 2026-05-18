@@ -57,6 +57,11 @@ def get_component_size(comp: Component,
         for sm in size_maps:
             if part in sm:
                 return sm[part]
+            # Partial match: actual part_name may contain the reference
+            # part_name as a substring (e.g. "2703-004127_PBK_L6000")
+            for ref_pn, ref_sz in sm.items():
+                if ref_pn and ref_pn in part:
+                    return ref_sz
 
     if packages and 0 <= comp.pkg_ref < len(packages):
         pkg = packages[comp.pkg_ref]

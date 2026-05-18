@@ -262,6 +262,109 @@ def get_orientation_relative_to_shield_can(
     return "Vertical"
 
 
+def get_orientation_relative_to_sc_pad(
+    cap: Component,
+    shield_can: Component,
+    packages: list[Package],
+    *,
+    cap_is_bottom: bool = False,
+    sc_is_bottom: bool = False,
+    user_symbols: dict | None = None,
+) -> str:
+    """Determine if cap is Horizontal or Vertical relative to the SC pad it overlaps.
+
+    Instead of using the overall shield can outline, this function locates
+    the specific shield can pad that the capacitor overlaps with, then checks
+    the capacitor's major axis alignment against that pad's major axis.
+
+    Returns "Horizontal", "Vertical", or "Unknown".
+    """
+    if not _HAS_SHAPELY:
+        return "Unknown"
+
+    if shield_can.pkg_ref < 0 or shield_can.pkg_ref >= len(packages):
+        return "Unknown"
+    pkg = packages[shield_can.pkg_ref]
+    if not pkg.pins:
+        return "Unknown"
+
+    # Build individual pad geometries for the shield can
+    cap_pad_union = _get_pad_union(
+        cap, packages, is_bottom=cap_is_bottom, user_symbols=user_symbols,
+    )
+    if cap_pad_union is None or cap_pad_union.is_empty:
+        cap_pad_union = ShapelyPoint(cap.x, cap.y).buffer(0.05)
+
+    # Find the SC pad that overlaps the capacitor
+    best_pad_geom = None
+    best_area = 0.0
+    for pin in pkg.pins:
+        if not pin.outlines:
+            continue
+        pad_geom = _outline_to_shapely(pin.outlines[0], shield_can,
+                                       is_bottom=sc_is_bottom)
+        if pad_geom is None or pad_geom.is_empty:
+            continue
+        try:
+            inter = pad_geom.intersection(cap_pad_union)
+        except Exception:
+            continue
+        if inter.is_empty:
+            continue
+        area = getattr(inter, "area", 0.0)
+        if area > best_area:
+            best_area = area
+            best_pad_geom = pad_geom
+
+    if best_pad_geom is None:
+        # Fallback: find nearest pad by distance
+        cap_pt = ShapelyPoint(cap.x, cap.y)
+        best_dist = float("inf")
+        for pin in pkg.pins:
+            if not pin.outlines:
+                continue
+            pad_geom = _outline_to_shapely(pin.outlines[0], shield_can,
+                                           is_bottom=sc_is_bottom)
+            if pad_geom is None or pad_geom.is_empty:
+                continue
+            d = pad_geom.distance(cap_pt)
+            if d < best_dist:
+                best_dist = d
+                best_pad_geom = pad_geom
+
+    if best_pad_geom is None:
+        return "Unknown"
+
+    # Determine the pad's major axis direction using its minimum rotated rectangle
+    try:
+        mrr = best_pad_geom.minimum_rotated_rectangle
+        coords = list(mrr.exterior.coords)
+        edge1_len = math.hypot(coords[1][0] - coords[0][0],
+                               coords[1][1] - coords[0][1])
+        edge2_len = math.hypot(coords[2][0] - coords[1][0],
+                               coords[2][1] - coords[1][1])
+        if edge1_len >= edge2_len:
+            dx = coords[1][0] - coords[0][0]
+            dy = coords[1][1] - coords[0][1]
+        else:
+            dx = coords[2][0] - coords[1][0]
+            dy = coords[2][1] - coords[1][1]
+    except Exception:
+        return "Unknown"
+
+    pad_angle = math.degrees(math.atan2(dy, dx)) % 180.0
+
+    cap_angle = get_major_axis_angle(cap, packages, is_bottom=cap_is_bottom)
+    if cap_angle is None:
+        return "Unknown"
+
+    diff = abs(cap_angle - pad_angle) % 180.0
+    if diff > 90.0:
+        diff = 180.0 - diff
+
+    return "Horizontal" if diff < 45.0 else "Vertical"
+
+
 def find_outline_boundary_pad_overlapping_components(
     comp: Component,
     candidates: Sequence[Component],

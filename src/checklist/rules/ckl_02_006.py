@@ -24,10 +24,11 @@ from src.checklist.component_classifier import (
 from src.checklist.engine import register_rule
 from src.checklist.geometry_utils import (
     find_pad_overlapping_components,
-    get_orientation_relative_to_shield_can,
+    get_orientation_relative_to_sc_pad,
     get_pair_orientation,
     is_on_corner_or_diagonal,
     is_on_edge,
+    overlaps_component_outline,
 )
 from src.checklist.reference_loader import get_managed_part_names
 from src.checklist.rule_base import ChecklistRule
@@ -87,12 +88,15 @@ class CKL02006(ChecklistRule):
             # ── Connector check ───────────────────────────────────────────────
             connectors = find_connectors(ref_comps)
             for conn in connectors:
-                overlaps = find_pad_overlapping_components(
-                    conn, opp_general_caps, packages,
-                    is_bottom_primary=ref_is_bottom,
-                    is_bottom_candidates=opp_is_bottom,
-                    user_symbols=user_symbols,
-                )
+                # Check against the connector outline (not pad-level overlap)
+                overlaps = [
+                    cap for cap in opp_general_caps
+                    if overlaps_component_outline(
+                        cap, conn, packages,
+                        is_bottom_comp=opp_is_bottom,
+                        is_bottom_target=ref_is_bottom,
+                    )
+                ]
                 overlap_items: list[dict] = []
                 for cap in overlaps:
                     on_edge = is_on_edge(cap, conn, packages)
@@ -156,10 +160,11 @@ class CKL02006(ChecklistRule):
                         cap_is_bottom=opp_is_bottom,
                         sc_is_bottom=ref_is_bottom,
                     )
-                    orientation = get_orientation_relative_to_shield_can(
+                    orientation = get_orientation_relative_to_sc_pad(
                         cap, sc, packages,
                         cap_is_bottom=opp_is_bottom,
                         sc_is_bottom=ref_is_bottom,
+                        user_symbols=user_symbols,
                     )
                     diag_str = "TRUE" if on_diag else "FALSE"
                     status = (

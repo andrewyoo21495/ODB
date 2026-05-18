@@ -77,9 +77,9 @@ class CKL01005(ChecklistRule):
                     edge_str = "TRUE" if on_edge else "FALSE"
                     hits_outline = overlaps_component_outline(ind, ap, packages)
 
-                    if not on_edge and orientation == "Horizontal":
+                    if not hits_outline:
                         status = "PASS"
-                    elif orientation == "Vertical" and not hits_outline:
+                    elif not on_edge and orientation == "Horizontal":
                         status = "PASS"
                     else:
                         status = "FAIL"

@@ -88,6 +88,7 @@ from .nc_pad import (
 from .shield_can import (
     is_on_corner_or_diagonal,
     get_orientation_relative_to_shield_can,
+    get_orientation_relative_to_sc_pad,
     find_outline_boundary_pad_overlapping_components,
     get_orientation_relative_to_outline_edge,
     detect_inner_walls,

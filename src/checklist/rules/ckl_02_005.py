@@ -28,7 +28,7 @@ from src.checklist.component_classifier import (
     find_capacitors, find_interposers, find_shield_cans,
 )
 from src.checklist.engine import register_rule
-from src.checklist.geometry_utils import _resolve_footprint
+from src.checklist.geometry_utils import _resolve_footprint, _resolve_outline
 from src.checklist.reference_loader import load_reference_csv
 from src.checklist.rule_base import ChecklistRule
 from src.checklist.visualizers.dpad_mask_viz import render_dpad_side_image
@@ -132,14 +132,17 @@ class CKL02005(ChecklistRule):
             if not target_caps:
                 continue
 
-            # Container "inside regions" = convex hulls of all pad/outline
-            # points. This handles hollow SC frames and INP rings correctly.
+            # Container "inside regions" — use the precise component outline
+            # (pkg.outlines) that strictly follows the shield can pads.
+            # Fall back to footprint only when no outline data exists.
             containers = find_interposers(comps) + find_shield_cans(comps)
             cont_hulls: list[tuple] = []
             for cont in containers:
-                hull = _resolve_footprint(cont, packages, is_bottom=is_bottom)
-                if hull is not None and not hull.is_empty:
-                    cont_hulls.append((hull, cont))
+                region = _resolve_outline(cont, packages, is_bottom=is_bottom)
+                if region is None or region.is_empty:
+                    region = _resolve_footprint(cont, packages, is_bottom=is_bottom)
+                if region is not None and not region.is_empty:
+                    cont_hulls.append((region, cont))
 
             cap_items: list[dict] = []
             for cap in target_caps:

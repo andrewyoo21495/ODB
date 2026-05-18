@@ -183,6 +183,20 @@ def get_part_category_map(filename: str,
     return result
 
 
+def matches_any_reference_part(part_name: str,
+                               reference_parts: set[str]) -> bool:
+    """Return True if part_name matches any reference part name.
+
+    Matches by exact equality OR by substring containment — e.g. reference
+    ``"2703-004127"`` matches actual ``"2703-004127_PBK_L6000"``.
+    """
+    if not part_name:
+        return False
+    if part_name in reference_parts:
+        return True
+    return any(ref in part_name for ref in reference_parts if ref)
+
+
 def get_part_size_map(filename: str,
                       references_dir: Optional[str | Path] = None,
                       ) -> dict[str, int]:
