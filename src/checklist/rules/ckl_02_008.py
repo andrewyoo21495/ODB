@@ -18,7 +18,11 @@ from src.checklist.geometry_utils import (
     get_pair_orientation,
     is_on_edge,
 )
-from src.checklist.reference_loader import get_managed_part_names, get_part_size_map
+from src.checklist.reference_loader import (
+    get_managed_part_names,
+    get_part_size_map,
+    matches_any_reference_part,
+)
 from src.checklist.rule_base import ChecklistRule
 from src.checklist.visualizers.overlap_viz import render_overlap_image
 from src.models import RuleResult
@@ -56,11 +60,12 @@ class CKL02008(ChecklistRule):
             (components_bot, "Bottom", components_top),
         ]:
             connectors = find_connectors(conn_comps)
-            # 2S inductors on opposite side
+            # 2S inductors on opposite side (partial match: actual part_name
+            # may contain the reference part_name as a substring)
             opp_all_ind = find_inductors(opp_comps)
             opp_2s_ind = [
                 c for c in opp_all_ind
-                if (c.part_name or "") in ind_2s_parts
+                if matches_any_reference_part(c.part_name or "", ind_2s_parts)
             ]
             if not connectors or not opp_2s_ind:
                 continue
