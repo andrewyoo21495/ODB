@@ -11,23 +11,11 @@ import tempfile
 from pathlib import Path
 
 from src.checklist.engine import register_rule
-from src.checklist.geometry_utils import (
-    overlaps_component_outline,
-    _resolve_footprint,
-)
+from src.checklist.geometry_utils import overlaps_component_outline
 from src.checklist.reference_loader import load_reference_csv
 from src.checklist.rule_base import ChecklistRule
 from src.checklist.visualizers.overlap_viz import render_overlap_image
 from src.models import RuleResult
-
-
-def _bbox_area(comp, packages):
-    """Return the bounding-box area of a component's footprint, or 0."""
-    fp = _resolve_footprint(comp, packages)
-    if fp is None or fp.is_empty:
-        return 0.0
-    minx, miny, maxx, maxy = fp.bounds
-    return (maxx - minx) * (maxy - miny)
 
 
 def _get_qualcomm_pmic_part_names() -> set[str]:
@@ -75,8 +63,6 @@ class CKL01003(ChecklistRule):
                 if pmic.pkg_ref < 0 or pmic.pkg_ref >= len(packages):
                     continue
 
-                pmic_area = _bbox_area(pmic, packages)
-
                 overlap_items: list[dict] = []
                 for opp in opp_comps:
                     if opp.pkg_ref < 0 or opp.pkg_ref >= len(packages):
@@ -84,23 +70,17 @@ class CKL01003(ChecklistRule):
                     overlaps = overlaps_component_outline(
                         opp, pmic, packages,
                     )
-                    if not overlaps:
-                        continue
-                    # Only flag FAIL when opposite-side component is larger
-                    # than the PMIC (bounding-box area comparison).
-                    opp_area = _bbox_area(opp, packages)
-                    if opp_area <= pmic_area:
-                        continue
-                    rows.append({
-                        "comp": pmic.comp_name,
-                        "cmp_layer": layer_name,
-                        "overlapping_cmp": opp.comp_name,
-                        "outline": "TRUE",
-                        "status": "FAIL",
-                    })
-                    overlap_items.append({
-                        "comp": opp, "status": "FAIL",
-                    })
+                    if overlaps:
+                        rows.append({
+                            "comp": pmic.comp_name,
+                            "cmp_layer": layer_name,
+                            "overlapping_cmp": opp.comp_name,
+                            "outline": "TRUE",
+                            "status": "FAIL",
+                        })
+                        overlap_items.append({
+                            "comp": opp, "status": "FAIL",
+                        })
 
                 if not overlap_items:
                     rows.append({
