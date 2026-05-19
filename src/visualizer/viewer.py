@@ -1449,6 +1449,7 @@ class CopperCalculateViewer:
         self._odb_var: Optional[tk.StringVar] = None
         self._excel_var: Optional[tk.StringVar] = None
         self._grid_var: Optional[tk.StringVar] = None
+        self._html_var: Optional[tk.BooleanVar] = None
 
     def show(self):
         """Launch the GUI window."""
@@ -1464,6 +1465,7 @@ class CopperCalculateViewer:
         self._excel_var = tk.StringVar(value="")
         self._grid_var = tk.StringVar(value="5x5")
         self._vector_var = tk.BooleanVar(value=False)
+        self._html_var = tk.BooleanVar(value=False)
 
         # ---- Main layout ----
         main_frame = tk.Frame(self._root, bg=_BG)
@@ -1510,6 +1512,17 @@ class CopperCalculateViewer:
         tk.Checkbutton(
             row_vec, text="Use Vector Method (exact geometry, no rasterization)",
             variable=self._vector_var,
+            bg=_BG, fg="#333333",
+            font=("Segoe UI", 9),
+            activebackground=_BG,
+        ).pack(anchor="w")
+
+        # HTML output checkbox
+        row_html = tk.Frame(main_frame, bg=_BG)
+        row_html.pack(fill=tk.X, pady=(0, 6))
+        tk.Checkbutton(
+            row_html, text="Also generate HTML report",
+            variable=self._html_var,
             bg=_BG, fg="#333333",
             font=("Segoe UI", 9),
             activebackground=_BG,
@@ -1589,6 +1602,7 @@ class CopperCalculateViewer:
         n_rows, n_cols = int(m.group(1)), int(m.group(2))
 
         use_vector = self._vector_var.get()
+        generate_html = self._html_var.get()
 
         self._calc_btn.config(state=tk.DISABLED)
         self._status_text.config(state=tk.NORMAL)
@@ -1597,13 +1611,14 @@ class CopperCalculateViewer:
 
         t = threading.Thread(target=self._run_calculation,
                              args=(odb_path, excel_path, n_rows, n_cols,
-                                   use_vector),
+                                   use_vector, generate_html),
                              daemon=True)
         t.start()
 
     def _run_calculation(self, odb_path: str, excel_path: str,
                          n_rows: int = 5, n_cols: int = 5,
-                         use_vector: bool = False):
+                         use_vector: bool = False,
+                         generate_html: bool = False):
         """Run the full calculation loop (background thread)."""
         import numpy as np
         from pathlib import Path
@@ -1711,6 +1726,17 @@ class CopperCalculateViewer:
 
             self._log("Generating Excel report...")
             generate_copper_report(layer_results, copper_data, all_matrix_layers, excel_path)
+
+            if generate_html:
+                from src.copper_html_reporter import generate_copper_html_report
+                html_path = Path(excel_path).with_suffix(".html")
+                self._log("Generating HTML report...")
+                odb_filename = Path(odb_path).name
+                generate_copper_html_report(
+                    layer_results, copper_data, all_matrix_layers,
+                    html_path, odb_filename=odb_filename,
+                )
+                self._log(f"HTML report saved to: {html_path}")
 
             self._log(f"Done! Report saved to: {excel_path}")
             self._log("Window will close in 2 seconds...")
