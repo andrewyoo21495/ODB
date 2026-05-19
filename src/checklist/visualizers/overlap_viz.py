@@ -96,6 +96,7 @@ def render_overlap_image(
     overlap_is_bottom: bool = False,
     user_symbols: dict | None = None,
     inner_walls: list | None = None,
+    outer_outline=None,
 ) -> Path:
     """Render a single primary component with overlapping opposite-side parts.
 
@@ -163,6 +164,15 @@ def render_overlap_image(
     # Primary centre marker
     ax.plot(primary.x, primary.y, "s", color="navy", markersize=8,
             markeredgewidth=2, zorder=4)
+
+    # --- draw outermost outline boundary (dark red) ---------------------------
+    _has_outer_outline = (outer_outline is not None and not outer_outline.is_empty)
+    if _has_outer_outline:
+        _first_outer = True
+        for xs, ys in _shapely_to_arrays(outer_outline):
+            ax.plot(xs, ys, color="#CC0000", linewidth=2.5, zorder=6,
+                    label="Outermost outline" if _first_outer else None)
+            _first_outer = False
 
     # --- draw inner wall pads (orange/red to distinguish from perimeter) ------
     if inner_walls:
@@ -290,6 +300,11 @@ def render_overlap_image(
         mpatches.Patch(facecolor="#6495ED", edgecolor="navy", alpha=0.35,
                        label=f"{primary_label} pads"),
     ]
+    if _has_outer_outline:
+        legend_elements.append(
+            mpatches.Patch(facecolor="none", edgecolor="#CC0000",
+                           linewidth=2.5, label="Outermost outline")
+        )
     if inner_walls:
         legend_elements.append(
             mpatches.Patch(facecolor="#FF6600", edgecolor="#CC4400",

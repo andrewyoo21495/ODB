@@ -348,6 +348,43 @@ def get_orientation_relative_to_outline_edge(
 # Inner wall detection
 # ---------------------------------------------------------------------------
 
+def get_outermost_outline(
+    shield_can: Component,
+    packages: list[Package],
+    *,
+    is_bottom: bool = False,
+):
+    """Return the outermost (largest-area) component outline of a shield can.
+
+    Uses the same selection logic as ``detect_inner_walls``: collect all
+    ``pkg.outlines`` geometries and pick the one with the largest area.
+
+    Returns a Shapely Polygon or None.
+    """
+    if not _HAS_SHAPELY:
+        return None
+    if shield_can.pkg_ref < 0 or shield_can.pkg_ref >= len(packages):
+        return None
+    pkg = packages[shield_can.pkg_ref]
+
+    outline_geoms = []
+    for outline in pkg.outlines:
+        g = _outline_to_shapely(outline, shield_can, is_bottom=is_bottom)
+        if g is not None and not g.is_empty:
+            outline_geoms.append(g)
+
+    if not outline_geoms:
+        return None
+
+    if len(outline_geoms) >= 2:
+        outline_geoms.sort(key=lambda g: g.area, reverse=True)
+
+    outer = outline_geoms[0]
+    if outer is None or outer.is_empty:
+        return None
+    return outer
+
+
 def detect_inner_walls(
     shield_can: Component,
     packages: list[Package],

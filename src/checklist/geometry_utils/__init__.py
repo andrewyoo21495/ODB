@@ -94,6 +94,7 @@ from .shield_can import (
     get_orientation_relative_to_shield_can,
     find_outline_boundary_pad_overlapping_components,
     get_orientation_relative_to_outline_edge,
+    get_outermost_outline,
     detect_inner_walls,
     find_nearest_inner_wall,
     is_near_inner_wall,
