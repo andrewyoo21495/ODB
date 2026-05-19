@@ -985,7 +985,8 @@ def cmd_check(args):
 
     # HTML first (needs image files on disk for base64 encoding)
     if "html" in formats:
-        generate_html_report(results, html_path, **report_kwargs)
+        generate_html_report(results, html_path, odb_filename=odb_filename,
+                             **report_kwargs)
 
     # Excel (cleans up temp images internally)
     if "excel" in formats:

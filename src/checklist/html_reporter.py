@@ -229,6 +229,7 @@ def generate_html_report(
     results: list[RuleResult],
     output_path: str | Path,
     job_name: str = "",
+    odb_filename: str = "",
     components_top=None,
     components_bot=None,
     references_dir: str | Path = None,
@@ -243,9 +244,11 @@ def generate_html_report(
     # Pre-encode all images before anything else
     image_cache = _build_image_cache(sorted_results)
 
+    display_job = odb_filename or job_name
+
     parts = [
-        _build_doctype_and_head(job_name),
-        _build_header_banner(job_name),
+        _build_doctype_and_head(display_job),
+        _build_header_banner(display_job),
         _build_stats_bar(results),
         '<div class="page-layout">',
         _build_table_of_contents(sorted_results),
@@ -310,7 +313,7 @@ def _build_header_banner(job_name: str) -> str:
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
     return (
         '<div class="header">\n'
-        '  <h1>ODB++ Design Checklist Report</h1>\n'
+        '  <h1>초기 강성 체크리스트 검토 결과</h1>\n'
         '  <div class="header-meta">\n'
         f'    <span>Job: {html.escape(job_name)}</span>\n'
         f'    <span>Generated: {now}</span>\n'
@@ -338,10 +341,24 @@ def _build_stats_bar(results: list[RuleResult]) -> str:
     )
 
 
+_TOC_GROUP_LABELS = {
+    "01": "1. 부품배치 Check",
+    "02": "2. Cap/Inductor 배치 Check",
+    "03": "3. 배선/수지 Check",
+}
+
+
+def _rule_group_key(rule_id: str) -> str:
+    """Extract the two-digit group from a rule ID like 'CKL-01-001' → '01'."""
+    m = re.search(r"CKL-(\d{2})", rule_id, re.IGNORECASE)
+    return m.group(1) if m else "99"
+
+
 def _build_table_of_contents(sorted_results: list[RuleResult]) -> str:
-    categories: dict[str, list[RuleResult]] = {}
+    groups: dict[str, list[RuleResult]] = {}
     for r in sorted_results:
-        categories.setdefault(r.category, []).append(r)
+        key = _rule_group_key(r.rule_id)
+        groups.setdefault(key, []).append(r)
 
     lines = [
         '<nav class="toc-sidebar">',
@@ -355,9 +372,10 @@ def _build_table_of_contents(sorted_results: list[RuleResult]) -> str:
         '<a href="#summary" style="display:block;margin-bottom:4px;">Summary</a>',
         '<a href="#managed-parts" style="display:block;margin-bottom:8px;">Managed Parts</a>',
     ]
-    for cat, cat_results in categories.items():
-        lines.append(f'<h4>{html.escape(cat)}</h4><ul>')
-        for r in cat_results:
+    for grp in sorted(groups.keys()):
+        label = _TOC_GROUP_LABELS.get(grp, f"Group {grp}")
+        lines.append(f'<h4>{html.escape(label)}</h4><ul>')
+        for r in groups[grp]:
             badge = "pass" if r.passed else "fail"
             lines.append(
                 f'<li class="toc-{badge}">'
