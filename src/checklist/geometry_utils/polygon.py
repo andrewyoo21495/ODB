@@ -218,6 +218,62 @@ def get_component_outline(comp: Component, pkg: Package,
     return result
 
 
+def get_container_interior(comp: Component, pkg: Package,
+                           *, is_bottom: bool = False):
+    """Build a filled interior polygon for a container component (SC/INP).
+
+    Container outlines (shield cans, interposers) are typically hollow rings
+    with an outer boundary and an inner boundary.  For containment checks we
+    need the *filled* area enclosed by the outer boundary — that is the
+    physical interior of the container.
+
+    Using the largest outline (outer boundary) rather than a smaller one
+    ensures containers with inner walls are handled correctly: inner walls
+    subdivide the interior but the whole outer region should count as
+    "inside".
+
+    Strategy:
+    1. Collect each ``pkg.outlines`` entry as an individual Shapely geometry.
+    2. If there are 2+ geometries, the largest one is the outer boundary;
+       return it as a filled polygon.
+    3. If there is 1 geometry that is a Polygon with holes, fill the exterior
+       boundary (the holes represent the ring shape itself).
+    4. Otherwise, return the geometry as-is (already filled or single outline).
+    """
+    if not _HAS_SHAPELY:
+        return None
+
+    geoms = []
+    for outline in pkg.outlines:
+        g = _outline_to_shapely(outline, comp, is_bottom=is_bottom)
+        if g is not None and not g.is_empty:
+            geoms.append(g)
+
+    if not geoms:
+        return None
+
+    if len(geoms) >= 2:
+        # Multiple outlines → pick the outer (largest area) boundary as interior.
+        geoms.sort(key=lambda g: g.area, reverse=True)
+        return geoms[0]
+
+    # Single geometry
+    g = geoms[0]
+    if hasattr(g, "exterior") and g.interiors:
+        # Polygon with holes — fill by using only the exterior ring.
+        return ShapelyPolygon(g.exterior)
+    return g
+
+
+def _resolve_container_interior(comp: Component, packages: list[Package],
+                                *, is_bottom: bool = False):
+    """Look up the package and build the filled container interior polygon."""
+    if comp.pkg_ref < 0 or comp.pkg_ref >= len(packages):
+        return None
+    pkg = packages[comp.pkg_ref]
+    return get_container_interior(comp, pkg, is_bottom=is_bottom)
+
+
 def _resolve_outline(comp: Component, packages: list[Package],
                      *, is_bottom: bool = False):
     """Look up the package and build the component outline polygon."""

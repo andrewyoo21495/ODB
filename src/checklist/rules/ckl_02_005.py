@@ -13,7 +13,9 @@ The verdict therefore reduces to ``passed = (is_inside == is_dpad)``.
 The ``option_geom_before`` column is not used in evaluation.
 
 "Inside" is judged by the cap centre being contained within the
-container's component outline polygon.
+filled interior of the container's component outline.  SC/INP outlines
+are typically hollow rings (outer + inner boundary); the inner ring
+is filled to determine the actual interior region.
 """
 
 from __future__ import annotations
@@ -21,13 +23,13 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-from shapely.geometry import MultiPolygon, Point as ShapelyPoint, Polygon
+from shapely.geometry import Point as ShapelyPoint
 
 from src.checklist.component_classifier import (
     find_capacitors, find_interposers, find_shield_cans,
 )
 from src.checklist.engine import register_rule
-from src.checklist.geometry_utils import _resolve_outline
+from src.checklist.geometry_utils import _resolve_container_interior
 from src.checklist.reference_loader import load_reference_csv
 from src.checklist.rule_base import ChecklistRule
 from src.checklist.visualizers.dpad_mask_viz import render_dpad_side_image
@@ -73,22 +75,6 @@ def _package_name(comp: Component, packages: list[Package]) -> str:
         return packages[comp.pkg_ref].name or ""
     return ""
 
-
-def _fill_polygon(geom):
-    """Remove holes from a polygon so that interior containment checks work.
-
-    SC/INP outlines are often hollow rings — ``Polygon.contains()`` returns
-    False for points inside the ring.  By rebuilding each polygon from its
-    exterior ring only, we keep the exact non-convex boundary while filling
-    the interior.
-    """
-    if isinstance(geom, Polygon):
-        return Polygon(geom.exterior)
-    if isinstance(geom, MultiPolygon):
-        from shapely.ops import unary_union
-        return unary_union([Polygon(p.exterior) for p in geom.geoms])
-    # LineString / other — convex hull as last resort
-    return geom.convex_hull
 
 
 def _matches_dpad(actual: str, expected: str) -> bool:
@@ -148,15 +134,15 @@ class CKL02005(ChecklistRule):
             if not target_caps:
                 continue
 
-            # Container regions = component outlines of SC / Interposer.
-            # Outlines may be hollow rings; fill interior so contains() works.
+            # Container interior = filled inner ring of SC / Interposer outline.
             containers = find_interposers(comps) + find_shield_cans(comps)
             cont_hulls: list[tuple] = []
             for cont in containers:
-                outline = _resolve_outline(cont, packages, is_bottom=is_bottom)
-                if outline is not None and not outline.is_empty:
-                    filled = _fill_polygon(outline)
-                    cont_hulls.append((filled, cont))
+                interior = _resolve_container_interior(
+                    cont, packages, is_bottom=is_bottom,
+                )
+                if interior is not None and not interior.is_empty:
+                    cont_hulls.append((interior, cont))
 
             cap_items: list[dict] = []
             for cap in target_caps:

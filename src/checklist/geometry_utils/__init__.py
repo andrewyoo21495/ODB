@@ -11,11 +11,13 @@ continue to work without modification.
 from .polygon import (
     _outline_vertices,
     _outline_to_shapely,
+    _resolve_container_interior,
     _resolve_footprint,
     _resolve_outline,
     _get_pad_centers,
     get_component_footprint,
     get_component_outline,
+    get_container_interior,
     is_on_edge,
 )
 
