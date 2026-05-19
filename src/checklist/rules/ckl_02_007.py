@@ -1,11 +1,14 @@
-"""CKL-02-007: Shield Can inner wall detection and visualisation.
+"""CKL-02-007: Shield Can inner wall clearance check.
 
-For each Shield Can component on Top and Bottom layers, detect inner wall
-segments (pads that lie inside the outer boundary) and render them in
-fluorescent yellow-green so their location can be verified visually.
+For each Shield Can on Top and Bottom layers:
 
-This is a debugging / verification step before the full clearance check
-against adjacent capacitors and inductors is enabled.
+1. Detect inner-wall pads — SC pads that do NOT follow the outer component
+   outline (i.e. they run inward, subdividing the interior).
+2. Find capacitors and inductors located inside the SC.
+3. Verify that each such component maintains at least 0.3 mm clearance
+   from the nearest inner wall pad.
+
+Components closer than the threshold are reported as FAIL.
 """
 
 from __future__ import annotations
@@ -13,20 +16,53 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-from src.checklist.component_classifier import find_shield_cans
+from shapely.geometry import Point as ShapelyPoint
+
+from src.checklist.component_classifier import (
+    find_capacitors, find_inductors, find_shield_cans,
+)
 from src.checklist.engine import register_rule
-from src.checklist.geometry_utils import detect_inner_walls
+from src.checklist.geometry_utils import (
+    _resolve_container_interior,
+    detect_inner_walls,
+    find_nearest_inner_wall,
+    _get_pad_centers,
+)
 from src.checklist.rule_base import ChecklistRule
 from src.checklist.visualizers.overlap_viz import render_overlap_image
 from src.models import RuleResult
+
+MIN_CLEARANCE_MM = 0.3
+
+
+def _min_distance_to_inner_walls(
+    comp, packages, inner_walls, *, is_bottom: bool = False,
+) -> float | None:
+    """Return the minimum distance from *comp* (centre + pads) to inner walls.
+
+    Returns None when inner_walls is empty.
+    """
+    if not inner_walls:
+        return None
+
+    result = find_nearest_inner_wall((comp.x, comp.y), inner_walls)
+    best = result[1] if result else float("inf")
+
+    pad_centers = _get_pad_centers(comp, packages, is_bottom=is_bottom)
+    for px, py in pad_centers:
+        r = find_nearest_inner_wall((px, py), inner_walls)
+        if r is not None and r[1] < best:
+            best = r[1]
+
+    return best
 
 
 @register_rule
 class CKL02007(ChecklistRule):
     rule_id = "CKL-02-007"
     description = (
-        "쉴드캔 내벽 검출: 내벽 구간이 올바르게 식별되었는지 "
-        "확인합니다 (결과 이미지에서 형광색으로 표시)"
+        "쉴드캔 내벽과 내부 캐패시터/인덕터 간 이격 거리가 "
+        f"{MIN_CLEARANCE_MM} mm 이상이어야 합니다."
     )
     category = "Placement"
 
@@ -36,70 +72,127 @@ class CKL02007(ChecklistRule):
         eda = job_data.get("eda_data")
         packages = eda.packages if eda else []
 
-        columns = ["comp", "cmp_layer", "inner_wall_count", "status"]
+        columns = [
+            "comp", "comp_layer", "shield_can", "distance_mm", "status",
+        ]
         rows: list[dict] = []
         images: list[dict] = []
         image_dir = Path(tempfile.mkdtemp(prefix="ckl_02_007_"))
 
-        for sc_comps, sc_layer in [
-            (components_top, "Top"),
-            (components_bot, "Bottom"),
+        for comps, layer_name, is_bottom in [
+            (components_top, "Top", False),
+            (components_bot, "Bottom", True),
         ]:
-            sc_is_bottom = sc_layer == "Bottom"
-            shield_cans = find_shield_cans(sc_comps)
+            if not comps:
+                continue
+
+            shield_cans = find_shield_cans(comps)
             if not shield_cans:
+                continue
+
+            # Targets: capacitors + inductors on this layer.
+            targets = find_capacitors(comps) + find_inductors(comps)
+            if not targets:
                 continue
 
             for sc in shield_cans:
                 inner_walls = detect_inner_walls(
-                    sc, packages, is_bottom=sc_is_bottom
+                    sc, packages, is_bottom=is_bottom,
                 )
-                wall_count = len(inner_walls)
-
-                rows.append({
-                    "comp": sc.comp_name,
-                    "cmp_layer": sc_layer,
-                    "inner_wall_count": wall_count,
-                    "status": "Found" if wall_count > 0 else "Not found",
-                })
-
                 if not inner_walls:
                     continue
 
+                # SC interior for containment check.
+                interior = _resolve_container_interior(
+                    sc, packages, is_bottom=is_bottom,
+                )
+                if interior is None or interior.is_empty:
+                    continue
+
+                # Check each target inside this SC.
+                overlap_items: list[dict] = []
+                for t in targets:
+                    t_pt = ShapelyPoint(t.x, t.y)
+                    if not interior.contains(t_pt):
+                        continue
+
+                    dist = _min_distance_to_inner_walls(
+                        t, packages, inner_walls, is_bottom=is_bottom,
+                    )
+                    if dist is None:
+                        continue
+
+                    passed = dist >= MIN_CLEARANCE_MM
+                    status = "PASS" if passed else "FAIL"
+
+                    rows.append({
+                        "comp": t.comp_name,
+                        "comp_layer": layer_name,
+                        "shield_can": sc.comp_name,
+                        "distance_mm": round(dist, 3),
+                        "status": status,
+                    })
+                    overlap_items.append({
+                        "comp": t,
+                        "status": status,
+                        "distance": dist,
+                        "min_distance": MIN_CLEARANCE_MM,
+                    })
+
+                if not overlap_items:
+                    continue
+
                 safe = sc.comp_name.replace("/", "_")
-                img_path = image_dir / f"{safe}_{sc_layer}.png"
+                img_path = image_dir / f"{safe}_{layer_name.lower()}.png"
+                n_fail = sum(
+                    1 for it in overlap_items if it["status"] == "FAIL"
+                )
                 render_overlap_image(
-                    sc, packages, [], sc_comps, img_path,
+                    sc, packages, overlap_items, comps, img_path,
                     rule_id=self.rule_id,
-                    title="Inner wall detection",
-                    layer_name=sc_layer,
+                    title="Inner wall clearance",
+                    layer_name=layer_name,
                     primary_label="Shield Can",
-                    overlap_label="",
-                    primary_is_bottom=sc_is_bottom,
-                    overlap_is_bottom=sc_is_bottom,
+                    overlap_label="Cap/Ind",
+                    primary_is_bottom=is_bottom,
+                    overlap_is_bottom=is_bottom,
                     inner_walls=inner_walls,
                 )
                 images.append({
                     "path": img_path,
-                    "title": f"{sc.comp_name} ({sc_layer}) — {wall_count} inner wall(s)",
+                    "title": (
+                        f"{sc.comp_name} ({layer_name}) — "
+                        f"{len(overlap_items)} comp(s), {n_fail} FAIL"
+                    ),
                     "width": 500,
                 })
 
-        found_count = sum(1 for r in rows if r["status"] == "Found")
+        fail_count = sum(1 for r in rows if r["status"] == "FAIL")
+        passed_all = fail_count == 0
+
+        if not rows:
+            message = (
+                "쉴드캔 내벽 근처에 해당하는 캐패시터/인덕터가 없거나, "
+                "내벽이 감지된 쉴드캔이 없습니다."
+            )
+        elif passed_all:
+            message = (
+                f"모든 {len(rows)}개의 부품이 쉴드캔 내벽과 "
+                f"{MIN_CLEARANCE_MM} mm 이상 이격되어 있습니다."
+            )
+        else:
+            message = (
+                f"{len(rows)}개 중 {fail_count}개의 부품이 쉴드캔 내벽과 "
+                f"{MIN_CLEARANCE_MM} mm 미만으로 이격되어 있습니다."
+            )
 
         return RuleResult(
             rule_id=self.rule_id,
             description=self.description,
             category=self.category,
-            passed=True,
-            message=(
-                f"내벽이 감지된 쉴드캔이 {found_count}개입니다 "
-                f"(전체 {len(rows)}개 중). 이미지를 확인하십시오."
-                if rows
-                else "쉴드캔 부품이 발견되지 않았습니다."
-            ),
-            affected_components=[],
+            passed=passed_all,
+            message=message,
+            affected_components=[r["comp"] for r in rows if r["status"] == "FAIL"],
             details={"columns": columns, "rows": rows},
             images=images,
-            recommended=True,
         )

@@ -24,6 +24,7 @@ from .polygon import (
     _get_pad_centers,
     _outline_to_shapely,
     _resolve_outline,
+    get_component_footprint,
 )
 
 try:
@@ -33,7 +34,6 @@ try:
         Point as ShapelyPoint,
         Polygon as ShapelyPolygon,
     )
-    from shapely.ops import unary_union
     from shapely import concave_hull as _concave_hull
     _HAS_SHAPELY = True
 except ImportError:
@@ -360,14 +360,17 @@ def detect_inner_walls(
 
     Returns a list of Shapely Polygon objects for each detected inner-wall pad.
 
-    The shield can outline is obtained from the package-level outline data
-    (``_resolve_outline``).  When no package outline exists the outline is
-    derived from the convex hull of the union of all pad geometries, which
-    represents the outermost physical extent of the shield can.
+    Inner wall = SC pad that does NOT lie along the **outer** component outline.
 
-    A pad whose geometry intersects the outline boundary (buffered by
-    *boundary_proximity* mm) is considered a perimeter (outer-wall) pad.
-    All remaining pads are inner walls.
+    Strategy:
+    1. Collect individual outline geometries from ``pkg.outlines`` (no
+       ``unary_union`` — preserves inner/outer distinction).
+    2. Pick the **largest** outline as the outer boundary (same logic as
+       ``get_container_interior``).
+    3. Fallback: ``get_component_footprint`` (convex hull of pads).
+    4. Buffer the outer boundary's exterior by *boundary_proximity* mm to
+       create a "boundary strip".
+    5. Any pad whose geometry does NOT intersect this strip is an inner wall.
     """
     if not _HAS_SHAPELY:
         return []
@@ -378,6 +381,7 @@ def detect_inner_walls(
     if not pkg.pins:
         return []
 
+    # Collect all pad geometries.
     pad_geoms: list = []
     for pin in pkg.pins:
         if not pin.outlines:
@@ -391,17 +395,27 @@ def detect_inner_walls(
     if len(pad_geoms) < 4:
         return []
 
-    # 1. Prefer the actual package outline.
-    outline = _resolve_outline(shield_can, packages, is_bottom=is_bottom)
+    # Build the outer outline (same approach as get_container_interior).
+    outline_geoms = []
+    for outline in pkg.outlines:
+        g = _outline_to_shapely(outline, shield_can, is_bottom=is_bottom)
+        if g is not None and not g.is_empty:
+            outline_geoms.append(g)
 
-    # 2. Fallback: convex hull of the union of all pad shapes.
-    if outline is None:
-        outline = unary_union(pad_geoms).convex_hull
+    if outline_geoms:
+        if len(outline_geoms) >= 2:
+            outline_geoms.sort(key=lambda g: g.area, reverse=True)
+        outer = outline_geoms[0]
+    else:
+        # No package outlines — fall back to footprint (convex hull).
+        outer = get_component_footprint(
+            shield_can, pkg, is_bottom=is_bottom,
+        )
 
-    if outline is None or outline.is_empty or not hasattr(outline, "exterior"):
+    if outer is None or outer.is_empty or not hasattr(outer, "exterior"):
         return []
 
-    boundary_strip = outline.exterior.buffer(boundary_proximity)
+    boundary_strip = outer.exterior.buffer(boundary_proximity)
 
     inner_walls = []
     for pad_geom in pad_geoms:
