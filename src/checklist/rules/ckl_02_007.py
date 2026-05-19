@@ -96,12 +96,10 @@ class CKL02007(ChecklistRule):
                 inner_walls = detect_inner_walls(
                     sc, packages, is_bottom=is_bottom,
                 )
-                if not inner_walls:
-                    continue
 
-                # Check clearance for targets inside this SC.
+                # Check clearance for targets inside this SC (only if inner walls exist).
                 fail_items: list[dict] = []
-                if targets:
+                if inner_walls and targets:
                     interior = _resolve_container_interior(
                         sc, packages, is_bottom=is_bottom,
                     )
@@ -135,10 +133,11 @@ class CKL02007(ChecklistRule):
                                 "min_distance": MIN_CLEARANCE_MM,
                             })
 
-                # Always render image for SCs with inner walls.
+                # Always render image for every SC.
                 safe = sc.comp_name.replace("/", "_")
                 img_path = image_dir / f"{safe}_{layer_name.lower()}.png"
                 n_fail = len(fail_items)
+                n_iw = len(inner_walls) if inner_walls else 0
                 render_overlap_image(
                     sc, packages, fail_items, comps, img_path,
                     rule_id=self.rule_id,
@@ -148,13 +147,13 @@ class CKL02007(ChecklistRule):
                     overlap_label="Cap/Ind",
                     primary_is_bottom=is_bottom,
                     overlap_is_bottom=is_bottom,
-                    inner_walls=inner_walls,
+                    inner_walls=inner_walls or [],
                 )
                 images.append({
                     "path": img_path,
                     "title": (
                         f"{sc.comp_name} ({layer_name}) — "
-                        f"{len(inner_walls)} inner wall(s), {n_fail} FAIL"
+                        f"{n_iw} inner wall(s), {n_fail} FAIL"
                     ),
                     "width": 500,
                 })

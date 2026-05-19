@@ -164,26 +164,24 @@ def render_overlap_image(
     ax.plot(primary.x, primary.y, "s", color="navy", markersize=8,
             markeredgewidth=2, zorder=4)
 
-    # --- draw inner walls (fluorescent yellow-green) -------------------------
+    # --- draw inner wall pads (orange/red to distinguish from perimeter) ------
     if inner_walls:
         first = True
         for wall in inner_walls:
             geoms = list(wall.geoms) if hasattr(wall, "geoms") else [wall]
             for g in geoms:
-                lbl = "Inner wall" if first else None
+                lbl = "Inner wall pad" if first else None
                 if hasattr(g, "exterior"):
-                    # Polygon — draw filled + outlined
                     xs, ys = g.exterior.xy
-                    ax.fill(xs, ys, color="#CCFF00", alpha=0.6, zorder=5,
+                    ax.fill(xs, ys, color="#FF6600", alpha=0.65, zorder=5,
                             label=lbl)
-                    ax.plot(xs, ys, color="#AADD00", linewidth=1.5,
+                    ax.plot(xs, ys, color="#CC4400", linewidth=1.5,
                             zorder=5)
                 else:
-                    # LineString fallback
                     coords = list(g.coords)
                     xs = [c[0] for c in coords]
                     ys = [c[1] for c in coords]
-                    ax.plot(xs, ys, color="#CCFF00", linewidth=4,
+                    ax.plot(xs, ys, color="#FF6600", linewidth=4,
                             solid_capstyle="round", zorder=5, label=lbl)
                 first = False
 
@@ -294,8 +292,8 @@ def render_overlap_image(
     ]
     if inner_walls:
         legend_elements.append(
-            plt.Line2D([0], [0], color="#CCFF00", linewidth=4,
-                       label="Inner wall")
+            mpatches.Patch(facecolor="#FF6600", edgecolor="#CC4400",
+                           alpha=0.65, label="Inner wall pad")
         )
     legend_elements += [
         mpatches.Patch(facecolor="#90EE90", edgecolor="darkgreen", alpha=0.55,
