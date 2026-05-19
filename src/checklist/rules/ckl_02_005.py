@@ -12,9 +12,8 @@ For every capacitor whose part_name appears in
 The verdict therefore reduces to ``passed = (is_inside == is_dpad)``.
 The ``option_geom_before`` column is not used in evaluation.
 
-"Inside" is judged by the cap centre being contained within the convex
-hull of the container's pad/outline points — this gives a filled region
-even for SC frames or INP rings whose ``pkg.outlines`` are hollow.
+"Inside" is judged by the cap centre being contained within the
+container's component outline polygon.
 """
 
 from __future__ import annotations
@@ -28,7 +27,7 @@ from src.checklist.component_classifier import (
     find_capacitors, find_interposers, find_shield_cans,
 )
 from src.checklist.engine import register_rule
-from src.checklist.geometry_utils import _resolve_footprint
+from src.checklist.geometry_utils import _resolve_outline
 from src.checklist.reference_loader import load_reference_csv
 from src.checklist.rule_base import ChecklistRule
 from src.checklist.visualizers.dpad_mask_viz import render_dpad_side_image
@@ -132,14 +131,13 @@ class CKL02005(ChecklistRule):
             if not target_caps:
                 continue
 
-            # Container "inside regions" = convex hulls of all pad/outline
-            # points. This handles hollow SC frames and INP rings correctly.
+            # Container regions = component outlines of SC / Interposer.
             containers = find_interposers(comps) + find_shield_cans(comps)
             cont_hulls: list[tuple] = []
             for cont in containers:
-                hull = _resolve_footprint(cont, packages, is_bottom=is_bottom)
-                if hull is not None and not hull.is_empty:
-                    cont_hulls.append((hull, cont))
+                outline = _resolve_outline(cont, packages, is_bottom=is_bottom)
+                if outline is not None and not outline.is_empty:
+                    cont_hulls.append((outline, cont))
 
             cap_items: list[dict] = []
             for cap in target_caps:

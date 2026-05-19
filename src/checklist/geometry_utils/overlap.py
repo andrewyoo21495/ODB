@@ -103,6 +103,60 @@ def overlaps_component_outline(
     return fp_comp.intersects(outline_target)
 
 
+def find_outline_overlapping_components(
+    comp: Component,
+    candidates: Sequence[Component],
+    packages: list[Package],
+    *,
+    is_bottom_primary: bool = False,
+    is_bottom_candidates: bool = False,
+) -> list[Component]:
+    """Return candidates whose footprints overlap comp's component outline."""
+    if not _HAS_SHAPELY:
+        return []
+
+    outline = _resolve_outline(comp, packages, is_bottom=is_bottom_primary)
+    if outline is None:
+        return []
+
+    overlapping: list[Component] = []
+    for cand in candidates:
+        fp_cand = _resolve_footprint(cand, packages, is_bottom=is_bottom_candidates)
+        if fp_cand is None:
+            fp_cand = ShapelyPoint(cand.x, cand.y).buffer(0.1)
+        if outline.intersects(fp_cand):
+            overlapping.append(cand)
+    return overlapping
+
+
+def find_pad_vs_outline_overlapping_components(
+    comp: Component,
+    candidates: Sequence[Component],
+    packages: list[Package],
+    *,
+    is_bottom_primary: bool = False,
+    is_bottom_candidates: bool = False,
+    user_symbols: dict | None = None,
+) -> list[Component]:
+    """Return candidates whose pad union overlaps comp's component outline."""
+    if not _HAS_SHAPELY:
+        return []
+
+    outline = _resolve_outline(comp, packages, is_bottom=is_bottom_primary)
+    if outline is None:
+        return []
+
+    overlapping: list[Component] = []
+    for cand in candidates:
+        pad_union = _get_pad_union(cand, packages, is_bottom=is_bottom_candidates,
+                                   user_symbols=user_symbols)
+        if pad_union is None:
+            pad_union = ShapelyPoint(cand.x, cand.y).buffer(0.05)
+        if outline.intersects(pad_union):
+            overlapping.append(cand)
+    return overlapping
+
+
 def is_sandwiched_between(
     cap: Component,
     am_a: Component,

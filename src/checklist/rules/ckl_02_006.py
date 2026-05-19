@@ -24,6 +24,7 @@ from src.checklist.component_classifier import (
 from src.checklist.engine import register_rule
 from src.checklist.geometry_utils import (
     find_pad_overlapping_components,
+    find_pad_vs_outline_overlapping_components,
     get_orientation_relative_to_shield_can,
     get_pair_orientation,
     is_on_corner_or_diagonal,
@@ -87,7 +88,7 @@ class CKL02006(ChecklistRule):
             # ── Connector check ───────────────────────────────────────────────
             connectors = find_connectors(ref_comps)
             for conn in connectors:
-                overlaps = find_pad_overlapping_components(
+                overlaps = find_pad_vs_outline_overlapping_components(
                     conn, opp_general_caps, packages,
                     is_bottom_primary=ref_is_bottom,
                     is_bottom_candidates=opp_is_bottom,

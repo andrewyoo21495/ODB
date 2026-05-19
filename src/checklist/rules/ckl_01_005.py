@@ -13,10 +13,9 @@ from src.checklist.component_classifier import find_inductors
 from src.checklist.engine import register_rule
 from src.checklist.geometry_utils import (
     filter_by_size,
-    find_overlapping_components,
+    find_outline_overlapping_components,
     get_component_orientation,
     is_on_edge,
-    overlaps_component_outline,
 )
 from src.checklist.reference_loader import get_managed_part_names, get_part_size_map
 from src.checklist.rule_base import ChecklistRule
@@ -65,21 +64,25 @@ class CKL01005(ChecklistRule):
             if not opp_inductors:
                 continue
 
+            ap_is_bottom = (ap_layer == "Bottom")
+            opp_is_bottom = not ap_is_bottom
+
             for ap in ap_comps:
-                overlaps = find_overlapping_components(ap, opp_inductors, packages)
+                outline_hits = find_outline_overlapping_components(
+                    ap, opp_inductors, packages,
+                    is_bottom_primary=ap_is_bottom,
+                    is_bottom_candidates=opp_is_bottom,
+                )
                 # Filter to size >= 2012
-                filtered = filter_by_size(overlaps, 2012, size_maps, packages)
+                filtered = filter_by_size(outline_hits, 2012, size_maps, packages)
 
                 overlap_items: list[dict] = []
                 for ind, sz in filtered:
                     on_edge = is_on_edge(ind, ap, packages)
                     orientation = get_component_orientation(ind, packages)
                     edge_str = "TRUE" if on_edge else "FALSE"
-                    hits_outline = overlaps_component_outline(ind, ap, packages)
 
                     if not on_edge and orientation == "Horizontal":
-                        status = "PASS"
-                    elif orientation == "Vertical" and not hits_outline:
                         status = "PASS"
                     else:
                         status = "FAIL"
