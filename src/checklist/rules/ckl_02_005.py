@@ -21,7 +21,7 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-from shapely.geometry import Point as ShapelyPoint
+from shapely.geometry import MultiPolygon, Point as ShapelyPoint, Polygon
 
 from src.checklist.component_classifier import (
     find_capacitors, find_interposers, find_shield_cans,
@@ -72,6 +72,23 @@ def _package_name(comp: Component, packages: list[Package]) -> str:
     if 0 <= comp.pkg_ref < len(packages):
         return packages[comp.pkg_ref].name or ""
     return ""
+
+
+def _fill_polygon(geom):
+    """Remove holes from a polygon so that interior containment checks work.
+
+    SC/INP outlines are often hollow rings — ``Polygon.contains()`` returns
+    False for points inside the ring.  By rebuilding each polygon from its
+    exterior ring only, we keep the exact non-convex boundary while filling
+    the interior.
+    """
+    if isinstance(geom, Polygon):
+        return Polygon(geom.exterior)
+    if isinstance(geom, MultiPolygon):
+        from shapely.ops import unary_union
+        return unary_union([Polygon(p.exterior) for p in geom.geoms])
+    # LineString / other — convex hull as last resort
+    return geom.convex_hull
 
 
 def _matches_dpad(actual: str, expected: str) -> bool:
@@ -132,12 +149,14 @@ class CKL02005(ChecklistRule):
                 continue
 
             # Container regions = component outlines of SC / Interposer.
+            # Outlines may be hollow rings; fill interior so contains() works.
             containers = find_interposers(comps) + find_shield_cans(comps)
             cont_hulls: list[tuple] = []
             for cont in containers:
                 outline = _resolve_outline(cont, packages, is_bottom=is_bottom)
                 if outline is not None and not outline.is_empty:
-                    cont_hulls.append((outline, cont))
+                    filled = _fill_polygon(outline)
+                    cont_hulls.append((filled, cont))
 
             cap_items: list[dict] = []
             for cap in target_caps:
