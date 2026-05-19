@@ -354,23 +354,23 @@ def detect_inner_walls(
     packages: list[Package],
     *,
     is_bottom: bool = False,
-    boundary_proximity: float = 0.2,
+    inset_mm: float = 0.5,
 ):
     """Detect inner-wall pads of a shield can.
 
     Returns a list of Shapely Polygon objects for each detected inner-wall pad.
 
-    Inner wall = SC pad that does NOT lie along the **outer** component outline.
+    Inner wall = SC pad that does NOT lie along the outer component outline.
 
     Strategy:
-    1. Collect individual outline geometries from ``pkg.outlines`` (no
-       ``unary_union`` — preserves inner/outer distinction).
-    2. Pick the **largest** outline as the outer boundary (same logic as
-       ``get_container_interior``).
-    3. Fallback: ``get_component_footprint`` (convex hull of pads).
-    4. Buffer the outer boundary's exterior by *boundary_proximity* mm to
-       create a "boundary strip".
-    5. Any pad whose geometry does NOT intersect this strip is an inner wall.
+    1. Obtain the outer component outline (largest ``pkg.outlines`` geometry,
+       same logic as ``get_container_interior``).
+    2. Shrink the outer outline inward by *inset_mm* (negative buffer) to
+       create an "inset boundary" that traces just inside the perimeter.
+    3. Build a perimeter strip = outer outline **minus** the inset polygon.
+       This strip covers the region within *inset_mm* of the outer edge.
+    4. Any SC pad that intersects this perimeter strip is an outer-wall pad.
+       Any pad that does NOT intersect it is an **inner wall**.
     """
     if not _HAS_SHAPELY:
         return []
@@ -415,11 +415,19 @@ def detect_inner_walls(
     if outer is None or outer.is_empty or not hasattr(outer, "exterior"):
         return []
 
-    boundary_strip = outer.exterior.buffer(boundary_proximity)
+    # Shrink outline inward → perimeter strip = outer - inset.
+    inset = outer.buffer(-inset_mm)
+    if inset is None or inset.is_empty:
+        # SC too small for the inset — all pads are on the perimeter.
+        return []
+
+    perimeter_strip = outer.difference(inset)
+    if perimeter_strip.is_empty:
+        return []
 
     inner_walls = []
     for pad_geom in pad_geoms:
-        if not pad_geom.intersects(boundary_strip):
+        if not pad_geom.intersects(perimeter_strip):
             inner_walls.append(pad_geom)
 
     return inner_walls
