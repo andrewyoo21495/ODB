@@ -239,6 +239,10 @@ def get_container_interior(comp: Component, pkg: Package,
     3. If there is 1 geometry that is a Polygon with holes, fill the exterior
        boundary (the holes represent the ring shape itself).
     4. Otherwise, return the geometry as-is (already filled or single outline).
+
+    Fallback: when ``pkg.outlines`` produces no valid geometry, fall back to
+    ``get_component_footprint`` (convex hull of pin pads / toeprints) so that
+    the container is not silently skipped.
     """
     if not _HAS_SHAPELY:
         return None
@@ -250,7 +254,8 @@ def get_container_interior(comp: Component, pkg: Package,
             geoms.append(g)
 
     if not geoms:
-        return None
+        # No valid package outlines — fall back to footprint (convex hull).
+        return get_component_footprint(comp, pkg, is_bottom=is_bottom)
 
     if len(geoms) >= 2:
         # Multiple outlines → pick the outer (largest area) boundary as interior.
