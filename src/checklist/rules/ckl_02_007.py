@@ -122,19 +122,19 @@ class CKL02007(ChecklistRule):
                     if dist is None:
                         continue
 
-                    passed = dist >= MIN_CLEARANCE_MM
-                    status = "PASS" if passed else "FAIL"
+                    if dist >= MIN_CLEARANCE_MM:
+                        continue
 
                     rows.append({
                         "comp": t.comp_name,
                         "comp_layer": layer_name,
                         "shield_can": sc.comp_name,
                         "distance_mm": round(dist, 3),
-                        "status": status,
+                        "status": "FAIL",
                     })
                     overlap_items.append({
                         "comp": t,
-                        "status": status,
+                        "status": "FAIL",
                         "distance": dist,
                         "min_distance": MIN_CLEARANCE_MM,
                     })
@@ -144,9 +144,6 @@ class CKL02007(ChecklistRule):
 
                 safe = sc.comp_name.replace("/", "_")
                 img_path = image_dir / f"{safe}_{layer_name.lower()}.png"
-                n_fail = sum(
-                    1 for it in overlap_items if it["status"] == "FAIL"
-                )
                 render_overlap_image(
                     sc, packages, overlap_items, comps, img_path,
                     rule_id=self.rule_id,
@@ -162,27 +159,22 @@ class CKL02007(ChecklistRule):
                     "path": img_path,
                     "title": (
                         f"{sc.comp_name} ({layer_name}) — "
-                        f"{len(overlap_items)} comp(s), {n_fail} FAIL"
+                        f"{len(overlap_items)} FAIL"
                     ),
                     "width": 500,
                 })
 
-        fail_count = sum(1 for r in rows if r["status"] == "FAIL")
+        fail_count = len(rows)
         passed_all = fail_count == 0
 
-        if not rows:
+        if passed_all:
             message = (
-                "쉴드캔 내벽 근처에 해당하는 캐패시터/인덕터가 없거나, "
-                "내벽이 감지된 쉴드캔이 없습니다."
-            )
-        elif passed_all:
-            message = (
-                f"모든 {len(rows)}개의 부품이 쉴드캔 내벽과 "
+                "모든 캐패시터/인덕터가 쉴드캔 내벽과 "
                 f"{MIN_CLEARANCE_MM} mm 이상 이격되어 있습니다."
             )
         else:
             message = (
-                f"{len(rows)}개 중 {fail_count}개의 부품이 쉴드캔 내벽과 "
+                f"{fail_count}개의 부품이 쉴드캔 내벽과 "
                 f"{MIN_CLEARANCE_MM} mm 미만으로 이격되어 있습니다."
             )
 
@@ -192,7 +184,7 @@ class CKL02007(ChecklistRule):
             category=self.category,
             passed=passed_all,
             message=message,
-            affected_components=[r["comp"] for r in rows if r["status"] == "FAIL"],
+            affected_components=[r["comp"] for r in rows],
             details={"columns": columns, "rows": rows},
             images=images,
         )
