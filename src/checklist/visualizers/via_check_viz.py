@@ -204,21 +204,22 @@ def render_via_check_image(
     ax.grid(True, alpha=0.3)
 
     # --- draw signal-layer traces (green overlay) -----------------------------
+    # Uses the same polygon-sweep rendering as the main `view` command for
+    # accurate line widths and consistent visual appearance.
     xlim, ylim = ax.get_xlim(), ax.get_ylim()
     has_traces = False
     if layers_data is not None and signal_layer_name is not None:
         ld = layers_data.get(signal_layer_name)
         if ld is not None:
-            from src.models import LineRecord, ArcRecord
-            from src.parsers.symbol_resolver import resolve_symbol
+            from src.models import LineRecord, ArcRecord, SurfaceRecord
+            from src.visualizer.layer_renderer import (
+                _draw_line, _draw_arc, _draw_surface,
+            )
 
             lf = ld[0]
             sym_lookup = {s.index: s for s in lf.symbols}
-            trace_color = "#00cc66"
+            trace_color = "#008E5C"
             trace_alpha = 0.7
-
-            # Scale factor: convert raw symbol sub-units to MM.
-            from src.checklist.geometry_utils.nc_pad import _sym_scale
 
             for feat in lf.features:
                 if isinstance(feat, LineRecord):
@@ -231,17 +232,8 @@ def render_via_check_image(
                     if fymax < ylim[0] or fymin > ylim[1]:
                         continue
 
-                    lw_pts = 0.4
-                    sym = sym_lookup.get(feat.symbol_idx)
-                    if sym:
-                        ss = resolve_symbol(sym.name)
-                        if ss.width > 0:
-                            scale = _sym_scale(lf.units, sym.unit_override)
-                            lw_pts = max(0.2, ss.width * scale * 2.5)
-
-                    ax.plot([feat.xs, feat.xe], [feat.ys, feat.ye],
-                            color=trace_color, alpha=trace_alpha,
-                            linewidth=lw_pts, solid_capstyle="round")
+                    _draw_line(ax, feat, sym_lookup, lf.units,
+                               color=trace_color, alpha=trace_alpha)
                     has_traces = True
 
                 elif isinstance(feat, ArcRecord):
@@ -250,17 +242,14 @@ def render_via_check_image(
                         continue
                     if feat.yc + r < ylim[0] or feat.yc - r > ylim[1]:
                         continue
-                    start_a = math.degrees(
-                        math.atan2(feat.ys - feat.yc, feat.xs - feat.xc))
-                    end_a = math.degrees(
-                        math.atan2(feat.ye - feat.yc, feat.xe - feat.xc))
-                    from matplotlib.patches import Arc as MplArc
-                    arc = MplArc(
-                        (feat.xc, feat.yc), 2 * r, 2 * r, angle=0,
-                        theta1=min(start_a, end_a),
-                        theta2=max(start_a, end_a),
-                        color=trace_color, alpha=trace_alpha, linewidth=0.4)
-                    ax.add_patch(arc)
+
+                    _draw_arc(ax, feat, sym_lookup, lf.units,
+                              color=trace_color, alpha=trace_alpha)
+                    has_traces = True
+
+                elif isinstance(feat, SurfaceRecord):
+                    _draw_surface(ax, feat,
+                                  color=trace_color, alpha=trace_alpha)
                     has_traces = True
 
     # --- draw nearby vias ----------------------------------------------------

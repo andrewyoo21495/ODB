@@ -271,11 +271,21 @@ def _get_pad_centers(comp: Component, packages: list[Package],
 def is_on_edge(comp_a: Component, comp_b: Component,
                packages: list[Package],
                tolerance: float = 0.254) -> bool:
-    """Return True if any pad of comp_a is in a corner area of comp_b's outline.
+    """Return True if any pad of comp_a is in a corner area of comp_b.
+
+    Two detection methods are used (returns True if either matches):
+
+    1. **Outline corner check** (original): any pad of *comp_a* falls
+       within *tolerance* of an outline polygon vertex of *comp_b*.
+    2. **Corner-pad check** (added): the four pads of *comp_b* closest
+       to its bounding-box corners are identified.  If any pad of
+       *comp_a* is within *tolerance* of a corner pad **and** lies on
+       the outward side (away from *comp_b*'s centre), it is considered
+       on the edge.
 
     Args:
-        tolerance: Radius in mm around each corner vertex to consider
-                   as the corner area.
+        tolerance: Radius in mm around each corner vertex / corner pad
+                   to consider as the edge area.
     """
     if not _HAS_SHAPELY:
         return False
@@ -283,21 +293,71 @@ def is_on_edge(comp_a: Component, comp_b: Component,
     pad_centers = _get_pad_centers(comp_a, packages)
     outline_b = _resolve_outline(comp_b, packages)
 
-    if not pad_centers or outline_b is None:
+    if not pad_centers:
         return False
 
-    corners: list[tuple[float, float]] = []
-    if hasattr(outline_b, "geoms"):
-        for g in outline_b.geoms:
-            if hasattr(g, "exterior"):
-                corners.extend(g.exterior.coords[:-1])
-    elif hasattr(outline_b, "exterior"):
-        corners = list(outline_b.exterior.coords[:-1])
+    # --- 1. Outline corner check (original) --------------------------------
+    if outline_b is not None:
+        corners: list[tuple[float, float]] = []
+        if hasattr(outline_b, "geoms"):
+            for g in outline_b.geoms:
+                if hasattr(g, "exterior"):
+                    corners.extend(g.exterior.coords[:-1])
+        elif hasattr(outline_b, "exterior"):
+            corners = list(outline_b.exterior.coords[:-1])
 
-    for cx, cy in corners:
-        corner_region = ShapelyPoint(cx, cy).buffer(tolerance)
+        for cx, cy in corners:
+            corner_region = ShapelyPoint(cx, cy).buffer(tolerance)
+            for px, py in pad_centers:
+                if corner_region.contains(ShapelyPoint(px, py)):
+                    return True
+
+    # --- 2. Corner-pad check (new) -----------------------------------------
+    pad_centers_b = _get_pad_centers(comp_b, packages)
+    if not pad_centers_b or len(pad_centers_b) < 4:
+        return False
+
+    # Bounding box of comp_b (prefer outline, fall back to pads)
+    if outline_b is not None:
+        minx, miny, maxx, maxy = outline_b.bounds
+    else:
+        xs_b = [p[0] for p in pad_centers_b]
+        ys_b = [p[1] for p in pad_centers_b]
+        minx, miny, maxx, maxy = min(xs_b), min(ys_b), max(xs_b), max(ys_b)
+
+    bbox_corners = [(minx, miny), (minx, maxy), (maxx, miny), (maxx, maxy)]
+
+    # For each bbox corner, find the nearest pad of comp_b
+    corner_pad_indices: set[int] = set()
+    for bcx, bcy in bbox_corners:
+        best_idx: int | None = None
+        best_dist = float("inf")
+        for i, (px, py) in enumerate(pad_centers_b):
+            d = (px - bcx) ** 2 + (py - bcy) ** 2
+            if d < best_dist:
+                best_dist = d
+                best_idx = i
+        if best_idx is not None:
+            corner_pad_indices.add(best_idx)
+
+    # Centroid of comp_b pads
+    center_x = sum(p[0] for p in pad_centers_b) / len(pad_centers_b)
+    center_y = sum(p[1] for p in pad_centers_b) / len(pad_centers_b)
+
+    tol_sq = tolerance * tolerance
+    for cp_idx in corner_pad_indices:
+        cpx, cpy = pad_centers_b[cp_idx]
+        # Direction vector: comp_b centre → corner pad (outward)
+        dx = cpx - center_x
+        dy = cpy - center_y
         for px, py in pad_centers:
-            if corner_region.contains(ShapelyPoint(px, py)):
+            # Distance from comp_a pad to the corner pad
+            apx = px - cpx
+            apy = py - cpy
+            if apx * apx + apy * apy > tol_sq:
+                continue
+            # comp_a pad must be on the outward side (dot product >= 0)
+            if dx * apx + dy * apy >= 0:
                 return True
 
     return False
