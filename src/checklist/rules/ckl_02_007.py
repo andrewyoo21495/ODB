@@ -110,7 +110,7 @@ class CKL02007(ChecklistRule):
                     continue
 
                 # Check each target inside this SC.
-                overlap_items: list[dict] = []
+                fail_items: list[dict] = []
                 for t in targets:
                     t_pt = ShapelyPoint(t.x, t.y)
                     if not interior.contains(t_pt):
@@ -132,20 +132,19 @@ class CKL02007(ChecklistRule):
                         "distance_mm": round(dist, 3),
                         "status": "FAIL",
                     })
-                    overlap_items.append({
+                    fail_items.append({
                         "comp": t,
                         "status": "FAIL",
                         "distance": dist,
                         "min_distance": MIN_CLEARANCE_MM,
                     })
 
-                if not overlap_items:
-                    continue
-
+                # Always render image for SCs with inner walls.
                 safe = sc.comp_name.replace("/", "_")
                 img_path = image_dir / f"{safe}_{layer_name.lower()}.png"
+                n_fail = len(fail_items)
                 render_overlap_image(
-                    sc, packages, overlap_items, comps, img_path,
+                    sc, packages, fail_items, comps, img_path,
                     rule_id=self.rule_id,
                     title="Inner wall clearance",
                     layer_name=layer_name,
@@ -159,7 +158,7 @@ class CKL02007(ChecklistRule):
                     "path": img_path,
                     "title": (
                         f"{sc.comp_name} ({layer_name}) — "
-                        f"{len(overlap_items)} FAIL"
+                        f"{len(inner_walls)} inner wall(s), {n_fail} FAIL"
                     ),
                     "width": 500,
                 })
