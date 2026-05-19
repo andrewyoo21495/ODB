@@ -24,7 +24,6 @@ from .polygon import (
     _get_pad_centers,
     _outline_to_shapely,
     _resolve_outline,
-    get_component_footprint,
 )
 
 try:
@@ -365,12 +364,13 @@ def detect_inner_walls(
     Strategy:
     1. Obtain the outer component outline (largest ``pkg.outlines`` geometry,
        same logic as ``get_container_interior``).
-    2. Shrink the outer outline inward by *inset_mm* (negative buffer) to
-       create an "inset boundary" that traces just inside the perimeter.
-    3. Build a perimeter strip = outer outline **minus** the inset polygon.
-       This strip covers the region within *inset_mm* of the outer edge.
-    4. Any SC pad that intersects this perimeter strip is an outer-wall pad.
-       Any pad that does NOT intersect it is an **inner wall**.
+    2. Measure each pad's minimum distance to the outline boundary.
+    3. Pads within *inset_mm* of the boundary are perimeter (outer-wall) pads.
+       Pads farther away are **inner walls**.
+
+    This distance-based approach correctly handles concave shapes (U, L, T,
+    zigzag, narrow corridors) where pads on recessed edges are still on the
+    perimeter.
     """
     if not _HAS_SHAPELY:
         return []
@@ -395,39 +395,31 @@ def detect_inner_walls(
     if len(pad_geoms) < 4:
         return []
 
-    # Build the outer outline (same approach as get_container_interior).
+    # Build the outer outline from package component outline data.
+    # No fallback to convex hull — inner wall detection requires the
+    # actual component outline from ODB data.
     outline_geoms = []
     for outline in pkg.outlines:
         g = _outline_to_shapely(outline, shield_can, is_bottom=is_bottom)
         if g is not None and not g.is_empty:
             outline_geoms.append(g)
 
-    if outline_geoms:
-        if len(outline_geoms) >= 2:
-            outline_geoms.sort(key=lambda g: g.area, reverse=True)
-        outer = outline_geoms[0]
-    else:
-        # No package outlines — fall back to footprint (convex hull).
-        outer = get_component_footprint(
-            shield_can, pkg, is_bottom=is_bottom,
-        )
+    if not outline_geoms:
+        return []
+
+    if len(outline_geoms) >= 2:
+        outline_geoms.sort(key=lambda g: g.area, reverse=True)
+    outer = outline_geoms[0]
 
     if outer is None or outer.is_empty or not hasattr(outer, "exterior"):
         return []
 
-    # Shrink outline inward → perimeter strip = outer - inset.
-    inset = outer.buffer(-inset_mm)
-    if inset is None or inset.is_empty:
-        # SC too small for the inset — all pads are on the perimeter.
-        return []
-
-    perimeter_strip = outer.difference(inset)
-    if perimeter_strip.is_empty:
-        return []
-
+    # Pads whose minimum distance to the outer outline boundary is
+    # >= inset_mm are inner walls; everything closer sits on the perimeter.
+    boundary = outer.boundary
     inner_walls = []
     for pad_geom in pad_geoms:
-        if not pad_geom.intersects(perimeter_strip):
+        if pad_geom.distance(boundary) >= inset_mm:
             inner_walls.append(pad_geom)
 
     return inner_walls
