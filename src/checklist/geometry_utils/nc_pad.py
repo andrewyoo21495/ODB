@@ -102,7 +102,7 @@ def _pad_to_shapely(
     from src.visualizer.component_overlay import transform_point
     bx, by = transform_point(
         pin.center.x, pin.center.y, comp, is_bottom=is_bottom)
-    return ShapelyPoint(bx, by).buffer(tolerance)
+    return ShapelyPoint(bx, by).buffer(max(tolerance, 0.1))
 
 
 def _sym_scale(units: str, unit_override: str | None) -> float:
@@ -190,6 +190,30 @@ def _arc_to_points(feat, segments: int = 16) -> list[tuple[float, float]]:
     return pts
 
 
+def _get_pad_center(comp, pin, is_bottom, toeprint):
+    """Return pad centre in board coordinates."""
+    if toeprint is not None:
+        return toeprint.x, toeprint.y
+    from src.visualizer.component_overlay import transform_point
+    return transform_point(pin.center.x, pin.center.y, comp, is_bottom=is_bottom)
+
+
+def _get_endpoints(feat):
+    """Return start/end coordinates of a LineRecord or ArcRecord."""
+    if isinstance(feat, (LineRecord, ArcRecord)):
+        return [(feat.xs, feat.ys), (feat.xe, feat.ye)]
+    return []
+
+
+def _estimate_proximity_radius(pad_geom, tolerance, default=0.15):
+    """Estimate a proximity radius from the pad bounding box."""
+    if pad_geom is not None and not pad_geom.is_empty:
+        bounds = pad_geom.bounds  # (minx, miny, maxx, maxy)
+        diag = math.hypot(bounds[2] - bounds[0], bounds[3] - bounds[1])
+        return diag / 2.0 + tolerance
+    return default
+
+
 def is_pad_nc_by_signal_layer(
     comp: Component,
     pin: Pin,
@@ -198,16 +222,21 @@ def is_pad_nc_by_signal_layer(
     signal_layer_name: str | None,
     resolved_pads: list | None = None,
     toeprint: Toeprint | None = None,
-    tolerance: float = 0.01,
+    tolerance: float = 0.05,
 ) -> bool:
     """Return True if no traces, arcs, or copper planes on the signal layer
     physically connect to the pad.
 
-    The check examines only the signal layer that corresponds to the
-    component's placement side (top signal layer for top-placed components,
-    bottom signal layer for bottom-placed components).  PadRecords on the
-    signal layer are intentionally excluded so the pad's own copper
-    footprint does not count as a connection.
+    The check uses a dual-strategy approach:
+      1. **Endpoint proximity** – fast check whether any trace/arc endpoint
+         falls within the pad's bounding area.  This is robust against
+         minor coordinate precision differences.
+      2. **Full geometry intersection** – Shapely-based intersection test
+         between the buffered pad polygon and every non-pad feature on the
+         signal layer (original approach, with increased tolerance).
+
+    PadRecords on the signal layer are intentionally excluded so the pad's
+    own copper footprint does not count as a connection.
 
     Falls back to ``False`` (assume connected) when Shapely is unavailable
     or the signal layer data cannot be inspected.
@@ -229,13 +258,28 @@ def is_pad_nc_by_signal_layer(
     if pad_geom is None or pad_geom.is_empty:
         return False
 
+    from src.models import PadRecord
+
+    # --- Strategy 1: endpoint proximity check (fast, robust) ---------------
+    pad_cx, pad_cy = _get_pad_center(comp, pin, is_bottom, toeprint)
+    prox_radius = _estimate_proximity_radius(pad_geom, tolerance)
+    prox_r_sq = prox_radius * prox_radius
+
+    for feat in lf.features:
+        if feat is None or isinstance(feat, PadRecord):
+            continue
+        for px, py in _get_endpoints(feat):
+            dx = px - pad_cx
+            dy = py - pad_cy
+            if dx * dx + dy * dy <= prox_r_sq:
+                return False  # Connected – endpoint near pad centre
+
+    # --- Strategy 2: full geometry intersection ----------------------------
     buffered = pad_geom.buffer(tolerance)
-    prep_buffered = buffered  # Shapely intersects is fast enough here
 
     sym_lookup = {s.index: s for s in lf.symbols}
     layer_units = lf.units  # original unit system for symbol dimension scaling
 
-    from src.models import PadRecord
     for feat in lf.features:
         if feat is None:
             continue
@@ -244,7 +288,7 @@ def is_pad_nc_by_signal_layer(
         geom = _non_pad_feature_to_geometry(feat, sym_lookup, layer_units)
         if geom is None or geom.is_empty:
             continue
-        if prep_buffered.intersects(geom):
+        if buffered.intersects(geom):
             return False  # Connected – a non-pad feature touches this pad
 
     return True  # No non-pad feature touches this pad → NC
