@@ -14,6 +14,7 @@ from src.checklist.engine import register_rule
 from src.checklist.geometry_utils import (
     filter_by_size,
     find_outline_boundary_pad_overlapping_components,
+    find_outline_overlapping_components,
     get_component_orientation,
     is_on_edge,
 )
@@ -68,15 +69,36 @@ class CKL01005(ChecklistRule):
             opp_is_bottom = not ap_is_bottom
 
             for ap in ap_comps:
-                outline_hits = find_outline_boundary_pad_overlapping_components(
+                # Inductors whose pads cross the AP/Memory outline boundary
+                boundary_hits = find_outline_boundary_pad_overlapping_components(
                     ap, opp_inductors, packages,
                     is_bottom_primary=ap_is_bottom,
                     is_bottom_candidates=opp_is_bottom,
                 )
                 # Filter to size >= 2012
-                filtered = filter_by_size(outline_hits, 2012, size_maps, packages)
+                filtered = filter_by_size(boundary_hits, 2012, size_maps, packages)
+                boundary_ids = {id(ind) for ind, _ in filtered}
+
+                # Inductors overlapping footprint but NOT touching boundary
+                # → shown as PASS in image only (not added to result rows)
+                footprint_hits = find_outline_overlapping_components(
+                    ap, opp_inductors, packages,
+                    is_bottom_primary=ap_is_bottom,
+                    is_bottom_candidates=opp_is_bottom,
+                )
+                fp_filtered = filter_by_size(footprint_hits, 2012, size_maps, packages)
 
                 overlap_items: list[dict] = []
+
+                # Image-only PASS items (footprint overlap, no boundary contact)
+                for ind, sz in fp_filtered:
+                    if id(ind) not in boundary_ids:
+                        overlap_items.append({
+                            "comp": ind, "status": "PASS",
+                            "detail": "No outline contact",
+                        })
+
+                # Boundary-touching items → evaluate and add to result rows
                 for ind, sz in filtered:
                     on_edge = is_on_edge(ind, ap, packages)
                     orientation = get_component_orientation(ind, packages)
