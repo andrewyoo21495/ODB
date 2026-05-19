@@ -13,7 +13,7 @@ from src.checklist.component_classifier import find_inductors
 from src.checklist.engine import register_rule
 from src.checklist.geometry_utils import (
     filter_by_size,
-    find_outline_overlapping_components,
+    find_pad_vs_outline_overlapping_components,
     get_component_orientation,
     is_on_edge,
 )
@@ -68,7 +68,7 @@ class CKL01005(ChecklistRule):
             opp_is_bottom = not ap_is_bottom
 
             for ap in ap_comps:
-                outline_hits = find_outline_overlapping_components(
+                outline_hits = find_pad_vs_outline_overlapping_components(
                     ap, opp_inductors, packages,
                     is_bottom_primary=ap_is_bottom,
                     is_bottom_candidates=opp_is_bottom,

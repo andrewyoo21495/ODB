@@ -1,8 +1,8 @@
 """CKL-01-003: QUALCOMM PMIC opposite-side component containment check.
 
-QUALCOMM PMICs must be placed such that components on the opposite side
+QUALCOMM PMICs must be placed such that IC components on the opposite side
 do NOT overlap with the PMIC's component outline.  Any opposite-side
-component whose footprint intersects the PMIC outline is flagged FAIL.
+IC whose footprint intersects the PMIC outline is flagged FAIL.
 """
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-from src.checklist.component_classifier import find_shield_cans
+from src.checklist.component_classifier import find_ics
 from src.checklist.engine import register_rule
 from src.checklist.geometry_utils import find_outline_overlapping_components
 from src.checklist.reference_loader import load_reference_csv
@@ -33,7 +33,7 @@ def _get_qualcomm_pmic_part_names() -> set[str]:
 class CKL01003(ChecklistRule):
     rule_id = "CKL-01-003"
     description = (
-        "QUALCOMM PMIC는 반대면 부품이 PMIC 외곽선 내에 "
+        "QUALCOMM PMIC는 반대면 IC가 PMIC 외곽선 내에 "
         "포함되도록 배치해야 합니다"
     )
     category = "Placement"
@@ -60,9 +60,8 @@ class CKL01003(ChecklistRule):
                 if (c.part_name or "") in qualcomm_parts
             ]
 
-            # Exclude shield cans from opposite-side candidates
-            sc_set = set(id(c) for c in find_shield_cans(opp_comps))
-            opp_filtered = [c for c in opp_comps if id(c) not in sc_set]
+            # Only check IC components on the opposite side
+            opp_ics = find_ics(opp_comps)
 
             for pmic in pmic_comps:
                 if pmic.pkg_ref < 0 or pmic.pkg_ref >= len(packages):
@@ -72,7 +71,7 @@ class CKL01003(ChecklistRule):
                 opp_is_bottom = not pmic_is_bottom
 
                 hit_comps = find_outline_overlapping_components(
-                    pmic, opp_filtered, packages,
+                    pmic, opp_ics, packages,
                     is_bottom_primary=pmic_is_bottom,
                     is_bottom_candidates=opp_is_bottom,
                 )
@@ -122,10 +121,10 @@ class CKL01003(ChecklistRule):
             category=self.category,
             passed=passed,
             message=(
-                f"QUALCOMM PMIC 외곽선을 벗어나는 반대면 부품이 "
+                f"QUALCOMM PMIC 외곽선에 겹치는 반대면 IC가 "
                 f"{fail_count}건 감지되었습니다."
                 if not passed
-                else "반대면 부품이 QUALCOMM PMIC 외곽선을 벗어나지 않습니다."
+                else "반대면 IC가 QUALCOMM PMIC 외곽선에 겹치지 않습니다."
             ),
             affected_components=[
                 r["comp"] for r in rows if r["status"] == "FAIL"
