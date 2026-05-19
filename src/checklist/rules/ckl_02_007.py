@@ -90,10 +90,7 @@ class CKL02007(ChecklistRule):
             if not shield_cans:
                 continue
 
-            # Targets: capacitors + inductors on this layer.
             targets = find_capacitors(comps) + find_inductors(comps)
-            if not targets:
-                continue
 
             for sc in shield_cans:
                 inner_walls = detect_inner_walls(
@@ -102,42 +99,41 @@ class CKL02007(ChecklistRule):
                 if not inner_walls:
                     continue
 
-                # SC interior for containment check.
-                interior = _resolve_container_interior(
-                    sc, packages, is_bottom=is_bottom,
-                )
-                if interior is None or interior.is_empty:
-                    continue
-
-                # Check each target inside this SC.
+                # Check clearance for targets inside this SC.
                 fail_items: list[dict] = []
-                for t in targets:
-                    t_pt = ShapelyPoint(t.x, t.y)
-                    if not interior.contains(t_pt):
-                        continue
-
-                    dist = _min_distance_to_inner_walls(
-                        t, packages, inner_walls, is_bottom=is_bottom,
+                if targets:
+                    interior = _resolve_container_interior(
+                        sc, packages, is_bottom=is_bottom,
                     )
-                    if dist is None:
-                        continue
+                    if interior is not None and not interior.is_empty:
+                        for t in targets:
+                            t_pt = ShapelyPoint(t.x, t.y)
+                            if not interior.contains(t_pt):
+                                continue
 
-                    if dist >= MIN_CLEARANCE_MM:
-                        continue
+                            dist = _min_distance_to_inner_walls(
+                                t, packages, inner_walls,
+                                is_bottom=is_bottom,
+                            )
+                            if dist is None:
+                                continue
 
-                    rows.append({
-                        "comp": t.comp_name,
-                        "comp_layer": layer_name,
-                        "shield_can": sc.comp_name,
-                        "distance_mm": round(dist, 3),
-                        "status": "FAIL",
-                    })
-                    fail_items.append({
-                        "comp": t,
-                        "status": "FAIL",
-                        "distance": dist,
-                        "min_distance": MIN_CLEARANCE_MM,
-                    })
+                            if dist >= MIN_CLEARANCE_MM:
+                                continue
+
+                            rows.append({
+                                "comp": t.comp_name,
+                                "comp_layer": layer_name,
+                                "shield_can": sc.comp_name,
+                                "distance_mm": round(dist, 3),
+                                "status": "FAIL",
+                            })
+                            fail_items.append({
+                                "comp": t,
+                                "status": "FAIL",
+                                "distance": dist,
+                                "min_distance": MIN_CLEARANCE_MM,
+                            })
 
                 # Always render image for SCs with inner walls.
                 safe = sc.comp_name.replace("/", "_")
