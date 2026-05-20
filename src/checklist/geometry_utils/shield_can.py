@@ -390,7 +390,7 @@ def detect_inner_walls(
     packages: list[Package],
     *,
     is_bottom: bool = False,
-    inset_mm: float = 0.35,
+    inset_mm: float = 0.2,
 ):
     """Detect inner-wall pads of a shield can.
 
