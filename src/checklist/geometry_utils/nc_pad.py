@@ -190,6 +190,10 @@ def _arc_to_points(feat, segments: int = 16) -> list[tuple[float, float]]:
     return pts
 
 
+# ---------------------------------------------------------------------------
+# Helpers for centre-circle NC detection
+# ---------------------------------------------------------------------------
+
 def _get_pad_center(comp, pin, is_bottom, toeprint):
     """Return pad centre in board coordinates."""
     if toeprint is not None:
@@ -198,20 +202,37 @@ def _get_pad_center(comp, pin, is_bottom, toeprint):
     return transform_point(pin.center.x, pin.center.y, comp, is_bottom=is_bottom)
 
 
-def _get_endpoints(feat):
-    """Return start/end coordinates of a LineRecord or ArcRecord."""
-    if isinstance(feat, (LineRecord, ArcRecord)):
-        return [(feat.xs, feat.ys), (feat.xe, feat.ye)]
-    return []
+def _point_to_segment_distance_sq(
+    px: float, py: float,
+    ax: float, ay: float,
+    bx: float, by: float,
+) -> float:
+    """Return the squared distance from point (px, py) to segment (a→b)."""
+    dx, dy = bx - ax, by - ay
+    len_sq = dx * dx + dy * dy
+    if len_sq < 1e-18:
+        # Degenerate segment (zero length)
+        ex, ey = px - ax, py - ay
+        return ex * ex + ey * ey
+    t = max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / len_sq))
+    proj_x = ax + t * dx
+    proj_y = ay + t * dy
+    ex, ey = px - proj_x, py - proj_y
+    return ex * ex + ey * ey
 
 
-def _estimate_proximity_radius(pad_geom, tolerance, default=0.15):
-    """Estimate a proximity radius from the pad bounding box."""
-    if pad_geom is not None and not pad_geom.is_empty:
-        bounds = pad_geom.bounds  # (minx, miny, maxx, maxy)
-        diag = math.hypot(bounds[2] - bounds[0], bounds[3] - bounds[1])
-        return diag / 2.0 + tolerance
-    return default
+def _point_to_arc_distance_sq(
+    px: float, py: float, feat, segments: int = 16,
+) -> float:
+    """Return the squared distance from (px, py) to an arc polyline."""
+    pts = _arc_to_points(feat, segments)
+    min_d_sq = float("inf")
+    for i in range(len(pts) - 1):
+        d_sq = _point_to_segment_distance_sq(
+            px, py, pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1])
+        if d_sq < min_d_sq:
+            min_d_sq = d_sq
+    return min_d_sq
 
 
 def is_pad_nc_by_signal_layer(
@@ -223,26 +244,28 @@ def is_pad_nc_by_signal_layer(
     resolved_pads: list | None = None,
     toeprint: Toeprint | None = None,
     tolerance: float = 0.05,
+    search_radius: float = 0.3,
 ) -> bool:
-    """Return True if no traces, arcs, or copper planes on the signal layer
-    physically connect to the pad.
+    """Return True if no signal traces connect to the pad.
 
-    The check uses a dual-strategy approach:
-      1. **Endpoint proximity** – fast check whether any trace/arc endpoint
-         falls within the pad's bounding area.  This is robust against
-         minor coordinate precision differences.
-      2. **Full geometry intersection** – Shapely-based intersection test
-         between the buffered pad polygon and every non-pad feature on the
-         signal layer (original approach, with increased tolerance).
+    The detection builds a small circle (``search_radius``) around the
+    pin centre and checks whether any **trace** (LineRecord / ArcRecord)
+    passes through this circle.
 
-    PadRecords on the signal layer are intentionally excluded so the pad's
-    own copper footprint does not count as a connection.
+    *   A **LineRecord** or **ArcRecord** is considered connecting if the
+        minimum distance from the pin centre to the line/arc segment is
+        less than ``search_radius`` (accounting for the trace's own width
+        when the symbol is resolvable).
+    *   **SurfaceRecords** (copper fills / pours) are intentionally
+        **ignored**.  A copper pour covers large areas but NC pads have
+        clearance holes in the pour, so the presence of a pour does NOT
+        imply connection.
+    *   **PadRecords** are excluded (the pad's own copper should not
+        count as a connection).
 
-    Falls back to ``False`` (assume connected) when Shapely is unavailable
-    or the signal layer data cannot be inspected.
+    Falls back to ``False`` (assume connected) when the signal layer
+    data cannot be inspected.
     """
-    if not _HAS_SHAPELY:
-        return False
     if signal_layer_name is None or signal_layer_name not in layers_data:
         return False
 
@@ -253,42 +276,63 @@ def is_pad_nc_by_signal_layer(
     if none_count > len(lf.features) // 2:
         return False
 
-    pad_geom = _pad_to_shapely(
-        comp, pin, is_bottom, resolved_pads, toeprint, tolerance)
-    if pad_geom is None or pad_geom.is_empty:
-        return False
-
     from src.models import PadRecord
 
-    # --- Strategy 1: endpoint proximity check (fast, robust) ---------------
     pad_cx, pad_cy = _get_pad_center(comp, pin, is_bottom, toeprint)
-    prox_radius = _estimate_proximity_radius(pad_geom, tolerance)
-    prox_r_sq = prox_radius * prox_radius
+
+    sym_lookup = {s.index: s for s in lf.symbols}
+    layer_units = lf.units
+    search_r_sq = search_radius * search_radius
 
     for feat in lf.features:
         if feat is None or isinstance(feat, PadRecord):
             continue
-        for px, py in _get_endpoints(feat):
-            dx = px - pad_cx
-            dy = py - pad_cy
-            if dx * dx + dy * dy <= prox_r_sq:
-                return False  # Connected – endpoint near pad centre
 
-    # --- Strategy 2: full geometry intersection ----------------------------
-    buffered = pad_geom.buffer(tolerance)
+        if isinstance(feat, LineRecord):
+            # Quick bounding-box pre-filter
+            fxmin = min(feat.xs, feat.xe)
+            fxmax = max(feat.xs, feat.xe)
+            fymin = min(feat.ys, feat.ye)
+            fymax = max(feat.ys, feat.ye)
+            if (pad_cx < fxmin - search_radius or pad_cx > fxmax + search_radius
+                    or pad_cy < fymin - search_radius or pad_cy > fymax + search_radius):
+                continue
 
-    sym_lookup = {s.index: s for s in lf.symbols}
-    layer_units = lf.units  # original unit system for symbol dimension scaling
+            # Resolve trace half-width from symbol
+            half_w = 0.0
+            sym_ref = sym_lookup.get(feat.symbol_idx)
+            if sym_ref is not None:
+                ss = resolve_symbol(sym_ref.name)
+                scale = _sym_scale(layer_units, sym_ref.unit_override)
+                half_w = ss.width * scale / 2.0 if ss.width > 0 else 0.0
 
-    for feat in lf.features:
-        if feat is None:
-            continue
-        if isinstance(feat, PadRecord):
-            continue
-        geom = _non_pad_feature_to_geometry(feat, sym_lookup, layer_units)
-        if geom is None or geom.is_empty:
-            continue
-        if buffered.intersects(geom):
-            return False  # Connected – a non-pad feature touches this pad
+            d_sq = _point_to_segment_distance_sq(
+                pad_cx, pad_cy, feat.xs, feat.ys, feat.xe, feat.ye)
+            effective_r = search_radius + half_w
+            if d_sq <= effective_r * effective_r:
+                return False  # Connected
 
-    return True  # No non-pad feature touches this pad → NC
+        elif isinstance(feat, ArcRecord):
+            # Quick bounding-box pre-filter using arc centre + radius
+            arc_r = math.hypot(feat.xs - feat.xc, feat.ys - feat.yc)
+            if (abs(pad_cx - feat.xc) > arc_r + search_radius + 0.5
+                    or abs(pad_cy - feat.yc) > arc_r + search_radius + 0.5):
+                continue
+
+            half_w = 0.0
+            sym_ref = sym_lookup.get(feat.symbol_idx)
+            if sym_ref is not None:
+                ss = resolve_symbol(sym_ref.name)
+                scale = _sym_scale(layer_units, sym_ref.unit_override)
+                half_w = ss.width * scale / 2.0 if ss.width > 0 else 0.0
+
+            d_sq = _point_to_arc_distance_sq(pad_cx, pad_cy, feat)
+            effective_r = search_radius + half_w
+            if d_sq <= effective_r * effective_r:
+                return False  # Connected
+
+        # SurfaceRecords (copper fills / pours) are intentionally skipped.
+        # A copper pour covers large areas but NC pads have clearance
+        # holes, so pour presence does NOT imply trace connection.
+
+    return True  # No trace connects to this pad → NC
