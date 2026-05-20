@@ -165,7 +165,7 @@ def render_overlap_image(
     ax.plot(primary.x, primary.y, "s", color="navy", markersize=8,
             markeredgewidth=2, zorder=4)
 
-    # --- draw outermost outline boundary (dark red) ---------------------------
+    # --- draw outermost outline boundary (black dashed) -------------------------
     # outer_outline is the filled unary_union of all pkg.outlines — the
     # same geometry used as the CONTAINER FRAME and perimeter reference
     # for detect_inner_walls().
@@ -175,8 +175,9 @@ def render_overlap_image(
     if _has_outer_outline:
         _first_outer = True
         for xs, ys in _shapely_to_arrays(outer_outline):
-            ax.plot(xs, ys, color="#CC0000", linewidth=2.5, zorder=6,
-                    label="Outermost outline" if _first_outer else None)
+            ax.plot(xs, ys, color="#444444", linewidth=1.2, linestyle="--",
+                    zorder=6,
+                    label="Container frame" if _first_outer else None)
             _first_outer = False
 
     # --- draw inner wall pads (orange/red to distinguish from perimeter) ------
@@ -307,8 +308,8 @@ def render_overlap_image(
     ]
     if _has_outer_outline:
         legend_elements.append(
-            mpatches.Patch(facecolor="none", edgecolor="#CC0000",
-                           linewidth=2.5, label="Outermost outline")
+            plt.Line2D([0], [0], color="#444444", linewidth=1.2,
+                       linestyle="--", label="Container frame")
         )
     if inner_walls:
         legend_elements.append(

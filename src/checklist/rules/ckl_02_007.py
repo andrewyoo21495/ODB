@@ -156,11 +156,14 @@ class CKL02007(ChecklistRule):
                                 "min_distance": MIN_CLEARANCE_MM,
                             })
 
-                # Always render image for every SC.
+                # Render image only for SCs with detected inner walls.
+                if not inner_walls:
+                    continue
+
                 safe = sc.comp_name.replace("/", "_")
                 img_path = image_dir / f"{safe}_{layer_name.lower()}.png"
                 n_fail = len(fail_items)
-                n_iw = len(inner_walls) if inner_walls else 0
+                n_iw = len(inner_walls)
                 render_overlap_image(
                     sc, packages, fail_items, comps, img_path,
                     rule_id=self.rule_id,
@@ -170,7 +173,7 @@ class CKL02007(ChecklistRule):
                     overlap_label="Cap/Ind",
                     primary_is_bottom=is_bottom,
                     overlap_is_bottom=is_bottom,
-                    inner_walls=inner_walls or [],
+                    inner_walls=inner_walls,
                     outer_outline=outer_outline,
                 )
                 images.append({
