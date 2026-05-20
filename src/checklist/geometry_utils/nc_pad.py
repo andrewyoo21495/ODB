@@ -256,10 +256,10 @@ def is_pad_nc_by_signal_layer(
         minimum distance from the pin centre to the line/arc segment is
         less than ``search_radius`` (accounting for the trace's own width
         when the symbol is resolvable).
-    *   **SurfaceRecords** (copper fills / pours) are intentionally
-        **ignored**.  A copper pour covers large areas but NC pads have
-        clearance holes in the pour, so the presence of a pour does NOT
-        imply connection.
+    *   A **SurfaceRecord** (copper fill / pour) is considered connecting
+        only when the pin centre is inside an island contour AND NOT
+        inside any hole contour.  NC pads typically have clearance holes
+        cut out in the pour, so they will not match.
     *   **PadRecords** are excluded (the pad's own copper should not
         count as a connection).
 
@@ -331,8 +331,27 @@ def is_pad_nc_by_signal_layer(
             if d_sq <= effective_r * effective_r:
                 return False  # Connected
 
-        # SurfaceRecords (copper fills / pours) are intentionally skipped.
-        # A copper pour covers large areas but NC pads have clearance
-        # holes, so pour presence does NOT imply trace connection.
+        elif isinstance(feat, SurfaceRecord) and _HAS_SHAPELY:
+            # A copper pour covers large areas, but NC pads have
+            # clearance holes cut out around them.  Check that the pad
+            # centre is inside an island contour AND NOT inside any
+            # hole contour.
+            from src.visualizer.symbol_renderer import contour_to_vertices
+            pt = ShapelyPoint(pad_cx, pad_cy)
+            inside_island = False
+            inside_hole = False
+            for contour in feat.contours:
+                verts = contour_to_vertices(contour)
+                if len(verts) < 3:
+                    continue
+                poly = ShapelyPolygon(verts)
+                if contour.is_island:
+                    if poly.contains(pt):
+                        inside_island = True
+                else:
+                    if poly.contains(pt):
+                        inside_hole = True
+            if inside_island and not inside_hole:
+                return False  # Connected to plane directly
 
-    return True  # No trace connects to this pad → NC
+    return True  # No feature connects to this pad → NC
