@@ -241,23 +241,17 @@ def get_container_interior(comp: Component, pkg: Package,
                            *, is_bottom: bool = False):
     """Build a filled interior polygon for a container component (SC/INP).
 
-    Container outlines (shield cans, interposers) are typically hollow rings
-    with an outer boundary and an inner boundary.  For containment checks we
-    need the *filled* area enclosed by the outer boundary — that is the
-    physical interior of the container.
-
-    Using the largest outline (outer boundary) rather than a smaller one
-    ensures containers with inner walls are handled correctly: inner walls
-    subdivide the interior but the whole outer region should count as
-    "inside".
+    The interior region must match the **CONTAINER FRAME** shown in the
+    visualization (the dashed outline produced by ``get_component_outline``).
+    Everything inside the frame's outer boundary is "INSIDE"; everything
+    outside is "OUTSIDE".
 
     Strategy:
-    1. Collect each ``pkg.outlines`` entry as an individual Shapely geometry.
-    2. If there are 2+ geometries, the largest one is the outer boundary;
-       return it as a filled polygon.
-    3. If there is 1 geometry that is a Polygon with holes, fill the exterior
-       boundary (the holes represent the ring shape itself).
-    4. Otherwise, return the geometry as-is (already filled or single outline).
+    1. Compute the component outline via ``get_component_outline`` — this is
+       the same ``unary_union`` of all ``pkg.outlines`` used for the dashed
+       container frame in visualizations.
+    2. Fill the outline (remove holes) so that containment checks treat the
+       entire region enclosed by the outer boundary as interior.
 
     Fallback: when ``pkg.outlines`` produces no valid geometry, fall back to
     ``get_component_footprint`` (convex hull of pin pads / toeprints) so that
@@ -266,27 +260,26 @@ def get_container_interior(comp: Component, pkg: Package,
     if not _HAS_SHAPELY:
         return None
 
-    geoms = []
-    for outline in pkg.outlines:
-        g = _outline_to_shapely(outline, comp, is_bottom=is_bottom)
-        if g is not None and not g.is_empty:
-            geoms.append(g)
-
-    if not geoms:
-        # No valid package outlines — fall back to footprint (convex hull).
+    outline = get_component_outline(comp, pkg, is_bottom=is_bottom)
+    if outline is None:
         return get_component_footprint(comp, pkg, is_bottom=is_bottom)
 
-    if len(geoms) >= 2:
-        # Multiple outlines → pick the outer (largest area) boundary as interior.
-        geoms.sort(key=lambda g: g.area, reverse=True)
-        return geoms[0]
+    # Fill the outline by removing holes so that containment checks
+    # match the visible container frame boundary.
+    if hasattr(outline, "exterior"):
+        # Single Polygon — fill by using only the exterior ring.
+        return ShapelyPolygon(outline.exterior)
 
-    # Single geometry
-    g = geoms[0]
-    if hasattr(g, "exterior") and g.interiors:
-        # Polygon with holes — fill by using only the exterior ring.
-        return ShapelyPolygon(g.exterior)
-    return g
+    if hasattr(outline, "geoms"):
+        # MultiPolygon / GeometryCollection — fill each sub-polygon and union.
+        filled = []
+        for g in outline.geoms:
+            if hasattr(g, "exterior"):
+                filled.append(ShapelyPolygon(g.exterior))
+        if filled:
+            return unary_union(filled)
+
+    return outline
 
 
 def _resolve_container_interior(comp: Component, packages: list[Package],

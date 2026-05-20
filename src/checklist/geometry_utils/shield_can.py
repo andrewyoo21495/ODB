@@ -354,35 +354,39 @@ def get_outermost_outline(
     *,
     is_bottom: bool = False,
 ):
-    """Return the outermost (largest-area) component outline of a shield can.
+    """Return the outermost component outline of a shield can (filled).
 
-    Uses the same selection logic as ``detect_inner_walls``: collect all
-    ``pkg.outlines`` geometries and pick the one with the largest area.
+    Uses ``_resolve_outline`` (= ``get_component_outline``) which computes
+    ``unary_union`` of all ``pkg.outlines`` — the same geometry shown as the
+    dashed **CONTAINER FRAME** in CKL-02-005 visualization.
+
+    The result is filled (holes removed via exterior ring) so that:
+    - The visualization draws only the outer boundary.
+    - ``detect_inner_walls`` can measure pad distance to the outer boundary
+      without interference from interior ring boundaries.
 
     Returns a Shapely Polygon or None.
     """
     if not _HAS_SHAPELY:
         return None
-    if shield_can.pkg_ref < 0 or shield_can.pkg_ref >= len(packages):
-        return None
-    pkg = packages[shield_can.pkg_ref]
 
-    outline_geoms = []
-    for outline in pkg.outlines:
-        g = _outline_to_shapely(outline, shield_can, is_bottom=is_bottom)
-        if g is not None and not g.is_empty:
-            outline_geoms.append(g)
-
-    if not outline_geoms:
+    outline = _resolve_outline(shield_can, packages, is_bottom=is_bottom)
+    if outline is None:
         return None
 
-    if len(outline_geoms) >= 2:
-        outline_geoms.sort(key=lambda g: g.area, reverse=True)
+    # Fill the outline — use exterior ring only (remove holes).
+    if hasattr(outline, "geoms"):
+        # MultiPolygon / GeometryCollection — pick the largest, fill it.
+        polys = [g for g in outline.geoms if hasattr(g, "exterior")]
+        if not polys:
+            return None
+        polys.sort(key=lambda g: g.area, reverse=True)
+        return ShapelyPolygon(polys[0].exterior)
 
-    outer = outline_geoms[0]
-    if outer is None or outer.is_empty:
-        return None
-    return outer
+    if hasattr(outline, "exterior"):
+        return ShapelyPolygon(outline.exterior)
+
+    return None
 
 
 def detect_inner_walls(
@@ -399,8 +403,9 @@ def detect_inner_walls(
     Inner wall = SC pad that does NOT lie along the outer component outline.
 
     Strategy:
-    1. Obtain the outer component outline (largest ``pkg.outlines`` geometry,
-       same logic as ``get_container_interior``).
+    1. Obtain the outer component outline via ``get_outermost_outline`` —
+       the filled ``unary_union`` of all ``pkg.outlines``, consistent with
+       the CONTAINER FRAME shown in visualizations.
     2. Measure each pad's minimum distance to the outline boundary.
     3. Pads within *inset_mm* of the boundary are perimeter (outer-wall) pads.
        Pads farther away are **inner walls**.
@@ -432,22 +437,13 @@ def detect_inner_walls(
     if len(pad_geoms) < 4:
         return []
 
-    # Build the outer outline from package component outline data.
+    # Use get_outermost_outline() for the outer boundary — same filled
+    # unary_union geometry used as the CONTAINER FRAME.
     # No fallback to convex hull — inner wall detection requires the
     # actual component outline from ODB data.
-    outline_geoms = []
-    for outline in pkg.outlines:
-        g = _outline_to_shapely(outline, shield_can, is_bottom=is_bottom)
-        if g is not None and not g.is_empty:
-            outline_geoms.append(g)
-
-    if not outline_geoms:
-        return []
-
-    if len(outline_geoms) >= 2:
-        outline_geoms.sort(key=lambda g: g.area, reverse=True)
-    outer = outline_geoms[0]
-
+    outer = get_outermost_outline(
+        shield_can, packages, is_bottom=is_bottom,
+    )
     if outer is None or outer.is_empty or not hasattr(outer, "exterior"):
         return []
 

@@ -166,8 +166,9 @@ def render_overlap_image(
             markeredgewidth=2, zorder=4)
 
     # --- draw outermost outline boundary (dark red) ---------------------------
-    # outer_outline is the single largest-area pkg.outlines geometry — the
-    # same one detect_inner_walls() uses as the perimeter reference.
+    # outer_outline is the filled unary_union of all pkg.outlines — the
+    # same geometry used as the CONTAINER FRAME and perimeter reference
+    # for detect_inner_walls().
     # When it is None the package has no component-level outlines at all,
     # which also means detect_inner_walls() cannot work.
     _has_outer_outline = (outer_outline is not None and not outer_outline.is_empty)
