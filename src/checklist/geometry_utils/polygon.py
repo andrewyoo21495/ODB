@@ -26,6 +26,7 @@ try:
         Polygon as ShapelyPolygon,
     )
     from shapely.ops import unary_union
+    from shapely.validation import make_valid
     _HAS_SHAPELY = True
 except ImportError:
     _HAS_SHAPELY = False
@@ -157,7 +158,13 @@ def _outline_to_shapely(outline: PinOutline, comp: Component,
         board_corners = [transform_point(x, y, comp, is_bottom=is_bottom) for x, y in corners]
         try:
             poly = ShapelyPolygon(board_corners)
-            return poly if poly.is_valid and not poly.is_empty else None
+            if poly.is_empty:
+                return None
+            if not poly.is_valid:
+                poly = make_valid(poly)
+                if poly.is_empty:
+                    return None
+            return poly
         except Exception:
             return None
 
@@ -174,7 +181,13 @@ def _outline_to_shapely(outline: PinOutline, comp: Component,
         board_corners = [transform_point(x, y, comp, is_bottom=is_bottom) for x, y in corners]
         try:
             poly = ShapelyPolygon(board_corners)
-            return poly if poly.is_valid and not poly.is_empty else None
+            if poly.is_empty:
+                return None
+            if not poly.is_valid:
+                poly = make_valid(poly)
+                if poly.is_empty:
+                    return None
+            return poly
         except Exception:
             return None
 
@@ -185,7 +198,13 @@ def _outline_to_shapely(outline: PinOutline, comp: Component,
         board_verts = [transform_point(v[0], v[1], comp, is_bottom=is_bottom) for v in verts]
         try:
             poly = ShapelyPolygon(board_verts)
-            return poly if poly.is_valid and not poly.is_empty else None
+            if poly.is_empty:
+                return None
+            if not poly.is_valid:
+                poly = make_valid(poly)
+                if poly.is_empty:
+                    return None
+            return poly
         except Exception:
             return None
 
