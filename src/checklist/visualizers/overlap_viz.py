@@ -166,6 +166,10 @@ def render_overlap_image(
             markeredgewidth=2, zorder=4)
 
     # --- draw outermost outline boundary (dark red) ---------------------------
+    # outer_outline is the single largest-area pkg.outlines geometry — the
+    # same one detect_inner_walls() uses as the perimeter reference.
+    # When it is None the package has no component-level outlines at all,
+    # which also means detect_inner_walls() cannot work.
     _has_outer_outline = (outer_outline is not None and not outer_outline.is_empty)
     if _has_outer_outline:
         _first_outer = True
@@ -173,6 +177,16 @@ def render_overlap_image(
             ax.plot(xs, ys, color="#CC0000", linewidth=2.5, zorder=6,
                     label="Outermost outline" if _first_outer else None)
             _first_outer = False
+    elif outer_outline is None and conn_display is not None:
+        # No pkg.outlines → show warning text on the image
+        cb = _geom_bounds(conn_display)
+        if cb:
+            cx, cy = (cb[0] + cb[2]) / 2, (cb[1] + cb[3]) / 2
+            ax.text(cx, cy, "⚠ No pkg.outlines\n(inner wall detection disabled)",
+                    ha="center", va="center", fontsize=9, fontweight="bold",
+                    color="#CC0000", zorder=10,
+                    bbox=dict(boxstyle="round,pad=0.5", facecolor="white",
+                              edgecolor="#CC0000", alpha=0.9))
 
     # --- draw inner wall pads (orange/red to distinguish from perimeter) ------
     if inner_walls:
