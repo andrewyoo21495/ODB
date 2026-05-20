@@ -26,8 +26,7 @@ from src.checklist.geometry_utils import (
     _resolve_container_interior,
     get_outermost_outline,
     detect_inner_walls,
-    find_nearest_inner_wall,
-    _get_pad_centers,
+    _get_pad_union,
 )
 from src.checklist.rule_base import ChecklistRule
 from src.checklist.visualizers.overlap_viz import render_overlap_image
@@ -37,23 +36,41 @@ MIN_CLEARANCE_MM = 0.3
 
 
 def _min_distance_to_inner_walls(
-    comp, packages, inner_walls, *, is_bottom: bool = False,
+    comp, packages, inner_walls,
+    *, is_bottom: bool = False, user_symbols: dict | None = None,
 ) -> float | None:
-    """Return the minimum distance from *comp* (centre + pads) to inner walls.
+    """Return the minimum surface-to-surface distance from *comp* pads to inner walls.
+
+    Uses actual pad geometry (via ``_get_pad_union``) so the measurement
+    reflects the true clearance between the pad edge and the inner wall
+    pad edge, not just the pad centre.
+
+    Falls back to a point-based check (component centre) when pad geometry
+    is unavailable.
 
     Returns None when inner_walls is empty.
     """
     if not inner_walls:
         return None
 
-    result = find_nearest_inner_wall((comp.x, comp.y), inner_walls)
-    best = result[1] if result else float("inf")
+    best = float("inf")
 
-    pad_centers = _get_pad_centers(comp, packages, is_bottom=is_bottom)
-    for px, py in pad_centers:
-        r = find_nearest_inner_wall((px, py), inner_walls)
-        if r is not None and r[1] < best:
-            best = r[1]
+    # Surface-to-surface: pad geometry → inner wall polygon.
+    pad_union = _get_pad_union(
+        comp, packages, is_bottom=is_bottom, user_symbols=user_symbols,
+    )
+    if pad_union is not None and not pad_union.is_empty:
+        for wall in inner_walls:
+            d = pad_union.distance(wall)
+            if d < best:
+                best = d
+    else:
+        # Fallback: component centre point → inner wall polygon.
+        pt = ShapelyPoint(comp.x, comp.y)
+        for wall in inner_walls:
+            d = wall.distance(pt)
+            if d < best:
+                best = d
 
     return best
 
@@ -71,6 +88,7 @@ class CKL02007(ChecklistRule):
         components_top = job_data.get("components_top", [])
         components_bot = job_data.get("components_bot", [])
         eda = job_data.get("eda_data")
+        user_symbols = job_data.get("user_symbols")
         packages = eda.packages if eda else []
 
         columns = [
@@ -116,6 +134,7 @@ class CKL02007(ChecklistRule):
                             dist = _min_distance_to_inner_walls(
                                 t, packages, inner_walls,
                                 is_bottom=is_bottom,
+                                user_symbols=user_symbols,
                             )
                             if dist is None:
                                 continue
