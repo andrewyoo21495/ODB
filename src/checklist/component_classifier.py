@@ -36,7 +36,7 @@ def classify_component(comp: Component) -> ComponentCategory:
         4. Capacitor  – properties TYPE or DEVICE_TYPE == "capacitor" (case-insensitive),
                         OR part_name starts with "2203-"
         5. IC         – comp_name starts with "U" but NOT "USB"
-        6. INP        – comp_name starts with "INP"
+        6. INP        – comp_name starts with "INP" or "INT"
         7. Unknown    – everything else
     """
     name = comp.comp_name or ""
@@ -61,7 +61,7 @@ def classify_component(comp: Component) -> ComponentCategory:
     if name.startswith("U") and not name.startswith("USB"):
         return ComponentCategory.IC
 
-    if name.startswith("INP"):
+    if name.startswith(("INP", "INT")):
         return ComponentCategory.INP
 
     return ComponentCategory.UNKNOWN
@@ -115,8 +115,8 @@ def find_pmics(components: Sequence[Component]) -> list[Component]:
 
 
 def find_interposers(components: Sequence[Component]) -> list[Component]:
-    """Return Interposer components: comp_name starts with 'INP'."""
-    return [c for c in components if (c.comp_name or "").startswith("INP")]
+    """Return Interposer components: comp_name starts with 'INP' or 'INT'."""
+    return [c for c in components if (c.comp_name or "").startswith(("INP", "INT"))]
 
 
 def find_connectors(components: Sequence[Component]) -> list[Component]:
