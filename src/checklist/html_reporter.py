@@ -36,9 +36,11 @@ _CSS = """\
   --primary: #0d6efd;
   --pass: #198754;
   --fail: #dc3545;
+  --warn: #e67e00;
   --nc: #1F4E79;
   --pass-bg: #C6EFCE;
   --fail-bg: #FFC7CE;
+  --warn-bg: #FFE0B2;
   --nc-bg: #BDD7EE;
   --header-blue: #4472C4;
 }
@@ -105,6 +107,7 @@ body {
 }
 .toc-badge-pass { background: var(--pass-bg); color: var(--pass); }
 .toc-badge-fail { background: var(--fail-bg); color: var(--fail); }
+.toc-badge-warn { background: var(--warn-bg); color: var(--warn); }
 
 /* Section titles */
 section > h2 {
@@ -126,10 +129,12 @@ section > h2 {
 .summary-table a:hover { text-decoration: underline; }
 .row-pass td:first-child { border-left: 3px solid var(--pass); }
 .row-fail td:first-child { border-left: 3px solid var(--fail); }
+.row-warn td:first-child { border-left: 3px solid var(--warn); }
 
 /* Status cells */
 .status-pass { background: var(--pass-bg); color: var(--pass); font-weight: 700; text-align: center; }
 .status-fail { background: var(--fail-bg); color: var(--fail); font-weight: 700; text-align: center; }
+.status-warn { background: var(--warn-bg); color: var(--warn); font-weight: 700; text-align: center; }
 .status-nc   { background: var(--nc-bg);   color: var(--nc);   font-weight: 700; text-align: center; }
 
 /* Managed parts */
@@ -169,6 +174,7 @@ td.center, th.center { text-align: center; }
 }
 .status-badge.status-pass { background: var(--pass-bg); color: var(--pass); }
 .status-badge.status-fail { background: var(--fail-bg); color: var(--fail); }
+.status-badge.status-warn { background: var(--warn-bg); color: var(--warn); }
 .toggle-icon { font-size: 0.7rem; color: var(--muted); transition: transform 0.2s; }
 .rule-section:not(.collapsed) .toggle-icon { transform: rotate(90deg); }
 .rule-section.collapsed .rule-content { display: none; }
@@ -369,16 +375,22 @@ def _build_table_of_contents(sorted_results: list[RuleResult]) -> str:
         '  <label><input type="checkbox" id="failures-only" '
         'onchange="toggleFailuresOnly()"> Failures only</label>',
         '</div>',
-        '<a href="#summary" style="display:block;margin-bottom:4px;">Summary</a>',
-        '<a href="#managed-parts" style="display:block;margin-bottom:8px;">Managed Parts</a>',
+        '<a href="#summary" style="display:block;margin-bottom:4px;">전체 결과 요약</a>',
+        '<a href="#managed-parts" style="display:block;margin-bottom:8px;">관리 부품 사용 현황</a>',
     ]
     for grp in sorted(groups.keys()):
         label = _TOC_GROUP_LABELS.get(grp, f"Group {grp}")
         lines.append(f'<h4>{html.escape(label)}</h4><ul>')
         for r in groups[grp]:
-            badge = "pass" if r.passed else "fail"
+            if r.passed:
+                badge = "pass"
+            elif r.recommended:
+                badge = "warn"
+            else:
+                badge = "fail"
+            toc_cls = "pass" if r.passed else "fail"
             lines.append(
-                f'<li class="toc-{badge}">'
+                f'<li class="toc-{toc_cls}">'
                 f'<a href="#rule-{r.rule_id}">'
                 f'<span class="toc-badge toc-badge-{badge}">'
                 f'{"PASS" if r.passed else "FAIL"}</span> '
@@ -398,13 +410,23 @@ def _build_summary_table(sorted_results: list[RuleResult]) -> str:
         '</tr></thead><tbody>',
     ]
     for r in sorted_results:
-        status_cls = "pass" if r.passed else "fail"
-        status_text = "PASS" if r.passed else "FAIL"
+        if r.passed:
+            status_cls = "pass"
+            row_cls = "pass"
+            status_text = "PASS"
+        elif r.recommended:
+            status_cls = "warn"
+            row_cls = "warn"
+            status_text = "FAIL"
+        else:
+            status_cls = "fail"
+            row_cls = "fail"
+            status_text = "FAIL"
         comps = ", ".join(r.affected_components[:20])
         if len(r.affected_components) > 20:
             comps += f" (+{len(r.affected_components) - 20} more)"
         lines.append(
-            f'<tr class="row-{status_cls}">'
+            f'<tr class="row-{row_cls}">'
             f'<td><a href="#rule-{r.rule_id}">{html.escape(r.rule_id)}</a></td>'
             f'<td>{html.escape(r.category)}</td>'
             f'<td>{html.escape(r.description)}</td>'
@@ -477,14 +499,16 @@ def _build_managed_parts_section(
 def _build_rule_section(
     result: RuleResult, image_cache: dict[str, str],
 ) -> str:
-    status_cls = "pass" if result.passed else "fail"
-    collapsed = " collapsed" if result.passed else ""
     if result.passed:
+        status_cls = "pass"
         status_text = "PASS"
     elif result.recommended:
-        status_text = "FAIL (Recommended)"
+        status_cls = "warn"
+        status_text = "Fail (수정권장)"
     else:
+        status_cls = "fail"
         status_text = "FAIL"
+    collapsed = " collapsed" if result.passed else ""
 
     lines = [
         f'<section id="rule-{result.rule_id}" '

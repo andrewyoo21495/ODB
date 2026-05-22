@@ -13,7 +13,7 @@ from pathlib import Path
 from src.checklist.component_classifier import find_leds, find_rf_components
 from src.checklist.engine import register_rule
 from src.checklist.geometry_utils import (
-    find_overlapping_components,
+    find_pad_overlapping_components,
     pad_to_pad_distance,
 )
 from src.checklist.reference_loader import get_managed_part_names
@@ -44,7 +44,7 @@ class CKL02004(ChecklistRule):
         user_symbols: dict = job_data.get("user_symbols") or {}
 
         columns = [
-            "comp", "cmp_layer", "overlapping_cmp", "part_name",
+            "overlapping_cmp", "part_name", "comp", "cmp_layer",
             "distance", "status",
         ]
         rows: list[dict] = []
@@ -70,8 +70,11 @@ class CKL02004(ChecklistRule):
 
             # --- LED Flash: any overlap is FAIL ---
             for led in leds:
-                overlaps = find_overlapping_components(
+                overlaps = find_pad_overlapping_components(
                     led, opp_managed_caps, packages,
+                    is_bottom_primary=primary_is_bottom,
+                    is_bottom_candidates=overlap_is_bottom,
+                    user_symbols=user_symbols,
                 )
                 overlap_items: list[dict] = []
                 for cap in overlaps:
@@ -105,8 +108,11 @@ class CKL02004(ChecklistRule):
 
             # --- RF: overlap or distance < 0.5mm is FAIL ---
             for rf in rfs:
-                overlaps = find_overlapping_components(
+                overlaps = find_pad_overlapping_components(
                     rf, opp_managed_caps, packages,
+                    is_bottom_primary=primary_is_bottom,
+                    is_bottom_candidates=overlap_is_bottom,
+                    user_symbols=user_symbols,
                 )
                 overlap_items_rf: list[dict] = []
                 for cap in overlaps:

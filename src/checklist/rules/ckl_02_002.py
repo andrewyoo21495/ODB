@@ -43,7 +43,7 @@ class CKL02002(ChecklistRule):
         managed_41 = get_managed_part_names("capacitors_41_list")
 
         columns = [
-            "comp", "cmp_layer", "overlapping_cap", "part_name",
+            "overlapping_cap", "part_name", "comp", "cmp_layer",
             "edge", "hori/verti", "status",
         ]
         rows: list[dict] = []
