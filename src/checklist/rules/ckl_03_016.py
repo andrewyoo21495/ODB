@@ -1,7 +1,10 @@
 """CKL-03-016: No INP/SC/SIM/Connector on the opposite side of OSC.
 
-Interposers, Shield Cans, SIM Sockets, and Connectors must not be placed
-on the opposite side of Oscillator components (overlapping).
+Interposers, Shield Cans, SIM Sockets, and Connectors must not have
+pad-level overlap with Oscillator components on the opposite side.
+
+- Outline-only overlap (no pad contact) → PASS
+- Pad-to-pad overlap → FAIL
 """
 
 from __future__ import annotations
@@ -17,7 +20,10 @@ from src.checklist.component_classifier import (
     find_simsockets,
 )
 from src.checklist.engine import register_rule
-from src.checklist.geometry_utils import find_overlapping_components
+from src.checklist.geometry_utils import (
+    find_overlapping_components,
+    find_pad_overlapping_components,
+)
 from src.checklist.rule_base import ChecklistRule
 from src.checklist.visualizers.overlap_viz import render_overlap_image
 from src.models import RuleResult
@@ -28,7 +34,7 @@ class CKL03016(ChecklistRule):
     rule_id = "CKL-03-016"
     description = (
         "인터포저, 쉴드캔, SIM 소켓, 커넥터는 OSC 부품의 "
-        "반대면과 중첩되지 않아야 합니다"
+        "반대면과 패드 중첩이 없어야 합니다"
     )
     category = "Placement"
 
@@ -39,7 +45,10 @@ class CKL03016(ChecklistRule):
         packages = eda.packages if eda else []
         user_symbols: dict = job_data.get("user_symbols") or {}
 
-        columns = ["comp", "cmp_layer", "overlapping_cmp", "part_name", "status"]
+        columns = [
+            "comp", "cmp_layer", "overlapping_cmp", "part_name",
+            "overlap_type", "status",
+        ]
         rows: list[dict] = []
         images: list[dict] = []
         image_dir = Path(tempfile.mkdtemp(prefix="ckl_03_016_"))
@@ -61,44 +70,54 @@ class CKL03016(ChecklistRule):
             )
 
             if not opp_targets:
-                for osc in oscs:
-                    rows.append({
-                        "comp": osc.comp_name,
-                        "cmp_layer": osc_layer,
-                        "overlapping_cmp": "-",
-                        "part_name": "-",
-                        "status": "PASS",
-                    })
                 continue
 
             for osc in oscs:
-                overlaps = find_overlapping_components(
+                # Step 1: Check pad-level overlap (FAIL)
+                pad_overlaps = find_pad_overlapping_components(
+                    osc, opp_targets, packages,
+                    is_bottom_primary=osc_is_bottom,
+                    is_bottom_candidates=opp_is_bottom,
+                    user_symbols=user_symbols,
+                )
+                pad_overlap_ids = {id(c) for c in pad_overlaps}
+
+                # Step 2: Check outline-only overlap (PASS)
+                outline_overlaps = find_overlapping_components(
                     osc, opp_targets, packages,
                     is_bottom_primary=osc_is_bottom,
                     is_bottom_candidates=opp_is_bottom,
                 )
 
                 overlap_items: list[dict] = []
-                if overlaps:
-                    for ovl in overlaps:
-                        rows.append({
-                            "comp": osc.comp_name,
-                            "cmp_layer": osc_layer,
-                            "overlapping_cmp": ovl.comp_name,
-                            "part_name": ovl.part_name or "",
-                            "status": "FAIL",
-                        })
-                        overlap_items.append({"comp": ovl, "status": "FAIL"})
-                else:
+
+                # Pad overlaps → FAIL
+                for ovl in pad_overlaps:
                     rows.append({
                         "comp": osc.comp_name,
                         "cmp_layer": osc_layer,
-                        "overlapping_cmp": "-",
-                        "part_name": "-",
+                        "overlapping_cmp": ovl.comp_name,
+                        "part_name": ovl.part_name or "",
+                        "overlap_type": "PAD",
+                        "status": "FAIL",
+                    })
+                    overlap_items.append({"comp": ovl, "status": "FAIL"})
+
+                # Outline-only overlaps (not pad) → PASS
+                for ovl in outline_overlaps:
+                    if id(ovl) in pad_overlap_ids:
+                        continue  # Already reported as FAIL
+                    rows.append({
+                        "comp": osc.comp_name,
+                        "cmp_layer": osc_layer,
+                        "overlapping_cmp": ovl.comp_name,
+                        "part_name": ovl.part_name or "",
+                        "overlap_type": "OUTLINE_ONLY",
                         "status": "PASS",
                     })
+                    overlap_items.append({"comp": ovl, "status": "PASS"})
 
-                if overlap_items:
+                if overlap_items and any(i["status"] == "FAIL" for i in overlap_items):
                     safe = osc.comp_name.replace("/", "_")
                     img_path = image_dir / f"{safe}_{osc_layer}.png"
                     render_overlap_image(
@@ -124,13 +143,16 @@ class CKL03016(ChecklistRule):
             category=self.category,
             passed=passed,
             message=(
-                f"OSC 반대면과 중첩되는 부품이 {fail_count}건 발견되었습니다."
+                f"OSC 반대면과 패드 중첩되는 부품이 {fail_count}건 발견되었습니다."
                 if not passed
-                else "OSC 반대면과 중첩되는 금지 부품이 없습니다."
+                else "OSC 반대면과 패드 중첩되는 금지 부품이 없습니다."
             ),
             affected_components=[
                 r["comp"] for r in rows if r["status"] == "FAIL"
             ],
-            details={"columns": columns, "rows": rows},
+            details={
+                "columns": columns,
+                "rows": [r for r in rows if r["status"] != "PASS"],
+            },
             images=images,
         )
