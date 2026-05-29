@@ -259,9 +259,11 @@ class CKL01002(ChecklistRule):
                     has_via = via_count > 0
                     status = "PASS" if has_via else "FAIL"
 
-                    # Mark in nc_map for visualisation
+                    # Mark in nc_map for visualisation: corner pins
+                    # are treated as "requiring VIA" (like NC pads) so
+                    # they appear red when VIA is missing.
                     if pin_idx not in nc_map:
-                        nc_map[pin_idx] = False  # It's connected
+                        nc_map[pin_idx] = True
 
                     rows.append({
                         "comp": comp.comp_name,
@@ -279,7 +281,7 @@ class CKL01002(ChecklistRule):
                 render_via_check_image(
                     comp, pkg, via_positions, is_bottom, img_path,
                     rule_id=self.rule_id,
-                    comp_type="PMIC (outermost + corner)",
+                    comp_type="PMIC (outermost NC + corner)",
                     fid_resolved=fid_resolved,
                     signal_layer_name=sig_name,
                     pin_indices=all_check_indices,
