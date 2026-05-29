@@ -21,7 +21,10 @@ from src.checklist.geometry_utils import (
     find_pad_overlapping_components,
     lookup_resolved_pads_for_pin,
 )
-from src.checklist.reference_loader import get_part_category_map
+from src.checklist.reference_loader import (
+    get_part_category_map,
+    matches_any_reference_part,
+)
 from src.checklist.rule_base import ChecklistRule
 from src.checklist.visualizers.overlap_viz import render_overlap_image
 from src.checklist.visualizers.via_check_viz import render_via_check_image
@@ -34,13 +37,30 @@ from src.visualizer.fid_lookup import (
 
 
 def _find_mcp_ics(components: list[Component]) -> list[Component]:
-    """Return IC components whose part_name maps to category 'MCP' in ap_memory.csv."""
+    """Return IC components whose part_name maps to category 'MCP' in ap_memory.csv.
+
+    Uses substring matching so that actual part names containing the
+    reference part name as a prefix are also recognised (e.g.
+    ``"1105-946565_PBK"`` matches reference ``"1105-946565"``).
+    Components whose comp_name starts with ``"UCP"`` are also included
+    when their category cannot be determined (treated as AP/Memory).
+    """
     category_map = get_part_category_map("ap_memory")
     ics = find_ics(components)
-    return [
-        ic for ic in ics
-        if category_map.get(ic.part_name or "") == "MCP"
-    ]
+    result: list[Component] = []
+    for ic in ics:
+        pn = ic.part_name or ""
+        name = ic.comp_name or ""
+        # Direct match
+        if category_map.get(pn) == "MCP":
+            result.append(ic)
+            continue
+        # Substring match: find if any reference key is a substring of pn
+        for ref_pn, cat in category_map.items():
+            if cat == "MCP" and ref_pn and ref_pn in pn:
+                result.append(ic)
+                break
+    return result
 
 
 def _find_corner_pin_indices(pins: list[Pin], n_per_corner: int = 3) -> set[int]:

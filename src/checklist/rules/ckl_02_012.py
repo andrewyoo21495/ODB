@@ -10,6 +10,7 @@ import tempfile
 from pathlib import Path
 
 from src.checklist.component_classifier import (
+    find_ap_memory,
     find_inductors,
     find_shield_cans,
 )
@@ -18,16 +19,10 @@ from src.checklist.geometry_utils import (
     filter_by_size,
     find_pad_overlapping_components,
 )
-from src.checklist.reference_loader import get_managed_part_names, get_part_size_map
+from src.checklist.reference_loader import get_part_size_map
 from src.checklist.rule_base import ChecklistRule
 from src.checklist.visualizers.overlap_viz import render_overlap_image
 from src.models import Component, RuleResult
-
-
-def _find_ap_memory(components: list[Component]) -> list[Component]:
-    """Return components whose part_name is listed in ap_memory.csv."""
-    ap_parts = get_managed_part_names("ap_memory")
-    return [c for c in components if (c.part_name or "") in ap_parts]
 
 
 @register_rule
@@ -63,7 +58,7 @@ class CKL02012(ChecklistRule):
             ap_is_bottom = (ap_layer == "Bottom")
             ind_is_bottom = not ap_is_bottom
 
-            ap_comps = _find_ap_memory(ap_layer_comps)
+            ap_comps = find_ap_memory(ap_layer_comps)
             if not ap_comps:
                 continue
 

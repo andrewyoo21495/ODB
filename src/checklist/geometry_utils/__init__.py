@@ -34,6 +34,7 @@ from .overlap import (
     _symbol_to_shapely,
     _user_symbol_to_shapely,
     find_outermost_pin_indices,
+    find_border_pin_indices,
     find_overlapping_components,
     find_outline_overlapping_components,
     find_outermost_pad_overlapping_components,

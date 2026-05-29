@@ -16,23 +16,16 @@ import tempfile
 from itertools import combinations
 from pathlib import Path
 
-from src.checklist.component_classifier import find_capacitors
+from src.checklist.component_classifier import find_ap_memory, find_capacitors
 from src.checklist.engine import register_rule
 from src.checklist.geometry_utils import (
     edge_distance,
     is_sandwiched_between,
     overlaps_component_outline,
 )
-from src.checklist.reference_loader import get_managed_part_names
 from src.checklist.rule_base import ChecklistRule
 from src.checklist.visualizers.overlap_viz import render_overlap_image
 from src.models import Component, RuleResult
-
-
-def _find_ap_memory(components: list[Component]) -> list[Component]:
-    """Return components whose part_name is listed in ap_memory.csv."""
-    ap_parts = get_managed_part_names("ap_memory")
-    return [c for c in components if (c.part_name or "") in ap_parts]
 
 
 @register_rule
@@ -74,7 +67,7 @@ class CKL02011(ChecklistRule):
         reported: set[tuple[str, str, str]] = set()
 
         for cap_comps, cap_layer, cap_is_bot, am_comps, am_layer, am_is_bot in layer_pairs:
-            ap_mems = _find_ap_memory(am_comps)
+            ap_mems = find_ap_memory(am_comps)
             caps = find_capacitors(cap_comps)
 
             if len(ap_mems) < 2 or not caps:

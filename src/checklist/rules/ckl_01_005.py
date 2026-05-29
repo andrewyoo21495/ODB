@@ -9,7 +9,7 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-from src.checklist.component_classifier import find_inductors
+from src.checklist.component_classifier import find_ap_memory, find_inductors
 from src.checklist.engine import register_rule
 from src.checklist.geometry_utils import (
     filter_by_size,
@@ -18,16 +18,10 @@ from src.checklist.geometry_utils import (
     get_component_orientation,
     is_on_edge,
 )
-from src.checklist.reference_loader import get_managed_part_names, get_part_size_map
+from src.checklist.reference_loader import get_part_size_map
 from src.checklist.rule_base import ChecklistRule
 from src.checklist.visualizers.overlap_viz import render_overlap_image
-from src.models import Component, RuleResult
-
-
-def _find_ap_memory(components: list[Component]) -> list[Component]:
-    """Return components whose part_name is listed in ap_memory.csv."""
-    ap_parts = get_managed_part_names("ap_memory")
-    return [c for c in components if (c.part_name or "") in ap_parts]
+from src.models import RuleResult
 
 
 @register_rule
@@ -58,8 +52,8 @@ class CKL01005(ChecklistRule):
         image_dir = Path(tempfile.mkdtemp(prefix="ckl_01_005_"))
 
         for ap_comps, ap_layer, opp_comps in [
-            (_find_ap_memory(components_top), "Top", components_bot),
-            (_find_ap_memory(components_bot), "Bottom", components_top),
+            (find_ap_memory(components_top), "Top", components_bot),
+            (find_ap_memory(components_bot), "Bottom", components_top),
         ]:
             opp_inductors = find_inductors(opp_comps)
             if not opp_inductors:

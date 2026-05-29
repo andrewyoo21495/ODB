@@ -214,6 +214,44 @@ def find_leds(components: Sequence[Component]) -> list[Component]:
     return [c for c in components if (c.comp_name or "").startswith("LED")]
 
 
+def find_ap_memory(
+    components: Sequence[Component],
+    ap_parts: set[str] | None = None,
+) -> list[Component]:
+    """Return AP/Memory components.
+
+    A component is AP/Memory when:
+      1. Its ``part_name`` exactly matches an entry in *ap_parts*, OR
+      2. An entry in *ap_parts* is a **substring** of ``part_name``
+         (e.g. reference ``"1105-003546"`` matches actual
+         ``"1105-003546_PBK_L6000"``), OR
+      3. Its ``comp_name`` starts with ``"UCP"`` (always AP/Memory).
+
+    *ap_parts* defaults to ``get_managed_part_names("ap_memory")`` when
+    not supplied, but callers that already loaded the set can pass it in
+    to avoid redundant CSV reads.
+    """
+    if ap_parts is None:
+        from src.checklist.reference_loader import (
+            get_managed_part_names,
+            matches_any_reference_part,
+        )
+        ap_parts = get_managed_part_names("ap_memory")
+    else:
+        from src.checklist.reference_loader import matches_any_reference_part
+
+    result: list[Component] = []
+    for c in components:
+        name = c.comp_name or ""
+        if name.startswith("UCP"):
+            result.append(c)
+            continue
+        pn = c.part_name or ""
+        if matches_any_reference_part(pn, ap_parts):
+            result.append(c)
+    return result
+
+
 # ---------------------------------------------------------------------------
 # BGA detection
 # ---------------------------------------------------------------------------

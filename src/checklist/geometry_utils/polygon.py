@@ -237,6 +237,42 @@ def get_component_outline(comp: Component, pkg: Package,
     return result
 
 
+def _build_outer_boundary_from_pins(comp: Component, pkg: Package,
+                                     *, is_bottom: bool = False):
+    """Build a boundary polygon from the outermost pins (concave hull).
+
+    Used as a fallback for containers (interposers, shield cans) when
+    ``pkg.outlines`` does not produce valid geometry.  The outer-border
+    pins are used to form a concave hull that approximates the physical
+    container boundary.
+    """
+    if not _HAS_SHAPELY or not pkg.pins:
+        return None
+
+    from .overlap import find_outermost_pin_indices
+
+    outermost = find_outermost_pin_indices(pkg.pins)
+    if len(outermost) < 3:
+        return None
+
+    from src.visualizer.component_overlay import transform_point
+    pts = []
+    for idx in outermost:
+        pin = pkg.pins[idx]
+        bx, by = transform_point(pin.center.x, pin.center.y, comp,
+                                 is_bottom=is_bottom)
+        pts.append((bx, by))
+
+    try:
+        from shapely.geometry import MultiPoint
+        hull = MultiPoint(pts).convex_hull
+        if hull.is_valid and not hull.is_empty and hull.geom_type == "Polygon":
+            return hull
+    except Exception:
+        pass
+    return None
+
+
 def get_container_interior(comp: Component, pkg: Package,
                            *, is_bottom: bool = False):
     """Build a filled interior polygon for a container component (SC/INP).
@@ -253,33 +289,40 @@ def get_container_interior(comp: Component, pkg: Package,
     2. Fill the outline (remove holes) so that containment checks treat the
        entire region enclosed by the outer boundary as interior.
 
-    Fallback: when ``pkg.outlines`` produces no valid geometry, fall back to
-    ``get_component_footprint`` (convex hull of pin pads / toeprints) so that
-    the container is not silently skipped.
+    Fallback chain (for both shield cans and interposers):
+      a. ``pkg.outlines`` → filled outer boundary
+      b. Outer-border pin concave hull (preserves shape for ring-like layouts)
+      c. ``get_component_footprint`` (convex hull of all pads / toeprints)
     """
     if not _HAS_SHAPELY:
         return None
 
     outline = get_component_outline(comp, pkg, is_bottom=is_bottom)
-    if outline is None:
-        return get_component_footprint(comp, pkg, is_bottom=is_bottom)
+    if outline is not None:
+        # Fill the outline by removing holes so that containment checks
+        # match the visible container frame boundary.
+        if hasattr(outline, "exterior"):
+            # Single Polygon — fill by using only the exterior ring.
+            return ShapelyPolygon(outline.exterior)
 
-    # Fill the outline by removing holes so that containment checks
-    # match the visible container frame boundary.
-    if hasattr(outline, "exterior"):
-        # Single Polygon — fill by using only the exterior ring.
-        return ShapelyPolygon(outline.exterior)
+        if hasattr(outline, "geoms"):
+            # MultiPolygon / GeometryCollection — fill each sub-polygon and union.
+            filled = []
+            for g in outline.geoms:
+                if hasattr(g, "exterior"):
+                    filled.append(ShapelyPolygon(g.exterior))
+            if filled:
+                return unary_union(filled)
 
-    if hasattr(outline, "geoms"):
-        # MultiPolygon / GeometryCollection — fill each sub-polygon and union.
-        filled = []
-        for g in outline.geoms:
-            if hasattr(g, "exterior"):
-                filled.append(ShapelyPolygon(g.exterior))
-        if filled:
-            return unary_union(filled)
+        return outline
 
-    return outline
+    # Fallback: build boundary from outermost pins (works for interposers
+    # that lack outline data but have a ring-shaped pin layout).
+    pin_hull = _build_outer_boundary_from_pins(comp, pkg, is_bottom=is_bottom)
+    if pin_hull is not None:
+        return pin_hull
+
+    return get_component_footprint(comp, pkg, is_bottom=is_bottom)
 
 
 def _resolve_container_interior(comp: Component, packages: list[Package],

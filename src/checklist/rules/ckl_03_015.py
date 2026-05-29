@@ -7,16 +7,29 @@ Components and routing must be placed with a clearance of at least
   within the clearance zone (component outline overlap is acceptable).
 - Signal layers: identifies nets with copper features encroaching on the
   clearance zone.  (Currently commented out for verification.)
+
+A result image is generated showing the board outline, the 0.65mm inset
+boundary, the clearance zone, and any violating component pads.
 """
 
 from __future__ import annotations
 
+import tempfile
+from pathlib import Path
+
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
+from matplotlib.patches import Polygon as MplPolygon
+import numpy as np
+
 from src.checklist.engine import register_rule
 from src.checklist.geometry_utils import (
+    _get_pad_union,
     build_board_polygon,
     build_inset_boundary,
     components_with_pads_in_clearance_zone,
-    # signal_features_in_clearance_zone,  # TODO: re-enable after verification
 )
 from src.checklist.rule_base import ChecklistRule
 from src.models import RuleResult
@@ -24,6 +37,116 @@ from src.models import RuleResult
 
 _CLEARANCE_MM = 0.65
 _EXCLUDED_PREFIXES = ("ANT", "CN", "TP")
+
+
+def _shapely_to_arrays(geom):
+    """Yield (xs, ys) arrays for each ring of a Shapely geometry."""
+    if geom is None or geom.is_empty:
+        return
+    if geom.geom_type == "Polygon":
+        xs, ys = geom.exterior.xy
+        yield np.array(xs), np.array(ys)
+        for interior in geom.interiors:
+            ixs, iys = interior.xy
+            yield np.array(ixs), np.array(iys)
+    elif geom.geom_type in ("MultiPolygon", "GeometryCollection"):
+        for part in geom.geoms:
+            yield from _shapely_to_arrays(part)
+
+
+def _render_clearance_overview(
+    board_poly,
+    inset_poly,
+    fail_comps,
+    packages,
+    output_path: Path,
+    *,
+    rule_id: str,
+    layer_name: str,
+    clearance_mm: float,
+    user_symbols: dict | None = None,
+) -> Path:
+    """Render a board-level clearance overview image."""
+    fig, ax = plt.subplots(1, 1, figsize=(12, 12))
+
+    n_fail = len(fail_comps)
+    status_str = "FAIL" if n_fail > 0 else "PASS"
+    ax.set_title(
+        f"{rule_id}: PCB Outline Clearance ({layer_name})\n"
+        f"Clearance = {clearance_mm} mm — "
+        f"{n_fail} violation(s)  [{status_str}]",
+        fontsize=12, fontweight="bold",
+    )
+    ax.set_aspect("equal")
+
+    # Board outline
+    for xs, ys in _shapely_to_arrays(board_poly):
+        ax.plot(xs, ys, color="royalblue", linewidth=1.5, zorder=2)
+
+    # Inset boundary (dashed)
+    for xs, ys in _shapely_to_arrays(inset_poly):
+        ax.plot(xs, ys, color="darkorange", linewidth=1.2,
+                linestyle="--", zorder=2)
+
+    # Clearance zone fill (between board outline and inset)
+    try:
+        clearance_zone = board_poly.difference(inset_poly)
+        for xs, ys in _shapely_to_arrays(clearance_zone):
+            verts = list(zip(xs, ys))
+            ax.add_patch(MplPolygon(
+                verts, closed=True,
+                facecolor="orange", edgecolor="none",
+                alpha=0.15, zorder=1,
+            ))
+    except Exception:
+        pass
+
+    # FAIL component pads (red)
+    for comp in fail_comps:
+        is_bottom = (layer_name == "Bottom")
+        pad_geom = _get_pad_union(comp, packages, is_bottom=is_bottom,
+                                  user_symbols=user_symbols)
+        if pad_geom is None:
+            continue
+        for xs, ys in _shapely_to_arrays(pad_geom):
+            verts = list(zip(xs, ys))
+            ax.add_patch(MplPolygon(
+                verts, closed=True,
+                facecolor="#FF6060", edgecolor="darkred",
+                alpha=0.6, linewidth=0.6, zorder=3,
+            ))
+        ax.annotate(
+            comp.comp_name, (comp.x, comp.y),
+            fontsize=5, color="darkred", ha="center", va="bottom",
+            zorder=4,
+        )
+
+    # Viewport from board polygon bounds
+    bx0, by0, bx1, by1 = board_poly.bounds
+    margin = max(bx1 - bx0, by1 - by0) * 0.05
+    ax.set_xlim(bx0 - margin, bx1 + margin)
+    ax.set_ylim(by0 - margin, by1 + margin)
+
+    # Legend
+    legend_elements = [
+        plt.Line2D([], [], color="royalblue", linewidth=1.5,
+                   label="Board outline"),
+        plt.Line2D([], [], color="darkorange", linewidth=1.2, linestyle="--",
+                   label=f"Inset boundary ({clearance_mm} mm)"),
+        mpatches.Patch(facecolor="orange", alpha=0.15,
+                       label="Clearance zone"),
+        mpatches.Patch(facecolor="#FF6060", edgecolor="darkred", alpha=0.6,
+                       label="Violating pads (FAIL)"),
+    ]
+    ax.legend(handles=legend_elements, loc="upper left", fontsize=8)
+    ax.set_xlabel("X (mm)")
+    ax.set_ylabel("Y (mm)")
+    ax.grid(True, alpha=0.2)
+
+    fig.tight_layout()
+    fig.savefig(str(output_path), dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    return output_path
 
 
 @register_rule
@@ -40,6 +163,7 @@ class CKL03015(ChecklistRule):
         profile = job_data.get("profile")
         eda = job_data.get("eda_data")
         packages = eda.packages if eda else []
+        user_symbols: dict = job_data.get("user_symbols") or {}
 
         board_poly = build_board_polygon(profile)
         if board_poly is None:
@@ -64,6 +188,8 @@ class CKL03015(ChecklistRule):
         # --- Part 1: Top / Bottom component pad clearance ------------------
         columns = ["comp", "part_name", "cmp_layer", "distance", "status"]
         rows: list[dict] = []
+        images: list[dict] = []
+        image_dir = Path(tempfile.mkdtemp(prefix="ckl_03_015_"))
 
         for comps, layer_name in [
             (components_top, "Top"),
@@ -72,6 +198,8 @@ class CKL03015(ChecklistRule):
             violations = components_with_pads_in_clearance_zone(
                 comps, board_poly, inset_poly, packages
             )
+            fail_comps_for_image = []
+
             for comp, dist in violations:
                 if comp.comp_name.startswith(_EXCLUDED_PREFIXES):
                     continue
@@ -83,15 +211,29 @@ class CKL03015(ChecklistRule):
                     "distance": f"{dist:.3f}",
                     "status": status,
                 })
+                if status == "FAIL":
+                    fail_comps_for_image.append(comp)
 
-        # --- Part 2: Signal layer copper clearance -------------------------
-        # TODO: re-enable after Top/Bottom pad clearance is verified
-        # signal_columns = [
-        #     "layer_name", "net_name", "feature_type", "distance", "status",
-        # ]
-        # signal_rows: list[dict] = signal_features_in_clearance_zone(
-        #     layers_data, board_poly, inset_poly, eda,
-        # )
+            # Generate overview image for this layer
+            if fail_comps_for_image:
+                img_path = image_dir / f"clearance_{layer_name.lower()}.png"
+                _render_clearance_overview(
+                    board_poly, inset_poly,
+                    fail_comps_for_image,
+                    packages, img_path,
+                    rule_id=self.rule_id,
+                    layer_name=layer_name,
+                    clearance_mm=_CLEARANCE_MM,
+                    user_symbols=user_symbols,
+                )
+                images.append({
+                    "path": img_path,
+                    "title": (
+                        f"{layer_name} — {len(fail_comps_for_image)} "
+                        f"violation(s) within {_CLEARANCE_MM}mm"
+                    ),
+                    "width": 700,
+                })
 
         # --- Aggregate results ---------------------------------------------
         comp_fail = sum(1 for r in rows if r["status"] == "FAIL")
@@ -117,4 +259,5 @@ class CKL03015(ChecklistRule):
                 "columns": columns,
                 "rows": [r for r in rows if r["status"] != "PASS"],
             },
+            images=images,
         )

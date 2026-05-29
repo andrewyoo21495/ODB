@@ -230,6 +230,105 @@ def find_outermost_pin_indices(pins: list[Pin]) -> set[int]:
     return outermost
 
 
+def find_border_pin_indices(pins: list[Pin]) -> set[int]:
+    """Return indices of pins on both outer AND inner borders.
+
+    Interposer components have a ring-shaped pad layout with an outer
+    border and an inner border (like a shield can).  This function
+    detects the outer-border pins (same as ``find_outermost_pin_indices``)
+    plus the inner-border pins that surround a central empty region.
+
+    For packages with <= 8 pins all pins are returned unconditionally.
+    """
+    if not pins:
+        return set()
+    if len(pins) <= 8:
+        return set(range(len(pins)))
+
+    # Start with outer border
+    border = find_outermost_pin_indices(pins)
+
+    centres = [(p.center.x, p.center.y) for p in pins]
+    xs = [c[0] for c in centres]
+    ys = [c[1] for c in centres]
+    x_min, x_max = min(xs), max(xs)
+    y_min, y_max = min(ys), max(ys)
+
+    if x_min == x_max and y_min == y_max:
+        return set(range(len(pins)))
+
+    # Detect inner empty region by finding interior pins and looking
+    # for a hole.  Interior = pins NOT on outer border.
+    interior_indices = [i for i in range(len(pins)) if i not in border]
+    if len(interior_indices) < 4:
+        return border
+
+    int_xs = [centres[i][0] for i in interior_indices]
+    int_ys = [centres[i][1] for i in interior_indices]
+    int_x_min, int_x_max = min(int_xs), max(int_xs)
+    int_y_min, int_y_max = min(int_ys), max(int_ys)
+
+    # Check for a central hole: if the centre of the interior region
+    # has no pins nearby, there's likely a hole.
+    cx_mid = (int_x_min + int_x_max) / 2
+    cy_mid = (int_y_min + int_y_max) / 2
+    span_x = int_x_max - int_x_min
+    span_y = int_y_max - int_y_min
+
+    if span_x < 0.1 or span_y < 0.1:
+        return border
+
+    # Bin the interior into a grid to find empty central region
+    n_bins = 10
+    bin_w = span_x / n_bins
+    bin_h = span_y / n_bins
+    grid: set[tuple[int, int]] = set()
+    for i in interior_indices:
+        gx = min(int((centres[i][0] - int_x_min) / bin_w), n_bins - 1)
+        gy = min(int((centres[i][1] - int_y_min) / bin_h), n_bins - 1)
+        grid.add((gx, gy))
+
+    # Check if central bins are empty (suggesting a hole)
+    central_empty = 0
+    central_total = 0
+    margin = max(1, n_bins // 4)
+    for gx in range(margin, n_bins - margin):
+        for gy in range(margin, n_bins - margin):
+            central_total += 1
+            if (gx, gy) not in grid:
+                central_empty += 1
+
+    if central_total == 0 or central_empty / central_total < 0.5:
+        # No significant hole detected — return outer border only
+        return border
+
+    # Hole detected — find inner-border pins.
+    # Inner border = interior pins on the edge of the empty hole.
+    # These are the interior pins whose grid neighbours include empty cells.
+    tol = max(bin_w, bin_h) * 1.5
+    inner_border: set[int] = set()
+    for i in interior_indices:
+        gx = min(int((centres[i][0] - int_x_min) / bin_w), n_bins - 1)
+        gy = min(int((centres[i][1] - int_y_min) / bin_h), n_bins - 1)
+        # Check if any adjacent cell is empty
+        has_empty_neighbour = False
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                if dx == 0 and dy == 0:
+                    continue
+                nx, ny = gx + dx, gy + dy
+                if 0 <= nx < n_bins and 0 <= ny < n_bins:
+                    if (nx, ny) not in grid:
+                        has_empty_neighbour = True
+                        break
+            if has_empty_neighbour:
+                break
+        if has_empty_neighbour:
+            inner_border.add(i)
+
+    return border | inner_border
+
+
 # ---------------------------------------------------------------------------
 # Symbol → Shapely geometry helpers
 # ---------------------------------------------------------------------------
@@ -629,6 +728,52 @@ def _get_outermost_pad_union(comp: Component, packages: list[Package],
     if not pad_polys:
         return None
 
+    return unary_union(pad_polys)
+
+
+def _get_pad_union_for_indices(
+    comp: Component,
+    pkg: Package,
+    pin_indices: set[int],
+    *,
+    is_bottom: bool = False,
+    user_symbols: dict | None = None,
+) -> "ShapelyPolygon | None":
+    """Build a Shapely union of pads for specific pin indices."""
+    if not _HAS_SHAPELY or not pkg.pins or not pin_indices:
+        return None
+
+    pad_polys = []
+    for pin_idx in pin_indices:
+        if pin_idx >= len(pkg.pins):
+            continue
+        pin = pkg.pins[pin_idx]
+        placed = False
+        for outline in pin.outlines:
+            verts = _outline_vertices(outline)
+            if not verts:
+                continue
+            board_verts = [
+                transform_point(v[0], v[1], comp, is_bottom=is_bottom)
+                for v in verts
+            ]
+            if len(board_verts) >= 3:
+                try:
+                    poly = ShapelyPolygon(board_verts)
+                    if poly.is_valid and not poly.is_empty:
+                        pad_polys.append(poly)
+                        placed = True
+                        break
+                except Exception:
+                    pass
+        if not placed:
+            bx, by = transform_point(
+                pin.center.x, pin.center.y, comp, is_bottom=is_bottom,
+            )
+            pad_polys.append(ShapelyPoint(bx, by).buffer(0.05))
+
+    if not pad_polys:
+        return None
     return unary_union(pad_polys)
 
 

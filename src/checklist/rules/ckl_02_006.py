@@ -4,11 +4,13 @@ Identify general capacitors (NOT in the 51 managed types) overlapping
 connectors or shield cans on the opposite side.  Check edge placement,
 orientation, and (for shield cans) diagonal-region placement.
 
-Connector criteria (PASS when ALL true):
-  - NOT on edge
-  - Horizontal orientation
+Connector criteria:
+  Step 1 — PAD-PAD overlap: edge + orientation check (PASS when NOT on edge
+           AND Horizontal).
+  Step 2 — No PAD-PAD overlap but cap PAD overlaps connector outline edge:
+           unconditional FAIL (outline edge contact).
 
-Shield Can criteria (PASS when ALL true):
+Shield Can criteria (PAD-PAD overlap only):
   - NOT on edge (corner/diagonal of the SC outline)
   - Horizontal orientation relative to the nearest SC wall
 """
@@ -88,14 +90,18 @@ class CKL02006(ChecklistRule):
             # ── Connector check ───────────────────────────────────────────────
             connectors = find_connectors(ref_comps)
             for conn in connectors:
-                overlaps = find_pad_vs_outline_overlapping_components(
+                # Step 1: PAD-PAD overlap
+                pad_overlaps = find_pad_overlapping_components(
                     conn, opp_general_caps, packages,
                     is_bottom_primary=ref_is_bottom,
                     is_bottom_candidates=opp_is_bottom,
                     user_symbols=user_symbols,
                 )
+                pad_overlap_ids = {id(c) for c in pad_overlaps}
+
                 overlap_items: list[dict] = []
-                for cap in overlaps:
+
+                for cap in pad_overlaps:
                     on_edge = is_on_edge(cap, conn, packages)
                     orientation = get_pair_orientation(cap, conn, packages)
                     edge_str = "TRUE" if on_edge else "FALSE"
@@ -122,6 +128,35 @@ class CKL02006(ChecklistRule):
                         "comp": cap, "status": status,
                         "detail": ", ".join(detail_parts),
                     })
+
+                # Step 2: caps without PAD-PAD overlap — check PAD vs outline edge
+                remaining_caps = [
+                    c for c in opp_general_caps if id(c) not in pad_overlap_ids
+                ]
+                if remaining_caps:
+                    outline_overlaps = find_pad_vs_outline_overlapping_components(
+                        conn, remaining_caps, packages,
+                        is_bottom_primary=ref_is_bottom,
+                        is_bottom_candidates=opp_is_bottom,
+                        user_symbols=user_symbols,
+                    )
+                    for cap in outline_overlaps:
+                        status = "FAIL"
+                        rows.append({
+                            "comp": conn.comp_name,
+                            "comp_type": "Connector",
+                            "cmp_layer": ref_layer,
+                            "overlapping_cap": cap.comp_name,
+                            "part_name": cap.part_name or "",
+                            "edge": "OUTLINE_EDGE",
+                            "hori/verti": "N/A",
+                            "diagonal": "N/A",
+                            "status": status,
+                        })
+                        overlap_items.append({
+                            "comp": cap, "status": status,
+                            "detail": "Outline edge contact",
+                        })
 
                 if overlap_items and any(i["status"] == "FAIL" for i in overlap_items):
                     safe = conn.comp_name.replace("/", "_")
