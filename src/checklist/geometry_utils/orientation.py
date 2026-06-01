@@ -158,3 +158,87 @@ def are_components_aligned(comp_a: Component, comp_b: Component,
     if orient_a in ("Unknown", "Square") or orient_b in ("Unknown", "Square"):
         return True
     return orient_a == orient_b
+
+
+def get_short_edge_angle(comp: Component,
+                         packages: list[Package]) -> Optional[float]:
+    """Return the direction angle of *comp*'s outline short edge, in degrees [0, 180).
+
+    For a rectangular outline the short edge is the shorter side.
+    Returns None if the outline is unavailable, has fewer than 4 vertices,
+    or all edges have equal length (square).
+    """
+    if comp.pkg_ref < 0 or comp.pkg_ref >= len(packages):
+        return None
+
+    pkg = packages[comp.pkg_ref]
+    outline_poly = get_component_outline(comp, pkg)
+    if outline_poly is None:
+        return None
+
+    coords: list[tuple[float, float]] = []
+    if hasattr(outline_poly, "geoms"):
+        for g in outline_poly.geoms:
+            if hasattr(g, "exterior"):
+                coords = list(g.exterior.coords[:-1])
+                break
+    elif hasattr(outline_poly, "exterior"):
+        coords = list(outline_poly.exterior.coords[:-1])
+
+    if len(coords) < 4:
+        return None
+
+    # Build edges with their lengths
+    edges: list[tuple[float, float, float]] = []
+    n = len(coords)
+    for i in range(n):
+        p1 = coords[i]
+        p2 = coords[(i + 1) % n]
+        dx = p2[0] - p1[0]
+        dy = p2[1] - p1[1]
+        length = math.hypot(dx, dy)
+        edges.append((dx, dy, length))
+
+    if not edges:
+        return None
+
+    edges_sorted = sorted(edges, key=lambda e: e[2])
+    shortest = edges_sorted[0][2]
+    longest = edges_sorted[-1][2]
+
+    # If near-square, no distinct short edge
+    if longest > 0 and shortest / longest > 0.95:
+        return None
+
+    # Pick the shortest edge and compute its angle
+    dx, dy, _ = edges_sorted[0]
+    angle = math.degrees(math.atan2(dy, dx)) % 180.0
+    return angle
+
+
+def get_pair_orientation_vs_edge(comp_a: Component, comp_b: Component,
+                                 packages: list[Package],
+                                 edge_angle: Optional[float] = None) -> str:
+    """Determine alignment of *comp_a* relative to *edge_angle*.
+
+    When *edge_angle* is provided (from ``get_short_edge_angle``), the
+    function compares *comp_a*'s major axis against the edge direction:
+      - "Horizontal" → comp_a is parallel to the edge
+      - "Vertical"   → comp_a is perpendicular to the edge
+
+    Falls back to ``get_pair_orientation`` when *edge_angle* is None.
+    """
+    if edge_angle is None:
+        return get_pair_orientation(comp_a, comp_b, packages)
+
+    angle_a = get_major_axis_angle(comp_a, packages)
+    if angle_a is None:
+        return "Unknown"
+
+    diff = abs(angle_a - edge_angle) % 180.0
+    if diff > 90.0:
+        diff = 180.0 - diff
+
+    if diff < 45.0:
+        return "Horizontal"
+    return "Vertical"

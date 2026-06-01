@@ -112,9 +112,16 @@ class CKL01003(ChecklistRule):
                         continue
 
                     # Step 3: PAD overlap exists — check containment
-                    # FULL = PMIC pads are completely inside the opposite
-                    # IC's area (either its footprint or its pad union).
+                    # FULL (PASS) when either side completely contains the
+                    # other:
+                    #   A) PMIC pads are fully inside the opp IC, OR
+                    #   B) Opp IC pads are fully inside the PMIC outline
+                    #      (opp IC is small enough to sit entirely within
+                    #       the PMIC).
                     pmic_pads = _get_pad_union(
+                        pmic, packages, is_bottom=pmic_is_bottom,
+                    )
+                    pmic_fp = _resolve_footprint(
                         pmic, packages, is_bottom=pmic_is_bottom,
                     )
                     opp_fp = _resolve_footprint(
@@ -125,10 +132,17 @@ class CKL01003(ChecklistRule):
                     )
 
                     fully_contained = False
+                    # A) PMIC inside opp IC
                     if pmic_pads is not None:
                         if opp_fp is not None and opp_fp.contains(pmic_pads):
                             fully_contained = True
                         elif opp_pads is not None and opp_pads.contains(pmic_pads):
+                            fully_contained = True
+                    # B) Opp IC inside PMIC
+                    if not fully_contained and opp_pads is not None:
+                        if pmic_fp is not None and pmic_fp.contains(opp_pads):
+                            fully_contained = True
+                        elif pmic_pads is not None and pmic_pads.contains(opp_pads):
                             fully_contained = True
 
                     if fully_contained:

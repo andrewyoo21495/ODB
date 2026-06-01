@@ -32,6 +32,10 @@ from src.checklist.geometry_utils import (
     is_on_corner_or_diagonal,
     is_on_edge,
 )
+from src.checklist.geometry_utils.orientation import (
+    get_pair_orientation_vs_edge,
+    get_short_edge_angle,
+)
 from src.checklist.reference_loader import get_managed_part_names
 from src.checklist.rule_base import ChecklistRule
 from src.checklist.visualizers.overlap_viz import render_overlap_image
@@ -101,9 +105,18 @@ class CKL02006(ChecklistRule):
 
                 overlap_items: list[dict] = []
 
+                # Pre-compute connector short-edge angle for orientation
+                conn_short_angle = get_short_edge_angle(conn, packages)
+
                 for cap in pad_overlaps:
                     on_edge = is_on_edge(cap, conn, packages)
-                    orientation = get_pair_orientation(cap, conn, packages)
+                    if on_edge and conn_short_angle is not None:
+                        orientation = get_pair_orientation_vs_edge(
+                            cap, conn, packages,
+                            edge_angle=conn_short_angle,
+                        )
+                    else:
+                        orientation = get_pair_orientation(cap, conn, packages)
                     edge_str = "TRUE" if on_edge else "FALSE"
                     status = (
                         "PASS"
