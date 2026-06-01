@@ -1,8 +1,16 @@
 """CKL-02-002: Managed capacitors (41 types) vs connectors — alignment check.
 
 Verify placement between specific capacitor components (41 managed types)
-and connector components.  Managed capacitors overlapping on the opposite
-side of a connector must be aligned horizontally.
+and connector components on the opposite side.
+
+Decision logic for each capacitor:
+  1. No overlap with connector outline AND no PAD-PAD overlap → PASS
+  2. No outline overlap but PAD-PAD overlap (cap inside connector) →
+     check hori/verti vs connector; Horizontal → PASS, Vertical → FAIL
+  3. Outline overlap + PAD-PAD overlap → check hori/verti vs the nearest
+     outline edge; Vertical → FAIL.  Also FAIL if on connector's short edge.
+  4. Outline overlap but no PAD-PAD overlap → cap is on the connector
+     boundary; check if on short edge → FAIL.
 """
 
 from __future__ import annotations
@@ -13,19 +21,33 @@ from pathlib import Path
 from src.checklist.component_classifier import find_connectors
 from src.checklist.engine import register_rule
 from src.checklist.geometry_utils import (
-    find_components_inside_outline,
     find_pad_overlapping_components,
     get_pair_orientation,
-    is_on_edge,
+    does_pad_overlap_outline,
+    get_nearest_outline_edge_angle,
+    is_on_outline_edge,
 )
 from src.checklist.geometry_utils.orientation import (
+    get_major_axis_angle,
     get_pair_orientation_vs_edge,
-    get_short_edge_angle,
 )
 from src.checklist.reference_loader import get_managed_part_names
 from src.checklist.rule_base import ChecklistRule
 from src.checklist.visualizers.overlap_viz import render_overlap_image
 from src.models import RuleResult
+
+
+def _orientation_vs_edge(cap, conn, packages, cap_is_bottom, conn_is_bottom):
+    """Determine cap orientation relative to the nearest connector outline edge."""
+    edge_angle = get_nearest_outline_edge_angle(
+        cap, conn, packages,
+        is_bottom_a=cap_is_bottom, is_bottom_b=conn_is_bottom,
+    )
+    if edge_angle is not None:
+        return get_pair_orientation_vs_edge(
+            cap, conn, packages, edge_angle=edge_angle,
+        )
+    return get_pair_orientation(cap, conn, packages)
 
 
 @register_rule
@@ -48,7 +70,7 @@ class CKL02002(ChecklistRule):
 
         columns = [
             "overlapping_cap", "part_name", "comp", "cmp_layer",
-            "edge", "hori/verti", "status",
+            "outline_overlap", "pad_overlap", "edge", "hori/verti", "status",
         ]
         rows: list[dict] = []
         images: list[dict] = []
@@ -62,7 +84,6 @@ class CKL02002(ChecklistRule):
             cap_is_bottom = not conn_is_bottom
 
             connectors = find_connectors(conn_comps)
-            # Filter opposite-side capacitors to managed 41 types
             opp_managed_caps = [
                 c for c in opp_comps
                 if (c.part_name or "") in managed_41
@@ -71,78 +92,93 @@ class CKL02002(ChecklistRule):
                 continue
 
             for conn in connectors:
-                overlaps = find_pad_overlapping_components(
+                # Find caps with PAD-PAD overlap
+                pad_overlaps = find_pad_overlapping_components(
                     conn, opp_managed_caps, packages,
                     is_bottom_primary=conn_is_bottom,
                     is_bottom_candidates=cap_is_bottom,
                     user_symbols=user_symbols,
                 )
-                # Caps inside connector outline but not pad-overlapping
-                inside_caps = find_components_inside_outline(
-                    conn, opp_managed_caps, packages,
-                    is_bottom=conn_is_bottom,
-                )
-                inside_only = [
-                    c for c in inside_caps
-                    if c not in overlaps
-                ]
+                pad_overlap_ids = {id(c) for c in pad_overlaps}
 
                 overlap_items: list[dict] = []
 
-                # Pre-compute connector short-edge angle for orientation
-                conn_short_angle = get_short_edge_angle(conn, packages)
-
-                for cap in overlaps:
-                    on_edge = is_on_edge(cap, conn, packages)
-                    if on_edge and conn_short_angle is not None:
-                        # When on the short edge, judge hori/verti
-                        # relative to that edge direction
-                        orientation = get_pair_orientation_vs_edge(
-                            cap, conn, packages,
-                            edge_angle=conn_short_angle,
-                        )
-                    else:
-                        orientation = get_pair_orientation(cap, conn, packages)
-                    edge_str = "TRUE" if on_edge else "FALSE"
-                    status = (
-                        "PASS"
-                        if (not on_edge and orientation == "Horizontal")
-                        else "FAIL"
+                for cap in opp_managed_caps:
+                    has_pad_overlap = id(cap) in pad_overlap_ids
+                    has_outline_overlap = does_pad_overlap_outline(
+                        cap, conn, packages,
+                        is_bottom_a=cap_is_bottom,
+                        is_bottom_b=conn_is_bottom,
+                        user_symbols=user_symbols,
                     )
+
+                    if not has_outline_overlap and not has_pad_overlap:
+                        # Case 1: no overlap at all → PASS (skip)
+                        continue
+
+                    if not has_outline_overlap and has_pad_overlap:
+                        # Case 2: inside connector, no outline contact
+                        orientation = get_pair_orientation(
+                            cap, conn, packages)
+                        status = ("PASS" if orientation == "Horizontal"
+                                  else "FAIL")
+                        edge_str = "FALSE"
+                    elif has_outline_overlap and has_pad_overlap:
+                        # Case 3: overlaps outline AND pad
+                        on_edge = is_on_outline_edge(
+                            cap, conn, packages,
+                            is_bottom_a=cap_is_bottom,
+                            is_bottom_b=conn_is_bottom,
+                        )
+                        orientation = _orientation_vs_edge(
+                            cap, conn, packages,
+                            cap_is_bottom, conn_is_bottom,
+                        )
+                        edge_str = "TRUE" if on_edge else "FALSE"
+                        if on_edge:
+                            status = "FAIL"
+                        elif orientation == "Vertical":
+                            status = "FAIL"
+                        else:
+                            status = "PASS"
+                    else:
+                        # Case 4: outline overlap but no pad overlap
+                        # → cap sits on connector boundary
+                        on_edge = is_on_outline_edge(
+                            cap, conn, packages,
+                            is_bottom_a=cap_is_bottom,
+                            is_bottom_b=conn_is_bottom,
+                        )
+                        orientation = _orientation_vs_edge(
+                            cap, conn, packages,
+                            cap_is_bottom, conn_is_bottom,
+                        )
+                        edge_str = "TRUE" if on_edge else "FALSE"
+                        if on_edge:
+                            status = "FAIL"
+                        elif orientation == "Vertical":
+                            status = "FAIL"
+                        else:
+                            status = "PASS"
+
                     rows.append({
                         "comp": conn.comp_name,
                         "cmp_layer": conn_layer,
                         "overlapping_cap": cap.comp_name,
                         "part_name": cap.part_name or "",
+                        "outline_overlap": "TRUE" if has_outline_overlap else "FALSE",
+                        "pad_overlap": "TRUE" if has_pad_overlap else "FALSE",
                         "edge": edge_str,
                         "hori/verti": orientation,
                         "status": status,
                     })
                     detail_parts = [orientation]
-                    if on_edge:
+                    if edge_str == "TRUE":
                         detail_parts.append("Edge")
                     overlap_items.append({
                         "comp": cap,
                         "status": status,
                         "detail": ", ".join(detail_parts),
-                    })
-
-                for cap in inside_only:
-                    orientation = get_pair_orientation(cap, conn, packages)
-                    status = "FAIL" if orientation == "Vertical" else "PASS"
-                    rows.append({
-                        "comp": conn.comp_name,
-                        "cmp_layer": conn_layer,
-                        "overlapping_cap": cap.comp_name,
-                        "part_name": cap.part_name or "",
-                        "edge": "FALSE",
-                        "hori/verti": orientation,
-                        "status": status,
-                    })
-                    overlap_items.append({
-                        "comp": cap,
-                        "status": status,
-                        "detail": orientation,
                     })
 
                 # Generate visualisation image for this connector

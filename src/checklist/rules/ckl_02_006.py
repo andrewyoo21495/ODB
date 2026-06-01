@@ -29,12 +29,13 @@ from src.checklist.geometry_utils import (
     find_pad_vs_outline_overlapping_components,
     get_orientation_relative_to_shield_can,
     get_pair_orientation,
+    get_nearest_outline_edge_angle,
     is_on_corner_or_diagonal,
-    is_on_edge,
+    is_on_outline_edge,
+    does_pad_overlap_outline,
 )
 from src.checklist.geometry_utils.orientation import (
     get_pair_orientation_vs_edge,
-    get_short_edge_angle,
 )
 from src.checklist.reference_loader import get_managed_part_names
 from src.checklist.rule_base import ChecklistRule
@@ -94,7 +95,6 @@ class CKL02006(ChecklistRule):
             # ── Connector check ───────────────────────────────────────────────
             connectors = find_connectors(ref_comps)
             for conn in connectors:
-                # Step 1: PAD-PAD overlap
                 pad_overlaps = find_pad_overlapping_components(
                     conn, opp_general_caps, packages,
                     is_bottom_primary=ref_is_bottom,
@@ -105,24 +105,64 @@ class CKL02006(ChecklistRule):
 
                 overlap_items: list[dict] = []
 
-                # Pre-compute connector short-edge angle for orientation
-                conn_short_angle = get_short_edge_angle(conn, packages)
-
-                for cap in pad_overlaps:
-                    on_edge = is_on_edge(cap, conn, packages)
-                    if on_edge and conn_short_angle is not None:
-                        orientation = get_pair_orientation_vs_edge(
-                            cap, conn, packages,
-                            edge_angle=conn_short_angle,
-                        )
-                    else:
-                        orientation = get_pair_orientation(cap, conn, packages)
-                    edge_str = "TRUE" if on_edge else "FALSE"
-                    status = (
-                        "PASS"
-                        if (not on_edge and orientation == "Horizontal")
-                        else "FAIL"
+                for cap in opp_general_caps:
+                    has_pad_overlap = id(cap) in pad_overlap_ids
+                    has_outline_overlap = does_pad_overlap_outline(
+                        cap, conn, packages,
+                        is_bottom_a=opp_is_bottom,
+                        is_bottom_b=ref_is_bottom,
+                        user_symbols=user_symbols,
                     )
+
+                    if not has_outline_overlap and not has_pad_overlap:
+                        continue
+
+                    def _orient_vs_edge():
+                        ea = get_nearest_outline_edge_angle(
+                            cap, conn, packages,
+                            is_bottom_a=opp_is_bottom,
+                            is_bottom_b=ref_is_bottom,
+                        )
+                        if ea is not None:
+                            return get_pair_orientation_vs_edge(
+                                cap, conn, packages, edge_angle=ea)
+                        return get_pair_orientation(cap, conn, packages)
+
+                    if not has_outline_overlap and has_pad_overlap:
+                        orientation = get_pair_orientation(
+                            cap, conn, packages)
+                        status = ("PASS" if orientation == "Horizontal"
+                                  else "FAIL")
+                        edge_str = "FALSE"
+                    elif has_outline_overlap and has_pad_overlap:
+                        on_edge = is_on_outline_edge(
+                            cap, conn, packages,
+                            is_bottom_a=opp_is_bottom,
+                            is_bottom_b=ref_is_bottom,
+                        )
+                        orientation = _orient_vs_edge()
+                        edge_str = "TRUE" if on_edge else "FALSE"
+                        if on_edge:
+                            status = "FAIL"
+                        elif orientation == "Vertical":
+                            status = "FAIL"
+                        else:
+                            status = "PASS"
+                    else:
+                        on_edge = is_on_outline_edge(
+                            cap, conn, packages,
+                            is_bottom_a=opp_is_bottom,
+                            is_bottom_b=ref_is_bottom,
+                        )
+                        orientation = _orient_vs_edge()
+                        edge_str = "TRUE" if on_edge else "FALSE"
+                        if on_edge:
+                            status = "FAIL"
+                        elif orientation == "Vertical":
+                            status = "FAIL"
+                        else:
+                            status = "PASS"
+
                     rows.append({
                         "comp": conn.comp_name,
                         "comp_type": "Connector",
@@ -135,41 +175,12 @@ class CKL02006(ChecklistRule):
                         "status": status,
                     })
                     detail_parts = [orientation]
-                    if on_edge:
+                    if edge_str == "TRUE":
                         detail_parts.append("Edge")
                     overlap_items.append({
                         "comp": cap, "status": status,
                         "detail": ", ".join(detail_parts),
                     })
-
-                # Step 2: caps without PAD-PAD overlap — check PAD vs outline edge
-                remaining_caps = [
-                    c for c in opp_general_caps if id(c) not in pad_overlap_ids
-                ]
-                if remaining_caps:
-                    outline_overlaps = find_pad_vs_outline_overlapping_components(
-                        conn, remaining_caps, packages,
-                        is_bottom_primary=ref_is_bottom,
-                        is_bottom_candidates=opp_is_bottom,
-                        user_symbols=user_symbols,
-                    )
-                    for cap in outline_overlaps:
-                        status = "FAIL"
-                        rows.append({
-                            "comp": conn.comp_name,
-                            "comp_type": "Connector",
-                            "cmp_layer": ref_layer,
-                            "overlapping_cap": cap.comp_name,
-                            "part_name": cap.part_name or "",
-                            "edge": "OUTLINE_EDGE",
-                            "hori/verti": "N/A",
-                            "diagonal": "N/A",
-                            "status": status,
-                        })
-                        overlap_items.append({
-                            "comp": cap, "status": status,
-                            "detail": "Outline edge contact",
-                        })
 
                 if overlap_items and any(i["status"] == "FAIL" for i in overlap_items):
                     safe = conn.comp_name.replace("/", "_")

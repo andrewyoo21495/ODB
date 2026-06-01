@@ -19,6 +19,9 @@ from .polygon import (
     get_component_outline,
     get_container_interior,
     is_on_edge,
+    get_nearest_outline_edge_angle,
+    is_on_outline_edge,
+    does_pad_overlap_outline,
 )
 
 from .orientation import (

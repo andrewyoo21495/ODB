@@ -575,3 +575,189 @@ def is_on_edge(comp_a: Component, comp_b: Component,
                 return True
 
     return False
+
+
+# ---------------------------------------------------------------------------
+# Nearest outline edge detection for capacitor–connector checks
+# ---------------------------------------------------------------------------
+
+def get_nearest_outline_edge_angle(
+    comp_a: Component,
+    comp_b: Component,
+    packages: list[Package],
+    *,
+    is_bottom_a: bool = False,
+    is_bottom_b: bool = False,
+) -> Optional[float]:
+    """Return the angle of the *comp_b* outline edge nearest to *comp_a*.
+
+    Finds the outline segment of *comp_b* that is closest to the centroid
+    of *comp_a*'s pads.  Returns the direction angle of that segment in
+    degrees [0, 180), or None if geometry is unavailable.
+
+    This is used to determine whether a capacitor is placed "horizontally"
+    or "vertically" **relative to the connector outline edge it overlaps**.
+    """
+    if not _HAS_SHAPELY:
+        return None
+
+    pad_centers_a = _get_pad_centers(comp_a, packages, is_bottom=is_bottom_a)
+    outline_b = _resolve_outline(comp_b, packages, is_bottom=is_bottom_b)
+
+    if not pad_centers_a or outline_b is None:
+        return None
+
+    # Centroid of comp_a pads
+    ax = sum(p[0] for p in pad_centers_a) / len(pad_centers_a)
+    ay = sum(p[1] for p in pad_centers_a) / len(pad_centers_a)
+    a_pt = ShapelyPoint(ax, ay)
+
+    # Extract outline segments
+    coords: list[tuple[float, float]] = []
+    if hasattr(outline_b, "geoms"):
+        for g in outline_b.geoms:
+            if hasattr(g, "exterior"):
+                coords = list(g.exterior.coords[:-1])
+                break
+    elif hasattr(outline_b, "exterior"):
+        coords = list(outline_b.exterior.coords[:-1])
+
+    if len(coords) < 3:
+        return None
+
+    from shapely.geometry import LineString as _LS
+
+    # Find the nearest segment
+    best_dist = float("inf")
+    best_angle: Optional[float] = None
+    n = len(coords)
+    for i in range(n):
+        p1 = coords[i]
+        p2 = coords[(i + 1) % n]
+        seg = _LS([p1, p2])
+        d = seg.distance(a_pt)
+        if d < best_dist:
+            best_dist = d
+            dx = p2[0] - p1[0]
+            dy = p2[1] - p1[1]
+            if math.hypot(dx, dy) > 1e-9:
+                best_angle = math.degrees(math.atan2(dy, dx)) % 180.0
+
+    return best_angle
+
+
+def is_on_outline_edge(
+    comp_a: Component,
+    comp_b: Component,
+    packages: list[Package],
+    *,
+    is_bottom_a: bool = False,
+    is_bottom_b: bool = False,
+    tolerance: float = 0.254,
+) -> bool:
+    """Return True if *comp_a*'s body or pads are near a short-edge of *comp_b*.
+
+    "Edge" means the two shorter sides of a rectangular outline.
+    Returns True if comp_a's body outline (or pad geometry) intersects the
+    tolerance zone around any short-side segment of comp_b.
+    """
+    if not _HAS_SHAPELY:
+        return False
+
+    from .overlap import _get_pad_union
+
+    outline_b = _resolve_outline(comp_b, packages, is_bottom=is_bottom_b)
+    if outline_b is None:
+        return False
+
+    # Build comp_a geometry: body outline preferred, then pad convex hull
+    body_a = _resolve_outline(comp_a, packages, is_bottom=is_bottom_a)
+    if body_a is None:
+        pad_a = _get_pad_union(comp_a, packages, is_bottom=is_bottom_a)
+        if pad_a is not None:
+            body_a = pad_a.convex_hull
+    if body_a is None:
+        return False
+
+    coords: list[tuple[float, float]] = []
+    if hasattr(outline_b, "geoms"):
+        for g in outline_b.geoms:
+            if hasattr(g, "exterior"):
+                coords = list(g.exterior.coords[:-1])
+                break
+    elif hasattr(outline_b, "exterior"):
+        coords = list(outline_b.exterior.coords[:-1])
+
+    if len(coords) < 4:
+        return False
+
+    n = len(coords)
+    edges: list[tuple[tuple[float, float], tuple[float, float], float]] = []
+    for i in range(n):
+        p1 = coords[i]
+        p2 = coords[(i + 1) % n]
+        length = math.sqrt((p2[0] - p1[0]) ** 2 + (p2[1] - p1[1]) ** 2)
+        edges.append((p1, p2, length))
+
+    edges_sorted = sorted(edges, key=lambda e: e[2])
+    shortest = edges_sorted[0][2]
+    longest = edges_sorted[-1][2]
+
+    if longest > 0 and shortest / longest > 0.95:
+        # Near-square: all edges are "short"
+        short_segments = [(p1, p2) for p1, p2, _ in edges]
+    else:
+        len_threshold = shortest * 1.3
+        short_segments = [(p1, p2) for p1, p2, length in edges
+                          if length <= len_threshold]
+
+    if not short_segments:
+        return False
+
+    from shapely.geometry import LineString as _LS
+
+    for p1, p2 in short_segments:
+        seg = _LS([p1, p2])
+        edge_zone = seg.buffer(tolerance)
+        if body_a.intersects(edge_zone):
+            return True
+
+    return False
+
+
+def does_pad_overlap_outline(
+    comp_a: Component,
+    comp_b: Component,
+    packages: list[Package],
+    *,
+    is_bottom_a: bool = False,
+    is_bottom_b: bool = False,
+    user_symbols: dict | None = None,
+) -> bool:
+    """Return True if *comp_a*'s body crosses *comp_b*'s outline boundary.
+
+    Primary check uses comp_a's component outline (body).  If unavailable,
+    falls back to the convex hull of comp_a's pads.  This ensures that the
+    gap between two pads (e.g. a vertical cap on a horizontal edge) does not
+    cause a false negative.
+    """
+    if not _HAS_SHAPELY:
+        return False
+
+    from .overlap import _get_pad_union
+
+    # comp_a body outline (preferred — spans the full component)
+    body_a = _resolve_outline(comp_a, packages, is_bottom=is_bottom_a)
+    if body_a is None:
+        # Fallback: convex hull of pad geometry (fills inter-pad gap)
+        pad_a = _get_pad_union(comp_a, packages, is_bottom=is_bottom_a,
+                               user_symbols=user_symbols)
+        if pad_a is not None:
+            body_a = pad_a.convex_hull
+
+    outline_b = _resolve_outline(comp_b, packages, is_bottom=is_bottom_b)
+
+    if body_a is None or outline_b is None:
+        return False
+
+    return body_a.intersects(outline_b.boundary)
