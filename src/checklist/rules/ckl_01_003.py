@@ -1,8 +1,10 @@
 """CKL-01-003: QUALCOMM PMIC opposite-side component containment check.
 
 QUALCOMM PMICs must be placed such that IC components on the opposite side
-do NOT overlap with the PMIC's component outline.  Any opposite-side
-IC whose footprint intersects the PMIC outline is flagged FAIL.
+satisfy one of:
+  - No PAD-PAD overlap with the PMIC → PASS
+  - PMIC pads are completely contained within the opposite-side IC → PASS
+  - PMIC pads only partially overlap the opposite-side IC → FAIL
 """
 
 from __future__ import annotations
@@ -12,7 +14,12 @@ from pathlib import Path
 
 from src.checklist.component_classifier import find_ics
 from src.checklist.engine import register_rule
-from src.checklist.geometry_utils import find_outline_overlapping_components
+from src.checklist.geometry_utils import (
+    find_outline_overlapping_components,
+    find_pad_overlapping_components,
+)
+from src.checklist.geometry_utils.overlap import _get_pad_union
+from src.checklist.geometry_utils.polygon import _resolve_footprint
 from src.checklist.reference_loader import load_reference_csv
 from src.checklist.rule_base import ChecklistRule
 from src.checklist.visualizers.overlap_viz import render_overlap_image
@@ -46,7 +53,10 @@ class CKL01003(ChecklistRule):
 
         qualcomm_parts = _get_qualcomm_pmic_part_names()
 
-        columns = ["comp", "cmp_layer", "overlapping_cmp", "outline", "status"]
+        columns = [
+            "comp", "cmp_layer", "overlapping_cmp",
+            "pad_overlap", "containment", "status",
+        ]
         rows: list[dict] = []
         images: list[dict] = []
         image_dir = Path(tempfile.mkdtemp(prefix="ckl_01_003_"))
@@ -70,6 +80,7 @@ class CKL01003(ChecklistRule):
                 pmic_is_bottom = (layer_name == "Bottom")
                 opp_is_bottom = not pmic_is_bottom
 
+                # Step 1: find ICs whose outline overlaps with PMIC
                 hit_comps = find_outline_overlapping_components(
                     pmic, opp_ics, packages,
                     is_bottom_primary=pmic_is_bottom,
@@ -78,23 +89,69 @@ class CKL01003(ChecklistRule):
 
                 overlap_items: list[dict] = []
                 for opp in hit_comps:
+                    # Step 2: check PAD-PAD overlap
+                    pad_hits = find_pad_overlapping_components(
+                        pmic, [opp], packages,
+                        is_bottom_primary=pmic_is_bottom,
+                        is_bottom_candidates=opp_is_bottom,
+                    )
+                    if not pad_hits:
+                        # No PAD overlap → PASS
+                        rows.append({
+                            "comp": pmic.comp_name,
+                            "cmp_layer": layer_name,
+                            "overlapping_cmp": opp.comp_name,
+                            "pad_overlap": "FALSE",
+                            "containment": "N/A",
+                            "status": "PASS",
+                        })
+                        overlap_items.append({
+                            "comp": opp, "status": "PASS",
+                            "detail": "No pad overlap",
+                        })
+                        continue
+
+                    # Step 3: PAD overlap exists — check containment
+                    # Get PMIC pad union and opposite IC footprint
+                    pmic_pads = _get_pad_union(
+                        pmic, packages, is_bottom=pmic_is_bottom,
+                    )
+                    opp_fp = _resolve_footprint(
+                        opp, packages, is_bottom=opp_is_bottom,
+                    )
+
+                    if pmic_pads is not None and opp_fp is not None:
+                        fully_contained = opp_fp.contains(pmic_pads)
+                    else:
+                        fully_contained = False
+
+                    if fully_contained:
+                        status = "PASS"
+                        containment = "FULL"
+                    else:
+                        status = "FAIL"
+                        containment = "PARTIAL"
+
                     rows.append({
                         "comp": pmic.comp_name,
                         "cmp_layer": layer_name,
                         "overlapping_cmp": opp.comp_name,
-                        "outline": "TRUE",
-                        "status": "FAIL",
+                        "pad_overlap": "TRUE",
+                        "containment": containment,
+                        "status": status,
                     })
                     overlap_items.append({
-                        "comp": opp, "status": "FAIL",
+                        "comp": opp, "status": status,
+                        "detail": containment,
                     })
 
-                if not overlap_items:
+                if not hit_comps:
                     rows.append({
                         "comp": pmic.comp_name,
                         "cmp_layer": layer_name,
                         "overlapping_cmp": "-",
-                        "outline": "FALSE",
+                        "pad_overlap": "FALSE",
+                        "containment": "N/A",
                         "status": "PASS",
                     })
 

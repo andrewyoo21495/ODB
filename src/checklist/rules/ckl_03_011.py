@@ -8,6 +8,9 @@ from the main board body.
 
 from __future__ import annotations
 
+import tempfile
+from pathlib import Path
+
 from shapely.geometry import Point as ShapelyPoint
 
 from src.checklist.component_classifier import find_oscillators
@@ -17,6 +20,7 @@ from src.checklist.geometry_utils import (
     find_bending_vulnerable_areas,
 )
 from src.checklist.rule_base import ChecklistRule
+from src.checklist.visualizers.bending_viz import render_bending_image
 from src.models import Component, RuleResult
 
 
@@ -44,6 +48,7 @@ class CKL03011(ChecklistRule):
 
         columns = ["comp", "cmp_layer", "bending", "status"]
         rows: list[dict] = []
+        osc_results: list[dict] = []
 
         for comps, layer_name in [
             (components_top, "Top"),
@@ -61,9 +66,32 @@ class CKL03011(ChecklistRule):
                     "bending": str(in_bending).upper(),
                     "status": status,
                 })
+                osc_results.append({
+                    "comp_name": osc.comp_name,
+                    "x": osc.x,
+                    "y": osc.y,
+                    "layer": layer_name,
+                    "status": status,
+                })
 
         fail_count = sum(1 for r in rows if r["status"] == "FAIL")
         passed = fail_count == 0
+
+        # Generate visualisation image
+        images: list[dict] = []
+        if board_poly is not None and osc_results:
+            image_dir = Path(tempfile.mkdtemp(prefix="ckl_03_011_"))
+            img_path = image_dir / "bending_osc.png"
+            render_bending_image(
+                board_poly, vulnerable_areas, osc_results, img_path,
+                rule_id=self.rule_id,
+                title="OSC in bending-vulnerable areas",
+            )
+            images.append({
+                "path": img_path,
+                "title": "Bending vulnerability check",
+                "width": 600,
+            })
 
         return RuleResult(
             rule_id=self.rule_id,
@@ -79,4 +107,5 @@ class CKL03011(ChecklistRule):
                 r["comp"] for r in rows if r["status"] == "FAIL"
             ],
             details={"columns": columns, "rows": rows},
+            images=images,
         )

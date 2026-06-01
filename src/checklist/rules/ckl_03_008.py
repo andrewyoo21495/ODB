@@ -68,7 +68,7 @@ class CKL03008(ChecklistRule):
             top_sig_name, bot_sig_name = _find_top_bottom_signal_layers(
                 layers_data)
 
-        columns = ["comp", "cmp_layer", "pad", "via", "status"]
+        columns = ["comp", "cmp_layer", "part_name", "pad", "via", "status"]
         rows: list[dict] = []
         images: list[dict] = []
         image_dir = Path(tempfile.mkdtemp(prefix="ckl_03_008_"))
@@ -103,6 +103,7 @@ class CKL03008(ChecklistRule):
                     rows.append({
                         "comp": comp.comp_name,
                         "cmp_layer": layer_name,
+                        "part_name": comp.part_name or "",
                         "pad": pin.name,
                         "via": str(via_count),
                         "status": "PASS" if via_count >= 4 else "FAIL",
