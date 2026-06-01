@@ -112,18 +112,24 @@ class CKL01003(ChecklistRule):
                         continue
 
                     # Step 3: PAD overlap exists — check containment
-                    # Get PMIC pad union and opposite IC footprint
+                    # FULL = PMIC pads are completely inside the opposite
+                    # IC's area (either its footprint or its pad union).
                     pmic_pads = _get_pad_union(
                         pmic, packages, is_bottom=pmic_is_bottom,
                     )
                     opp_fp = _resolve_footprint(
                         opp, packages, is_bottom=opp_is_bottom,
                     )
+                    opp_pads = _get_pad_union(
+                        opp, packages, is_bottom=opp_is_bottom,
+                    )
 
-                    if pmic_pads is not None and opp_fp is not None:
-                        fully_contained = opp_fp.contains(pmic_pads)
-                    else:
-                        fully_contained = False
+                    fully_contained = False
+                    if pmic_pads is not None:
+                        if opp_fp is not None and opp_fp.contains(pmic_pads):
+                            fully_contained = True
+                        elif opp_pads is not None and opp_pads.contains(pmic_pads):
+                            fully_contained = True
 
                     if fully_contained:
                         status = "PASS"
@@ -186,6 +192,7 @@ class CKL01003(ChecklistRule):
             affected_components=[
                 r["comp"] for r in rows if r["status"] == "FAIL"
             ],
-            details={"columns": columns, "rows": rows},
+            details={"columns": columns,
+                     "rows": [r for r in rows if r["status"] == "FAIL"]},
             images=images,
         )

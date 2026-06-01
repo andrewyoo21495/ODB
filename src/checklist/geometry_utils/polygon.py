@@ -384,15 +384,30 @@ def _get_pad_centers(comp: Component, packages: list[Package],
 # Edge / corner detection
 # ---------------------------------------------------------------------------
 
-def _get_outline_short_edges(
+def _find_short_edge_pad_indices(
+    pad_centers_b: list[tuple[float, float]],
     outline_b,
-) -> list[tuple[tuple[float, float], tuple[float, float]]]:
-    """Return the two short-side line segments of *outline_b*.
+    tolerance: float = 0.254,
+) -> set[int]:
+    """Return indices of *comp_b* pads near the short edges of its outline.
 
-    For a rectangular outline, compares adjacent edge lengths and returns
-    the two shortest edges.  If the outline is not a simple polygon or
-    has fewer than 4 vertices, returns an empty list.
+    Algorithm:
+      1. Extract the outline's exterior ring segments.
+      2. Compute the bounding-box width / height to decide which axis
+         is the short side.
+      3. Among all outline segments, select those whose direction is
+         aligned with the **long axis** — these are the two short-side
+         segments (the short segments run perpendicular to the long axis,
+         which means they span the short dimension).
+      4. Pads of *comp_b* within *tolerance* of these short-side
+         segments are "short-edge pads".
     """
+    if outline_b is None or not pad_centers_b:
+        return set()
+
+    from shapely.geometry import LineString as _LS
+
+    # Extract outline coords
     coords: list[tuple[float, float]] = []
     if hasattr(outline_b, "geoms"):
         for g in outline_b.geoms:
@@ -403,27 +418,50 @@ def _get_outline_short_edges(
         coords = list(outline_b.exterior.coords[:-1])
 
     if len(coords) < 4:
-        return []
+        return set()
 
-    # Build list of edges with their lengths
-    edges: list[tuple[float, tuple[tuple[float, float], tuple[float, float]]]] = []
+    # Bounding box to determine short axis
+    minx, miny, maxx, maxy = outline_b.bounds
+    width = maxx - minx
+    height = maxy - miny
+
+    if width < 1e-6 and height < 1e-6:
+        return set()
+
+    # Build edges with their directions
+    edges: list[tuple[tuple[float, float], tuple[float, float], float]] = []
     n = len(coords)
     for i in range(n):
         p1 = coords[i]
         p2 = coords[(i + 1) % n]
         length = math.sqrt((p2[0] - p1[0]) ** 2 + (p2[1] - p1[1]) ** 2)
-        edges.append((length, (p1, p2)))
+        edges.append((p1, p2, length))
 
-    # Sort by length and take the shorter half (for a rectangle, the 2
-    # shortest edges are the "short sides")
-    edges.sort(key=lambda e: e[0])
-    short_len = edges[0][0]
+    if not edges:
+        return set()
 
-    # Collect edges whose length is close to the shortest (within 20%)
-    threshold = short_len * 1.2
-    short_edges = [seg for length, seg in edges if length <= threshold]
+    # Sort by length; short-side segments are the shorter ones
+    edges_sorted = sorted(edges, key=lambda e: e[2])
+    shortest_len = edges_sorted[0][2]
 
-    return short_edges
+    # Collect segments whose length is close to the shortest (within 30%
+    # tolerance to handle non-perfect rectangles)
+    len_threshold = shortest_len * 1.3
+    short_segments = [(p1, p2) for p1, p2, length in edges_sorted
+                      if length <= len_threshold]
+
+    if not short_segments:
+        return set()
+
+    # Find comp_b pads near these short segments
+    edge_pad_indices: set[int] = set()
+    for p1, p2 in short_segments:
+        seg = _LS([p1, p2])
+        for i, (px, py) in enumerate(pad_centers_b):
+            if seg.distance(ShapelyPoint(px, py)) <= tolerance:
+                edge_pad_indices.add(i)
+
+    return edge_pad_indices
 
 
 def is_on_edge(comp_a: Component, comp_b: Component,
@@ -435,9 +473,10 @@ def is_on_edge(comp_a: Component, comp_b: Component,
 
     1. **Outline corner check**: any pad of *comp_a* falls within
        *tolerance* of an outline polygon vertex of *comp_b*.
-    2. **Short-edge check**: for a rectangular outline, the two shorter
-       sides are identified.  Any pad of *comp_a* within *tolerance* of
-       these short edges is considered on the edge.
+    2. **Short-edge pad check**: for *comp_b*'s outline, identify the
+       short-side segments.  Find *comp_b*'s own pads that lie on those
+       short sides.  If any pad of *comp_a* overlaps (within *tolerance*)
+       one of these short-edge pads, it is considered on the edge.
     3. **Corner-pad check**: the four pads of *comp_b* closest to its
        bounding-box corners are identified.  If any pad of *comp_a* is
        within *tolerance* of a corner pad **and** lies on the outward
@@ -445,7 +484,7 @@ def is_on_edge(comp_a: Component, comp_b: Component,
 
     Args:
         tolerance: Radius in mm around each corner vertex / corner pad
-                   / short edge to consider as the edge area.
+                   to consider as the edge area.
     """
     if not _HAS_SHAPELY:
         return False
@@ -472,20 +511,23 @@ def is_on_edge(comp_a: Component, comp_b: Component,
                 if corner_region.contains(ShapelyPoint(px, py)):
                     return True
 
-    # --- 2. Short-edge check -----------------------------------------------
-    if outline_b is not None:
-        from shapely.geometry import LineString as _LS
-
-        short_edges = _get_outline_short_edges(outline_b)
-        for (x1, y1), (x2, y2) in short_edges:
-            edge_line = _LS([(x1, y1), (x2, y2)])
-            edge_zone = edge_line.buffer(tolerance)
-            for px, py in pad_centers:
-                if edge_zone.contains(ShapelyPoint(px, py)):
-                    return True
+    # --- 2. Short-edge pad check -------------------------------------------
+    pad_centers_b = _get_pad_centers(comp_b, packages)
+    if pad_centers_b and outline_b is not None:
+        short_edge_indices = _find_short_edge_pad_indices(
+            pad_centers_b, outline_b, tolerance=tolerance,
+        )
+        if short_edge_indices:
+            tol_sq = tolerance * tolerance
+            for sei in short_edge_indices:
+                sex, sey = pad_centers_b[sei]
+                for px, py in pad_centers:
+                    dx = px - sex
+                    dy = py - sey
+                    if dx * dx + dy * dy <= tol_sq:
+                        return True
 
     # --- 3. Corner-pad check -----------------------------------------------
-    pad_centers_b = _get_pad_centers(comp_b, packages)
     if not pad_centers_b or len(pad_centers_b) < 4:
         return False
 

@@ -151,6 +151,7 @@ class CKL01005(ChecklistRule):
             affected_components=[
                 r["overlapping_ind"] for r in rows if r["status"] == "FAIL"
             ],
-            details={"columns": columns, "rows": rows},
+            details={"columns": columns,
+                     "rows": [r for r in rows if r["status"] == "FAIL"]},
             images=images,
         )
