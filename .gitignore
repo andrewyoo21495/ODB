@@ -214,4 +214,4 @@ data/*
 cache/*
 output/*
 references/*
-
+tests/*
