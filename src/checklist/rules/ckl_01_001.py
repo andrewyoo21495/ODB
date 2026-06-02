@@ -1,25 +1,31 @@
 """CKL-01-001: IC/Filter/OSC vs opposite-side component overlap check.
 
 ICs and OSCs are checked for pad overlaps against:
-  - Interposers (outer + inner border pads)
+  - Interposers (outer + inner border pads only — fill pads are safe)
   - Connectors, SIM sockets, Shield Cans (all pads)
 
 Filters are checked for pad overlaps against:
-  - Interposers (outer + inner border pads)
+  - Interposers (outer + inner border pads only)
   - Connectors, SIM sockets (all pads)
 
-Outline-only overlaps are acceptable and recorded as PASS.
-Pad-to-pad contact is flagged as FAIL.
-Items with no overlap are excluded from results.
+Interposer border logic
+-----------------------
+An interposer has a ring-shaped pad layout with an outer perimeter ring
+and an inner ring surrounding the central empty region.  Only pads on
+these two border rings are structurally critical:
 
-Images are generated per overlapping_cmp (one image per connector /
-shield can / interposer), showing all ICs, OSCs and filters that overlap it.
+  * IC pads overlapping **outer or inner border pads** → FAIL
+  * IC pads overlapping **fill pads** (between borders) → PASS
+  * IC overlapping interposer outline only (no pad contact) → PASS
+  * No overlap at all → excluded from results
+
+Images show dashed outlines for both the outer and inner border rings
+of each interposer to aid visual inspection.
 """
 
 from __future__ import annotations
 
 import tempfile
-from collections import defaultdict
 from pathlib import Path
 
 from src.checklist.component_classifier import (
@@ -28,14 +34,24 @@ from src.checklist.component_classifier import (
 )
 from src.checklist.engine import register_rule
 from src.checklist.geometry_utils import (
-    find_border_pin_indices,
     find_overlapping_components,
-    find_outermost_pad_overlapping_components,
     find_pad_overlapping_components,
+)
+from src.checklist.geometry_utils.overlap import (
+    _get_pad_union,
+    _get_pad_union_for_indices,
+    find_outer_inner_border_indices,
+    get_border_outline_polygon,
 )
 from src.checklist.rule_base import ChecklistRule
 from src.checklist.visualizers.overlap_viz import render_overlap_image
 from src.models import RuleResult
+
+try:
+    from shapely.geometry import Point as ShapelyPoint
+    _HAS_SHAPELY = True
+except ImportError:
+    _HAS_SHAPELY = False
 
 
 def _classify_opp_type(c, interposers, simsockets, shield_cans):
@@ -48,59 +64,120 @@ def _classify_opp_type(c, interposers, simsockets, shield_cans):
     return "Connector"
 
 
-def _get_border_pad_union(comp, packages, *, is_bottom=False, user_symbols=None):
-    """Build a Shapely union of outer + inner border pads for an interposer."""
-    from src.checklist.geometry_utils.overlap import (
-        _get_pad_union_for_indices,
-        find_border_pin_indices,
-    )
-    try:
-        from shapely.geometry import Point as ShapelyPoint
-    except ImportError:
-        return None
+# ---------------------------------------------------------------------------
+# Interposer border-pad overlap helpers
+# ---------------------------------------------------------------------------
 
+def _get_interposer_border_unions(comp, packages, *, is_bottom=False,
+                                  user_symbols=None):
+    """Return (outer_pad_union, inner_pad_union) for an interposer component.
+
+    Each is a Shapely geometry (or None) representing the pads on the
+    outer and inner border rings respectively.
+    """
     if comp.pkg_ref < 0 or comp.pkg_ref >= len(packages):
-        return None
+        return None, None
     pkg = packages[comp.pkg_ref]
     if not pkg.pins:
-        return None
+        return None, None
 
-    border_indices = find_border_pin_indices(pkg.pins)
-    return _get_pad_union_for_indices(
-        comp, pkg, border_indices, is_bottom=is_bottom,
+    outer_idx, inner_idx = find_outer_inner_border_indices(pkg.pins)
+
+    outer_union = _get_pad_union_for_indices(
+        comp, pkg, outer_idx, is_bottom=is_bottom,
         user_symbols=user_symbols,
-    )
+    ) if outer_idx else None
+
+    inner_union = _get_pad_union_for_indices(
+        comp, pkg, inner_idx, is_bottom=is_bottom,
+        user_symbols=user_symbols,
+    ) if inner_idx else None
+
+    return outer_union, inner_union
 
 
-def _find_border_pad_overlapping_components(
-    comp, candidates, packages, *,
-    is_bottom_primary=False, is_bottom_candidates=False,
+def _get_interposer_outline_polygons(comp, packages, *, is_bottom=False):
+    """Return (outer_outline, inner_outline) polygons for visualization.
+
+    These are convex hulls of pin centres on each border ring,
+    suitable for drawing as dashed boundary lines.
+    """
+    if comp.pkg_ref < 0 or comp.pkg_ref >= len(packages):
+        return None, None
+    pkg = packages[comp.pkg_ref]
+    if not pkg.pins:
+        return None, None
+
+    outer_idx, inner_idx = find_outer_inner_border_indices(pkg.pins)
+
+    outer_poly = get_border_outline_polygon(
+        comp, pkg, outer_idx, is_bottom=is_bottom,
+    ) if outer_idx else None
+
+    inner_poly = get_border_outline_polygon(
+        comp, pkg, inner_idx, is_bottom=is_bottom,
+    ) if inner_idx else None
+
+    return outer_poly, inner_poly
+
+
+def _find_interposer_border_overlapping(
+    comp, interposers, packages, *,
+    comp_is_bottom=False, opp_is_bottom=False,
     user_symbols=None,
 ):
-    """Return candidates whose border pads (outer+inner) overlap comp's pads."""
-    try:
-        from shapely.geometry import Point as ShapelyPoint
-        from src.checklist.geometry_utils.overlap import _get_pad_union
-    except ImportError:
+    """Check comp's pads against each interposer's border pads.
+
+    Returns list of (interposer, status) tuples:
+      - FAIL if comp pads intersect outer or inner border pads
+      - PASS if comp overlaps interposer footprint but not border pads
+      - omitted if no overlap at all
+    """
+    if not _HAS_SHAPELY:
         return []
 
-    pad_union_comp = _get_pad_union(comp, packages, is_bottom=is_bottom_primary,
-                                    user_symbols=user_symbols)
+    pad_union_comp = _get_pad_union(
+        comp, packages, is_bottom=comp_is_bottom,
+        user_symbols=user_symbols,
+    )
     if pad_union_comp is None:
         pad_union_comp = ShapelyPoint(comp.x, comp.y).buffer(0.05)
 
-    overlapping = []
-    for cand in candidates:
-        border_union = _get_border_pad_union(
-            cand, packages, is_bottom=is_bottom_candidates,
+    # Check footprint-level overlap first to filter quickly
+    outline_overlaps = set(
+        id(c) for c in find_overlapping_components(
+            comp, interposers, packages,
+            is_bottom_primary=comp_is_bottom,
+            is_bottom_candidates=opp_is_bottom,
+        )
+    )
+
+    results = []
+    for inp in interposers:
+        if id(inp) not in outline_overlaps:
+            continue
+
+        outer_union, inner_union = _get_interposer_border_unions(
+            inp, packages, is_bottom=opp_is_bottom,
             user_symbols=user_symbols,
         )
-        if border_union is None:
-            border_union = ShapelyPoint(cand.x, cand.y).buffer(0.05)
-        if pad_union_comp.intersects(border_union):
-            overlapping.append(cand)
-    return overlapping
 
+        hit_outer = (outer_union is not None
+                     and pad_union_comp.intersects(outer_union))
+        hit_inner = (inner_union is not None
+                     and pad_union_comp.intersects(inner_union))
+
+        if hit_outer or hit_inner:
+            results.append((inp, "FAIL"))
+        else:
+            results.append((inp, "PASS"))
+
+    return results
+
+
+# ---------------------------------------------------------------------------
+# Generic overlap check
+# ---------------------------------------------------------------------------
 
 def _check_overlaps(comp, comp_layer, interposers, full_pad_targets,
                     opp_type_fn, packages, rows,
@@ -108,57 +185,33 @@ def _check_overlaps(comp, comp_layer, interposers, full_pad_targets,
                     user_symbols=None):
     """Run overlap checks for a single component against opposite-side targets.
 
-    - Interposers: checked against outer + inner border pads
-    - full_pad_targets (connectors, SIM sockets, and optionally shield cans):
-      checked against all pads
+    - Interposers: only outer/inner border pads trigger FAIL
+    - full_pad_targets (connectors, SIM sockets, shield cans): all pads
 
     Returns a list of overlap_item dicts for grouping by overlapping_cmp.
-    Each item: {"comp": ovl_comp, "status": str, "detail": str}
     """
     overlap_items: list[dict] = []
 
-    # --- Interposer checks (border pads: outer + inner) ---
+    # --- Interposer checks (border pads only) ---
     if interposers:
-        outline_ovl = find_overlapping_components(
+        inp_results = _find_interposer_border_overlapping(
             comp, interposers, packages,
-            is_bottom_primary=comp_is_bottom,
-            is_bottom_candidates=opp_is_bottom,
-        )
-        pad_ovl = _find_border_pad_overlapping_components(
-            comp, interposers, packages,
-            is_bottom_primary=comp_is_bottom,
-            is_bottom_candidates=opp_is_bottom,
+            comp_is_bottom=comp_is_bottom,
+            opp_is_bottom=opp_is_bottom,
             user_symbols=user_symbols,
         )
-
-        if pad_ovl:
-            for ovl in pad_ovl:
-                status = "FAIL"
-                rows.append({
-                    "comp": comp.comp_name,
-                    "cmp_layer": comp_layer,
-                    "overlapping_cmp": ovl.comp_name,
-                    "opp_type": opp_type_fn(ovl),
-                    "status": status,
-                })
-                overlap_items.append({
-                    "comp": ovl, "status": status,
-                    "detail": opp_type_fn(ovl),
-                })
-        elif outline_ovl:
-            for ovl in outline_ovl:
-                status = "PASS"
-                rows.append({
-                    "comp": comp.comp_name,
-                    "cmp_layer": comp_layer,
-                    "overlapping_cmp": ovl.comp_name,
-                    "opp_type": opp_type_fn(ovl),
-                    "status": status,
-                })
-                overlap_items.append({
-                    "comp": ovl, "status": status,
-                    "detail": opp_type_fn(ovl),
-                })
+        for ovl, status in inp_results:
+            rows.append({
+                "comp": comp.comp_name,
+                "cmp_layer": comp_layer,
+                "overlapping_cmp": ovl.comp_name,
+                "opp_type": opp_type_fn(ovl),
+                "status": status,
+            })
+            overlap_items.append({
+                "comp": ovl, "status": status,
+                "detail": opp_type_fn(ovl),
+            })
 
     # --- Connector / SIM socket / Shield Can checks (all pads) ---
     if full_pad_targets:
@@ -174,34 +227,35 @@ def _check_overlaps(comp, comp_layer, interposers, full_pad_targets,
             user_symbols=user_symbols,
         )
 
-        if pad_ovl:
-            for ovl in pad_ovl:
-                status = "FAIL"
-                rows.append({
-                    "comp": comp.comp_name,
-                    "cmp_layer": comp_layer,
-                    "overlapping_cmp": ovl.comp_name,
-                    "opp_type": opp_type_fn(ovl),
-                    "status": status,
-                })
-                overlap_items.append({
-                    "comp": ovl, "status": status,
-                    "detail": opp_type_fn(ovl),
-                })
-        elif outline_ovl:
-            for ovl in outline_ovl:
-                status = "PASS"
-                rows.append({
-                    "comp": comp.comp_name,
-                    "cmp_layer": comp_layer,
-                    "overlapping_cmp": ovl.comp_name,
-                    "opp_type": opp_type_fn(ovl),
-                    "status": status,
-                })
-                overlap_items.append({
-                    "comp": ovl, "status": status,
-                    "detail": opp_type_fn(ovl),
-                })
+        pad_ovl_ids = {id(c) for c in pad_ovl}
+        for ovl in pad_ovl:
+            status = "FAIL"
+            rows.append({
+                "comp": comp.comp_name,
+                "cmp_layer": comp_layer,
+                "overlapping_cmp": ovl.comp_name,
+                "opp_type": opp_type_fn(ovl),
+                "status": status,
+            })
+            overlap_items.append({
+                "comp": ovl, "status": status,
+                "detail": opp_type_fn(ovl),
+            })
+        for ovl in outline_ovl:
+            if id(ovl) in pad_ovl_ids:
+                continue
+            status = "PASS"
+            rows.append({
+                "comp": comp.comp_name,
+                "cmp_layer": comp_layer,
+                "overlapping_cmp": ovl.comp_name,
+                "opp_type": opp_type_fn(ovl),
+                "status": status,
+            })
+            overlap_items.append({
+                "comp": ovl, "status": status,
+                "detail": opp_type_fn(ovl),
+            })
 
     return overlap_items
 
@@ -230,8 +284,8 @@ class CKL01001(ChecklistRule):
         # Maps (ovl_comp_name, opp_layer) -> {
         #     "ovl_comp": Component,
         #     "opp_is_bottom": bool,
-        #     "same_comps": list,        # opposite-side component pool (for context)
-        #     "items": list[dict],       # {"comp": primary, "status", "detail"}
+        #     "same_comps": list,
+        #     "items": list[dict],
         # }
         ovl_image_map: dict[tuple[str, str], dict] = {}
 
@@ -253,7 +307,6 @@ class CKL01001(ChecklistRule):
             )
 
             def _register_overlaps(primary_comp, primary_label, items):
-                """Group overlap items by overlapping_cmp for image generation."""
                 for item in items:
                     ovl = item["comp"]
                     key = (ovl.comp_name, opp_layer)
@@ -308,7 +361,7 @@ class CKL01001(ChecklistRule):
                 )
                 _register_overlaps(flt, "Filter", items)
 
-        # --- Generate one image per overlapping_cmp (only when any item is FAIL) ---
+        # --- Generate one image per overlapping_cmp ---
         for (ovl_name, opp_layer), data in ovl_image_map.items():
             ovl_comp = data["ovl_comp"]
             opp_is_bottom = data["opp_is_bottom"]
@@ -318,6 +371,24 @@ class CKL01001(ChecklistRule):
                 continue
             if not any(item["status"] == "FAIL" for item in items):
                 continue
+
+            # Build interposer outline polygons for visualization
+            inp_outer_outline, inp_inner_outline = None, None
+            opp_type = _classify_opp_type(
+                ovl_comp,
+                find_interposers(
+                    [c for c in (components_top if opp_is_bottom else components_bot)]),
+                find_simsockets(
+                    [c for c in (components_top if opp_is_bottom else components_bot)]),
+                find_shield_cans(
+                    [c for c in (components_top if opp_is_bottom else components_bot)]),
+            )
+            if opp_type == "Interposer":
+                inp_outer_outline, inp_inner_outline = (
+                    _get_interposer_outline_polygons(
+                        ovl_comp, packages, is_bottom=opp_is_bottom,
+                    )
+                )
 
             safe = ovl_name.replace("/", "_")
             img_path = image_dir / f"{safe}_{opp_layer}.png"
@@ -330,6 +401,8 @@ class CKL01001(ChecklistRule):
                 primary_is_bottom=opp_is_bottom,
                 overlap_is_bottom=not opp_is_bottom,
                 user_symbols=user_symbols,
+                interposer_outer_outline=inp_outer_outline,
+                interposer_inner_outline=inp_inner_outline,
             )
             images.append({"path": img_path,
                            "title": f"{ovl_name} ({opp_layer})",

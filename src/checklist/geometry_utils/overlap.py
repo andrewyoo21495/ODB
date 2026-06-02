@@ -329,6 +329,129 @@ def find_border_pin_indices(pins: list[Pin]) -> set[int]:
     return border | inner_border
 
 
+def find_outer_inner_border_indices(
+    pins: list[Pin],
+) -> tuple[set[int], set[int]]:
+    """Return (outer_indices, inner_indices) separately.
+
+    *outer_indices* are the outermost perimeter pins (same as
+    ``find_outermost_pin_indices``).  *inner_indices* are the pins
+    directly bordering the central empty region of a ring-shaped layout,
+    detected using the actual pin pitch grid.
+
+    For packages with <= 8 pins, all indices are returned as outer and
+    inner is empty.
+    """
+    if not pins:
+        return set(), set()
+    if len(pins) <= 8:
+        return set(range(len(pins))), set()
+
+    outer = find_outermost_pin_indices(pins)
+
+    centres = [(p.center.x, p.center.y) for p in pins]
+    xs = [c[0] for c in centres]
+    ys = [c[1] for c in centres]
+    x_min, x_max = min(xs), max(xs)
+    y_min, y_max = min(ys), max(ys)
+
+    if x_min == x_max and y_min == y_max:
+        return set(range(len(pins))), set()
+
+    # Determine the actual pin pitch from consecutive unique positions
+    xs_sorted = sorted(set(xs))
+    ys_sorted = sorted(set(ys))
+    if len(xs_sorted) < 2 or len(ys_sorted) < 2:
+        return outer, set()
+
+    x_gaps = [xs_sorted[i + 1] - xs_sorted[i] for i in range(len(xs_sorted) - 1)]
+    y_gaps = [ys_sorted[i + 1] - ys_sorted[i] for i in range(len(ys_sorted) - 1)]
+    pitch_x = min(g for g in x_gaps if g > 0.01) if x_gaps else 0
+    pitch_y = min(g for g in y_gaps if g > 0.01) if y_gaps else 0
+
+    if pitch_x < 0.01 or pitch_y < 0.01:
+        return outer, set()
+
+    # Build pin-position occupancy grid using quantised (col, row) indices
+    pin_grid: dict[tuple[int, int], int] = {}
+    for i, (cx, cy) in enumerate(centres):
+        col = round((cx - x_min) / pitch_x)
+        row = round((cy - y_min) / pitch_y)
+        pin_grid[(col, row)] = i
+
+    max_col = round((x_max - x_min) / pitch_x)
+    max_row = round((y_max - y_min) / pitch_y)
+
+    # Check whether a central empty region exists
+    # by counting empty grid cells in the central 50% area
+    margin_c = max(1, max_col // 4)
+    margin_r = max(1, max_row // 4)
+    central_empty = 0
+    central_total = 0
+    for c in range(margin_c, max_col - margin_c + 1):
+        for r in range(margin_r, max_row - margin_r + 1):
+            central_total += 1
+            if (c, r) not in pin_grid:
+                central_empty += 1
+
+    if central_total == 0 or central_empty / central_total < 0.3:
+        return outer, set()
+
+    # Inner border = non-outer pins that have at least one
+    # cardinal-direction neighbour position that is (a) inside the
+    # overall bounding grid but (b) unoccupied (the hole).
+    interior_indices = [i for i in range(len(pins)) if i not in outer]
+    inner: set[int] = set()
+    for i in interior_indices:
+        cx, cy = centres[i]
+        col = round((cx - x_min) / pitch_x)
+        row = round((cy - y_min) / pitch_y)
+
+        for dc, dr in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+            nc, nr = col + dc, row + dr
+            # Neighbour must be inside the overall grid boundary
+            if nc < 0 or nc > max_col or nr < 0 or nr > max_row:
+                continue
+            if (nc, nr) not in pin_grid:
+                inner.add(i)
+                break
+
+    return outer, inner
+
+
+def get_border_outline_polygon(
+    comp: Component,
+    pkg: Package,
+    pin_indices: set[int],
+    *,
+    is_bottom: bool = False,
+):
+    """Build a Shapely polygon (convex hull) from the centres of given pins.
+
+    Returns a Polygon suitable for drawing as a dashed outline, or None.
+    """
+    if not _HAS_SHAPELY or not pkg.pins or not pin_indices:
+        return None
+
+    pts = []
+    for idx in pin_indices:
+        if idx >= len(pkg.pins):
+            continue
+        pin = pkg.pins[idx]
+        bx, by = transform_point(pin.center.x, pin.center.y, comp,
+                                 is_bottom=is_bottom)
+        pts.append((bx, by))
+
+    if len(pts) < 3:
+        return None
+
+    mp = MultiPoint(pts)
+    hull = mp.convex_hull
+    if hull.is_empty or hull.geom_type == "Point":
+        return None
+    return hull
+
+
 # ---------------------------------------------------------------------------
 # Symbol → Shapely geometry helpers
 # ---------------------------------------------------------------------------

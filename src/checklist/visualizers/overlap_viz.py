@@ -97,6 +97,8 @@ def render_overlap_image(
     user_symbols: dict | None = None,
     inner_walls: list | None = None,
     outer_outline=None,
+    interposer_outer_outline=None,
+    interposer_inner_outline=None,
 ) -> Path:
     """Render a single primary component with overlapping opposite-side parts.
 
@@ -179,6 +181,27 @@ def render_overlap_image(
                     zorder=6,
                     label="Container frame" if _first_outer else None)
             _first_outer = False
+
+    # --- draw interposer outer / inner border outlines (dashed) ---------------
+    _has_inp_outer = (interposer_outer_outline is not None
+                      and not interposer_outer_outline.is_empty)
+    if _has_inp_outer:
+        _first = True
+        for xs, ys in _shapely_to_arrays(interposer_outer_outline):
+            ax.plot(xs, ys, color="#0066CC", linewidth=1.8, linestyle="--",
+                    zorder=6,
+                    label="Interposer outer border" if _first else None)
+            _first = False
+
+    _has_inp_inner = (interposer_inner_outline is not None
+                      and not interposer_inner_outline.is_empty)
+    if _has_inp_inner:
+        _first = True
+        for xs, ys in _shapely_to_arrays(interposer_inner_outline):
+            ax.plot(xs, ys, color="#CC6600", linewidth=1.8, linestyle="--",
+                    zorder=6,
+                    label="Interposer inner border" if _first else None)
+            _first = False
 
     # --- draw inner wall pads (orange/red to distinguish from perimeter) ------
     if inner_walls:
@@ -310,6 +333,16 @@ def render_overlap_image(
         legend_elements.append(
             plt.Line2D([0], [0], color="#444444", linewidth=1.2,
                        linestyle="--", label="Container frame")
+        )
+    if _has_inp_outer:
+        legend_elements.append(
+            plt.Line2D([0], [0], color="#0066CC", linewidth=1.8,
+                       linestyle="--", label="Interposer outer border")
+        )
+    if _has_inp_inner:
+        legend_elements.append(
+            plt.Line2D([0], [0], color="#CC6600", linewidth=1.8,
+                       linestyle="--", label="Interposer inner border")
         )
     if inner_walls:
         legend_elements.append(

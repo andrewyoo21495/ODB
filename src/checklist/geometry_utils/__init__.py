@@ -38,6 +38,8 @@ from .overlap import (
     _user_symbol_to_shapely,
     find_outermost_pin_indices,
     find_border_pin_indices,
+    find_outer_inner_border_indices,
+    get_border_outline_polygon,
     find_overlapping_components,
     find_outline_overlapping_components,
     find_outermost_pad_overlapping_components,
