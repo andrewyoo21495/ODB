@@ -88,15 +88,20 @@ def _sm_pad_to_shapely(pad: PadRecord, symbols, user_symbols):
     sym_idx = pad.symbol_idx
     geom = None
 
-    # Try layer-level symbol table first
+    # Try layer-level symbol table first.
+    # Build geometry at origin (0, 0) with no rotation/mirror;
+    # pad-level transforms are applied afterwards (lines below).
     if symbols and 0 <= sym_idx < len(symbols):
         sym = symbols[sym_idx]
-        geom = _symbol_to_shapely(sym)
+        geom = _symbol_to_shapely(
+            sym.name, 0.0, 0.0, 0.0, False,
+            unit_override=getattr(sym, "unit_override", None),
+        )
 
     # Fallback: user symbol table
     if geom is None and user_symbols:
         for us_name, us in user_symbols.items():
-            geom = _user_symbol_to_shapely(us)
+            geom = _user_symbol_to_shapely(us, 0.0, 0.0, 0.0, False)
             if geom is not None:
                 break
 
