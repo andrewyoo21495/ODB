@@ -105,4 +105,5 @@ from .shield_can import (
     find_nearest_inner_wall,
     is_near_inner_wall,
     detect_fill_cuts,
+    is_on_curved_edge,
 )

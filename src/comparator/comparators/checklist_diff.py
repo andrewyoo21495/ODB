@@ -38,6 +38,7 @@ def _import_all_rules():
     import src.checklist.rules.ckl_02_012  # noqa: F401
     import src.checklist.rules.ckl_03_001  # noqa: F401
     import src.checklist.rules.ckl_03_002  # noqa: F401
+    import src.checklist.rules.ckl_03_003  # noqa: F401
     import src.checklist.rules.ckl_03_004  # noqa: F401
     import src.checklist.rules.ckl_03_011  # noqa: F401
     import src.checklist.rules.ckl_03_005  # noqa: F401
@@ -45,6 +46,7 @@ def _import_all_rules():
     import src.checklist.rules.ckl_03_013  # noqa: F401
     import src.checklist.rules.ckl_03_015  # noqa: F401
     import src.checklist.rules.ckl_03_016  # noqa: F401
+    import src.checklist.rules.ckl_03_007  # noqa: F401
     import src.checklist.rules.ckl_03_008  # noqa: F401
     import src.checklist.rules.ckl_03_009  # noqa: F401
 

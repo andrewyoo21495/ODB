@@ -706,3 +706,83 @@ def detect_fill_cuts(
                 pass
 
     return fill_cuts
+
+
+# ---------------------------------------------------------------------------
+# Curved-edge overlap detection
+# ---------------------------------------------------------------------------
+
+def is_on_curved_edge(
+    comp: Component,
+    shield_can: Component,
+    packages: list[Package],
+    *,
+    comp_is_bottom: bool = False,
+    sc_is_bottom: bool = False,
+    buffer_mm: float = 0.05,
+    fill_cuts: list | None = None,
+    user_symbols: dict | None = None,
+) -> bool:
+    """Check if *comp*'s pads overlap a curved (fill-cut) region of *shield_can*.
+
+    A shield can's oblong edge pads have straight sides and rounded caps.
+    This function tests whether the candidate component's pad geometry
+    intersects any of those rounded cap (fill-cut) regions, which indicate
+    placement at the curved edge of the shield can.
+
+    A component whose pads overlap only the straight portion of a shield
+    can pad is NOT considered on the curved edge.
+
+    Parameters
+    ----------
+    comp : Component
+        The component to test (typically on the opposite side of the board).
+    shield_can : Component
+        The shield can whose curved edges are checked.
+    packages : list[Package]
+    comp_is_bottom : bool
+        Whether *comp* is on the bottom layer.
+    sc_is_bottom : bool
+        Whether *shield_can* is on the bottom layer.
+    buffer_mm : float
+        Buffer applied to fill-cut regions for tolerance (default 0.05 mm).
+    fill_cuts : list[ShapelyPolygon] | None
+        Pre-computed fill-cut regions.  Pass this when calling repeatedly
+        for the same shield can to avoid recomputation.
+    user_symbols : dict | None
+        User-defined symbol lookup for pad geometry resolution.
+
+    Returns
+    -------
+    bool
+        True if *comp*'s pad geometry intersects a fill-cut (curved) region.
+    """
+    if not _HAS_SHAPELY:
+        return False
+
+    # Build fill-cut regions for the shield can (or use pre-computed ones)
+    if fill_cuts is None:
+        fill_cuts = detect_fill_cuts(
+            shield_can, packages, is_bottom=sc_is_bottom,
+        )
+    if not fill_cuts:
+        return False
+
+    # Build the pad geometry of the candidate component
+    from .overlap import _get_pad_union
+    pad_geom = _get_pad_union(
+        comp, packages,
+        is_bottom=comp_is_bottom,
+        user_symbols=user_symbols,
+    )
+    if pad_geom is None or pad_geom.is_empty:
+        # Fallback to a small buffer around the component centre
+        pad_geom = ShapelyPoint(comp.x, comp.y).buffer(0.05)
+
+    # Check if pad geometry intersects any fill-cut region
+    for fc in fill_cuts:
+        buffered_fc = fc.buffer(buffer_mm) if buffer_mm > 0 else fc
+        if pad_geom.intersects(buffered_fc):
+            return True
+
+    return False
