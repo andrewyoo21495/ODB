@@ -194,6 +194,21 @@ def find_antennas(components: Sequence[Component]) -> list[Component]:
     return [c for c in components if (c.comp_name or "").startswith("ANT")]
 
 
+def find_washers(components: Sequence[Component]) -> list[Component]:
+    """Return Washer components.
+
+    Matches when part_name starts with '3712-' or comp_name starts with
+    'SUS' (case-insensitive).
+    """
+    result: list[Component] = []
+    for c in components:
+        part = c.part_name or ""
+        name = (c.comp_name or "").upper()
+        if part.startswith("3712-") or name.startswith("SUS"):
+            result.append(c)
+    return result
+
+
 def find_shield_cans(components: Sequence[Component]) -> list[Component]:
     """Return Shield Can components: comp_name starts with 'SC'."""
     return [c for c in components if (c.comp_name or "").upper().startswith("SC")]
