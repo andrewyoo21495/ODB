@@ -13,6 +13,7 @@ import tempfile
 from pathlib import Path
 
 from src.checklist.component_classifier import (
+    find_antennas,
     find_connectors,
     find_interposers,
     find_oscillators,
@@ -33,7 +34,7 @@ from src.models import RuleResult
 class CKL03016(ChecklistRule):
     rule_id = "CKL-03-016"
     description = (
-        "인터포저, 쉴드캔, SIM 소켓, 커넥터는 OSC 부품의 "
+        "인터포저, 쉴드캔, SIM 소켓, 커넥터, 안테나는 OSC 부품의 "
         "반대면과 패드 중첩이 없어야 합니다"
     )
     category = "Placement"
@@ -64,9 +65,10 @@ class CKL03016(ChecklistRule):
             opp_shield_cans = find_shield_cans(opp_comps)
             opp_simsockets = find_simsockets(opp_comps)
             opp_connectors = find_connectors(opp_comps)
+            opp_antennas = find_antennas(opp_comps)
             opp_targets = (
                 opp_interposers + opp_shield_cans
-                + opp_simsockets + opp_connectors
+                + opp_simsockets + opp_connectors + opp_antennas
             )
 
             if not opp_targets:

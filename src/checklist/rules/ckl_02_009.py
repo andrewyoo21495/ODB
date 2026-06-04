@@ -18,10 +18,15 @@ from src.checklist.component_classifier import (
 )
 from src.checklist.engine import register_rule
 from src.checklist.geometry_utils import (
+    _get_pad_union,
     filter_by_size,
     find_pad_overlapping_components,
     get_component_orientation,
     is_on_edge,
+)
+from src.checklist.geometry_utils.overlap import (
+    _symbol_to_shapely,
+    _user_symbol_to_shapely,
 )
 from src.checklist.reference_loader import (
     get_managed_part_names,
@@ -30,7 +35,82 @@ from src.checklist.reference_loader import (
 )
 from src.checklist.rule_base import ChecklistRule
 from src.checklist.visualizers.overlap_viz import render_overlap_image
-from src.models import RuleResult
+from src.models import Component, RuleResult
+
+try:
+    from shapely.geometry import Point as ShapelyPoint
+    from shapely.ops import unary_union
+    _HAS_SHAPELY = True
+except ImportError:
+    _HAS_SHAPELY = False
+
+# Threshold: pads with area below this fraction of the median pad area
+# are considered "small circle pads" and excluded from SC overlap checks.
+_SMALL_PAD_AREA_RATIO = 0.15
+
+
+def _get_sc_pad_union_no_small_circles(
+    comp: Component,
+    packages: list,
+    *,
+    is_bottom: bool = False,
+    user_symbols: dict | None = None,
+):
+    """Build pad union for a shield can, excluding small circular pads.
+
+    Small circular pads (mounting/anchor dots) are filtered out based on
+    area comparison: pads whose area is less than *_SMALL_PAD_AREA_RATIO*
+    of the median pad area are excluded.
+    """
+    if not _HAS_SHAPELY:
+        return None
+    if comp.pkg_ref < 0 or comp.pkg_ref >= len(packages):
+        return None
+
+    user_symbols = user_symbols or {}
+
+    # Build individual pad geometries from toeprint geom data
+    pad_geoms: list = []
+    for tp in comp.toeprints:
+        if tp.geom is None:
+            continue
+        geom = tp.geom
+        pad_rot = -geom.rotation if is_bottom else geom.rotation
+
+        if geom.is_user_symbol and geom.symbol_name in user_symbols:
+            g = _user_symbol_to_shapely(
+                user_symbols[geom.symbol_name],
+                geom.x, geom.y, pad_rot, geom.mirror,
+            )
+        else:
+            g = _symbol_to_shapely(
+                geom.symbol_name, geom.x, geom.y, pad_rot, geom.mirror,
+                geom.units, geom.unit_override, geom.resize_factor,
+            )
+
+        if g is not None and not g.is_empty:
+            pad_geoms.append(g)
+
+    if not pad_geoms:
+        # Fallback: use full pad union (no filtering possible)
+        return _get_pad_union(comp, packages, is_bottom=is_bottom,
+                              user_symbols=user_symbols)
+
+    # Compute areas and filter small circular pads
+    areas = [g.area for g in pad_geoms]
+    areas_sorted = sorted(areas)
+    median_area = areas_sorted[len(areas_sorted) // 2]
+
+    if median_area <= 0:
+        return unary_union(pad_geoms)
+
+    threshold = median_area * _SMALL_PAD_AREA_RATIO
+    large_pads = [g for g, a in zip(pad_geoms, areas) if a >= threshold]
+
+    if not large_pads:
+        return unary_union(pad_geoms)
+
+    return unary_union(large_pads)
 
 
 @register_rule
@@ -144,6 +224,13 @@ class CKL02009(ChecklistRule):
                 continue
 
             for sc in shield_cans:
+                # Build SC pad union excluding small circular pads
+                sc_pad_no_small = _get_sc_pad_union_no_small_circles(
+                    sc, packages,
+                    is_bottom=sc_is_bottom,
+                    user_symbols=user_symbols,
+                )
+
                 overlaps = find_pad_overlapping_components(
                     sc, opp_general_ind, packages,
                     is_bottom_primary=sc_is_bottom,
@@ -154,6 +241,31 @@ class CKL02009(ChecklistRule):
 
                 overlap_items: list[dict] = []
                 for ind, sz in filtered:
+                    # Re-check overlap against SC pads without small circles
+                    ind_pads = _get_pad_union(
+                        ind, packages, is_bottom=ind_is_bottom,
+                        user_symbols=user_symbols,
+                    )
+                    if (sc_pad_no_small is not None
+                            and ind_pads is not None
+                            and not sc_pad_no_small.intersects(ind_pads)):
+                        # Inductor only overlaps small circular pads → PASS
+                        rows.append({
+                            "check_type": "Shield Can",
+                            "comp": sc.comp_name,
+                            "cmp_layer": sc_layer,
+                            "overlapping_ind": ind.comp_name,
+                            "part_name": ind.part_name or "",
+                            "edge": "-",
+                            "hori/verti": "-",
+                            "status": "PASS",
+                        })
+                        overlap_items.append({
+                            "comp": ind, "status": "PASS",
+                            "detail": "Small circle pad only",
+                        })
+                        continue
+
                     rows.append({
                         "check_type": "Shield Can",
                         "comp": sc.comp_name,

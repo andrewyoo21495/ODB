@@ -92,12 +92,15 @@ class CKL02002(ChecklistRule):
                 continue
 
             for conn in connectors:
-                # Find caps with PAD-PAD overlap
+                # Find caps with PAD-PAD overlap.
+                # Use min_overlap_area to avoid false positives from
+                # boundary-only touches (pads barely touching edges).
                 pad_overlaps = find_pad_overlapping_components(
                     conn, opp_managed_caps, packages,
                     is_bottom_primary=conn_is_bottom,
                     is_bottom_candidates=cap_is_bottom,
                     user_symbols=user_symbols,
+                    min_overlap_area=0.001,
                 )
                 pad_overlap_ids = {id(c) for c in pad_overlaps}
 

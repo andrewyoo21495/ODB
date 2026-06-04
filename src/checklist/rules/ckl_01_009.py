@@ -30,7 +30,8 @@ from src.checklist.geometry_utils.overlap import (
     transform_point,
 )
 from src.checklist.rule_base import ChecklistRule
-from src.models import PadRecord, RuleResult
+from src.models import LayerFeatures, PadRecord, RuleResult
+from src.visualizer.layer_renderer import render_layer
 
 try:
     from shapely.geometry import Point as ShapelyPoint
@@ -212,6 +213,26 @@ def _shapely_to_arrays(geom):
         yield from _shapely_to_arrays(geom.buffer(0.05))
 
 
+def _filter_features_bbox(features: LayerFeatures, bbox) -> LayerFeatures:
+    """Return a LayerFeatures with only features inside *bbox*."""
+    minx, miny, maxx, maxy = bbox
+
+    def _in(feat) -> bool:
+        if isinstance(feat, PadRecord):
+            return minx <= feat.x <= maxx and miny <= feat.y <= maxy
+        return False
+
+    return LayerFeatures(
+        units=features.units,
+        id=features.id,
+        feature_count=features.feature_count,
+        symbols=features.symbols,
+        attr_names=features.attr_names,
+        attr_texts=features.attr_texts,
+        features=[f for f in features.features if _in(f)],
+    )
+
+
 def _render_interposer_image(
     comp,
     pkg,
@@ -223,24 +244,31 @@ def _render_interposer_image(
     rule_id: str,
     layer_name: str,
     is_bottom: bool = False,
+    sm_layer_name: str = "",
+    sm_lf: LayerFeatures | None = None,
+    user_symbols: dict | None = None,
+    font=None,
 ) -> Path:
-    """Render interposer outer pins coloured by grouped/normal status."""
-    fig, ax = plt.subplots(1, 1, figsize=(10, 10))
+    """Render interposer outer pins with SMT/SMB background layer."""
+    fig, ax = plt.subplots(1, 1, figsize=(12, 12))
 
     has_fail = any(r["status"] == "FAIL" for r in pin_results)
     status_str = "FAIL" if has_fail else "PASS"
+    sm_label = sm_layer_name or ("smb" if is_bottom else "smt")
     ax.set_title(
         f"{comp.comp_name} ({comp.part_name}) — {layer_name} Layer\n"
-        f"{rule_id}: Interposer outer ball grouped check  [{status_str}]",
+        f"{rule_id}: Interposer outer ball grouped check  [{status_str}]\n"
+        f"Solder mask layer: {sm_label}",
         fontsize=12, fontweight="bold",
     )
     ax.set_aspect("equal")
+    ax.set_facecolor("white")
     ax.grid(True, alpha=0.3)
 
     all_xs, all_ys = [], []
     outer_set = set(outer_indices)
 
-    # Draw all pins
+    # Collect pin positions first (for viewport calculation)
     for idx, pin in enumerate(pkg.pins):
         bx, by = transform_point(
             pin.center.x, pin.center.y, comp, is_bottom=is_bottom,
@@ -248,26 +276,57 @@ def _render_interposer_image(
         all_xs.append(bx)
         all_ys.append(by)
 
+    # Draw solder mask background
+    if sm_lf is not None and all_xs and all_ys:
+        margin = 1.0
+        bbox = (min(all_xs) - margin, min(all_ys) - margin,
+                max(all_xs) + margin, max(all_ys) + margin)
+        local_lf = _filter_features_bbox(sm_lf, bbox)
+        if local_lf.features:
+            render_layer(
+                ax, local_lf,
+                color="#00AA00", layer_type="SOLDER_MASK", alpha=0.30,
+                user_symbols=user_symbols or {}, font=font,
+                negate_pad_rotation=is_bottom,
+            )
+
+    # Draw all pins (on top of mask background)
+    for idx, pin in enumerate(pkg.pins):
+        bx, by = transform_point(
+            pin.center.x, pin.center.y, comp, is_bottom=is_bottom,
+        )
+
         if idx not in outer_set:
             # Interior pin — dim grey
-            ax.plot(bx, by, "o", color="#D0D0D0", markersize=3, zorder=2)
+            ax.plot(bx, by, "o", color="#D0D0D0", markersize=3, zorder=5)
         elif idx in grouped_set:
             # Outer pin, grouped → green
-            ax.plot(bx, by, "o", color="#4CAF50", markersize=5, zorder=3)
+            ax.plot(bx, by, "o", color="#4CAF50", markersize=6, zorder=6)
         else:
-            # Outer pin, normal — check if it's GND (PASS) or signal (FAIL)
+            # Outer pin, normal — check if it's GND or signal
             matching = [
                 r for r in pin_results
                 if r["pin"] == pin.name and r["comp"] == comp.comp_name
             ]
-            if matching and matching[0]["status"] == "FAIL":
-                ax.plot(bx, by, "o", color="#F44336", markersize=6, zorder=4)
+            is_gnd = (matching
+                      and matching[0]["status"] == "PASS"
+                      and matching[0].get("signal", "")
+                      and _is_ground_net(matching[0]["signal"]))
+            is_fail = matching and matching[0]["status"] == "FAIL"
+
+            if is_fail:
+                # Signal pin not grouped → FAIL (red)
+                ax.plot(bx, by, "o", color="#F44336", markersize=7, zorder=7)
+            elif is_gnd:
+                # GND pin, normal → PASS (cyan/blue)
+                ax.plot(bx, by, "o", color="#2196F3", markersize=6, zorder=6)
             else:
-                ax.plot(bx, by, "o", color="#FFC107", markersize=5, zorder=3)
+                # Other normal PASS (non-GND, non-fail)
+                ax.plot(bx, by, "o", color="#FFC107", markersize=5, zorder=6)
 
     # Component centre
-    ax.plot(comp.x, comp.y, "x", color="blue", markersize=10,
-            markeredgewidth=2, zorder=5)
+    ax.plot(comp.x, comp.y, "x", color="navy", markersize=10,
+            markeredgewidth=2, zorder=8)
 
     # Viewport
     if all_xs and all_ys:
@@ -275,20 +334,24 @@ def _render_interposer_image(
         cy = (max(all_ys) + min(all_ys)) / 2
         span = max(max(all_xs) - min(all_xs),
                    max(all_ys) - min(all_ys), 0.5)
-        margin = span * 0.15
-        ax.set_xlim(cx - span / 2 - margin, cx + span / 2 + margin)
-        ax.set_ylim(cy - span / 2 - margin, cy + span / 2 + margin)
+        margin_v = span * 0.15
+        ax.set_xlim(cx - span / 2 - margin_v, cx + span / 2 + margin_v)
+        ax.set_ylim(cy - span / 2 - margin_v, cy + span / 2 + margin_v)
 
     # Legend
     legend_elements = [
+        mpatches.Patch(facecolor="#00AA00", alpha=0.30,
+                       label=f"{sm_label} (solder mask)"),
         plt.Line2D([0], [0], marker="o", color="w", markerfacecolor="#D0D0D0",
                    markersize=6, label="Interior pin"),
         plt.Line2D([0], [0], marker="o", color="w", markerfacecolor="#4CAF50",
                    markersize=8, label="Outer pin (grouped - PASS)"),
+        plt.Line2D([0], [0], marker="o", color="w", markerfacecolor="#2196F3",
+                   markersize=8, label="Outer pin (GND - PASS)"),
         plt.Line2D([0], [0], marker="o", color="w", markerfacecolor="#FFC107",
-                   markersize=8, label="Outer pin (normal - GND PASS)"),
+                   markersize=8, label="Outer pin (normal - PASS)"),
         plt.Line2D([0], [0], marker="o", color="w", markerfacecolor="#F44336",
-                   markersize=8, label="Outer pin (normal - FAIL)"),
+                   markersize=8, label="Outer pin (signal - FAIL)"),
     ]
     ax.legend(handles=legend_elements, loc="upper left", fontsize=8)
     ax.set_xlabel("X (mm)")
@@ -316,6 +379,8 @@ class CKL01009(ChecklistRule):
         packages = eda.packages if eda else []
         layers_data = job_data.get("layers_data", {})
         user_symbols: dict = job_data.get("user_symbols") or {}
+
+        font = job_data.get("font")
 
         columns = ["comp", "cmp_layer", "pin", "shape", "signal", "status"]
         rows: list[dict] = []
@@ -393,10 +458,14 @@ class CKL01009(ChecklistRule):
                     rule_id=self.rule_id,
                     layer_name=layer,
                     is_bottom=is_bottom,
+                    sm_layer_name=sm_name or "",
+                    sm_lf=sm_lf,
+                    user_symbols=user_symbols,
+                    font=font,
                 )
                 images.append({
                     "path": img_path,
-                    "title": f"{inp.comp_name} ({layer})",
+                    "title": f"{inp.comp_name} ({layer}) — {sm_name or 'soldermask'}",
                     "width": 500,
                 })
 

@@ -942,8 +942,17 @@ def find_pad_overlapping_components(
     is_bottom_primary: bool = False,
     is_bottom_candidates: bool = False,
     user_symbols: dict | None = None,
+    min_overlap_area: float = 0.0,
 ) -> list[Component]:
-    """Return candidates whose pads overlap comp's pads."""
+    """Return candidates whose pads overlap comp's pads.
+
+    Parameters
+    ----------
+    min_overlap_area : float
+        If > 0, only report overlap when the intersection area exceeds
+        this threshold (mm²).  This filters out boundary-only touches and
+        very minor floating-point overlap artefacts.
+    """
     if not _HAS_SHAPELY:
         return []
 
@@ -958,8 +967,18 @@ def find_pad_overlapping_components(
                                         user_symbols=user_symbols)
         if pad_union_cand is None:
             pad_union_cand = ShapelyPoint(cand.x, cand.y).buffer(0.05)
-        if pad_union_comp.intersects(pad_union_cand):
-            overlapping.append(cand)
+
+        if min_overlap_area > 0:
+            try:
+                inter = pad_union_comp.intersection(pad_union_cand)
+                if inter.area > min_overlap_area:
+                    overlapping.append(cand)
+            except Exception:
+                if pad_union_comp.intersects(pad_union_cand):
+                    overlapping.append(cand)
+        else:
+            if pad_union_comp.intersects(pad_union_cand):
+                overlapping.append(cand)
     return overlapping
 
 

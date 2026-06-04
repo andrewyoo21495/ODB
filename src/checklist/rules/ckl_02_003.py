@@ -74,8 +74,6 @@ class CKL02003(ChecklistRule):
                     is_bottom_candidates=opp_is_bottom,
                     user_symbols=user_symbols,
                 )
-                if not overlaps:
-                    continue
 
                 overlap_items: list[dict] = []
 
@@ -114,26 +112,26 @@ class CKL02003(ChecklistRule):
                         "detail": ", ".join(detail_parts),
                     })
 
-                # Generate image only when at least one item is FAIL
-                if overlap_items and any(i["status"] == "FAIL" for i in overlap_items):
-                    safe_name = sc.comp_name.replace("/", "_")
-                    img_path = image_dir / f"{safe_name}_{sc_layer}.png"
-                    render_overlap_image(
-                        sc, packages, overlap_items, opp_comps, img_path,
-                        rule_id=self.rule_id,
-                        title="Managed capacitor alignment (Shield Can)",
-                        layer_name=sc_layer,
-                        primary_label="Shield Can",
-                        overlap_label="Managed cap",
-                        primary_is_bottom=sc_is_bottom,
-                        overlap_is_bottom=opp_is_bottom,
-                        user_symbols=user_symbols,
-                    )
-                    images.append({
-                        "path": img_path,
-                        "title": f"{sc.comp_name} ({sc_layer})",
-                        "width": 500,
-                    })
+                # Generate image for every SC — show all opposite-side
+                # managed caps as context (regardless of PASS/FAIL)
+                safe_name = sc.comp_name.replace("/", "_")
+                img_path = image_dir / f"{safe_name}_{sc_layer}.png"
+                render_overlap_image(
+                    sc, packages, overlap_items, opp_managed_caps, img_path,
+                    rule_id=self.rule_id,
+                    title="Managed capacitor alignment (Shield Can)",
+                    layer_name=sc_layer,
+                    primary_label="Shield Can",
+                    overlap_label="Managed cap (41)",
+                    primary_is_bottom=sc_is_bottom,
+                    overlap_is_bottom=opp_is_bottom,
+                    user_symbols=user_symbols,
+                )
+                images.append({
+                    "path": img_path,
+                    "title": f"{sc.comp_name} ({sc_layer})",
+                    "width": 500,
+                })
 
         fail_count = sum(1 for r in rows if r["status"] == "FAIL")
         passed = fail_count == 0

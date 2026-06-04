@@ -554,7 +554,7 @@ def _build_rule_section(
                     f'<p class="image-title">{html.escape(title)}</p>')
             lines.append(
                 f'<img src="{data_uri}" alt="{html.escape(title)}" '
-                f'style="max-width:{width}px; width:100%;">')
+                f'style="width:100%;">')
             lines.append('</div>')
         lines.append('</div>')
 

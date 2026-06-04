@@ -25,6 +25,10 @@ import numpy as np
 
 from src.checklist.component_classifier import find_shield_cans
 from src.checklist.engine import register_rule
+from src.checklist.geometry_utils.overlap import (
+    _symbol_to_shapely,
+    _user_symbol_to_shapely,
+)
 from src.checklist.geometry_utils.polygon import _outline_to_shapely
 from src.checklist.rule_base import ChecklistRule
 from src.models import Component, Package, RuleResult
@@ -49,12 +53,42 @@ def _build_pad_geoms(
     pkg: Package,
     *,
     is_bottom: bool = False,
+    user_symbols: dict | None = None,
 ) -> list:
     """Return a list of Shapely geometries, one per pin, in board coordinates.
 
-    Pads without geometry data are represented by a small buffer around the
-    pin centre so that distance calculations remain valid.
+    Primary path: toeprint.geom data (actual pad symbols from layer data).
+    Fallback: EDA pin outline definitions.
+    Last resort: small buffer around pin centre.
     """
+    user_symbols = user_symbols or {}
+
+    # Try toeprint geom data first (most accurate for complex pads)
+    tp_geoms: list = []
+    for tp in comp.toeprints:
+        if tp.geom is None:
+            continue
+        geom = tp.geom
+        pad_rot = -geom.rotation if is_bottom else geom.rotation
+
+        if geom.is_user_symbol and geom.symbol_name in user_symbols:
+            g = _user_symbol_to_shapely(
+                user_symbols[geom.symbol_name],
+                geom.x, geom.y, pad_rot, geom.mirror,
+            )
+        else:
+            g = _symbol_to_shapely(
+                geom.symbol_name, geom.x, geom.y, pad_rot, geom.mirror,
+                geom.units, geom.unit_override, geom.resize_factor,
+            )
+
+        if g is not None and not g.is_empty:
+            tp_geoms.append(g)
+
+    if tp_geoms:
+        return tp_geoms
+
+    # Fallback: EDA pin outlines
     geoms: list = []
     for pin in pkg.pins:
         placed = False
@@ -242,6 +276,7 @@ class CKL03003(ChecklistRule):
         components_bot = job_data.get("components_bot", [])
         eda = job_data.get("eda_data")
         packages = eda.packages if eda else []
+        user_symbols: dict = job_data.get("user_symbols") or {}
 
         columns = ["comp", "cmp_layer", "min_gap_mm", "status"]
         rows: list[dict] = []
@@ -272,6 +307,7 @@ class CKL03003(ChecklistRule):
 
                 pad_geoms = _build_pad_geoms(
                     comp, pkg, is_bottom=is_bottom,
+                    user_symbols=user_symbols,
                 )
                 min_dist, idx_a, idx_b = _min_pad_gap(pad_geoms)
 
