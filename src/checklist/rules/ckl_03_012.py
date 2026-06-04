@@ -1,11 +1,11 @@
-"""CKL-03-012: OSC components — PCB edge, BOTHHOLE clearance, and Shield Can check.
+"""CKL-03-012: OSC components — PCB edge, BOTHHOLE clearance, and Shield Can / Interposer check.
 
 Ensure Oscillator (OSC) component pads are placed at least 1mm away from
 the PCB edge and BOTHHOLE components.  Distances are measured from the
 actual pad geometry of the OSC component (not from its outline or centre).
 
-Additionally, record whether each OSC component is located inside a
-Shield Can region (inSC column: TRUE / FALSE).
+If an OSC is located inside a Shield Can or Interposer region on the same
+layer, the clearance requirement is waived (always PASS).
 """
 
 from __future__ import annotations
@@ -13,13 +13,15 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
+from shapely.geometry import Point as ShapelyPoint
+
 from src.checklist.component_classifier import (
-    find_bothholes, find_oscillators, find_shield_cans,
+    find_bothholes, find_interposers, find_oscillators, find_shield_cans,
 )
 from src.checklist.engine import register_rule
 from src.checklist.geometry_utils import (
+    _resolve_container_interior,
     build_board_polygon,
-    find_components_inside_outline,
     pad_distance_to_component,
     pad_distance_to_outline,
 )
@@ -52,7 +54,7 @@ class CKL03012(ChecklistRule):
         # Collect all BOTHHOLE components from both sides
         all_bothholes = find_bothholes(components_top) + find_bothholes(components_bot)
 
-        columns = ["comp", "cmp_layer", "to_pcb", "to_BTH", "inSC", "status"]
+        columns = ["comp", "cmp_layer", "to_pcb", "to_BTH", "inSC/INP", "status"]
         rows: list[dict] = []
         images: list[dict] = []
         image_dir = Path(tempfile.mkdtemp(prefix="ckl_03_012_"))
@@ -61,13 +63,28 @@ class CKL03012(ChecklistRule):
             (components_top, "Top"),
             (components_bot, "Bottom"),
         ]:
-            # Only check Shield Cans on the same layer as the OSC
-            layer_shield_cans = find_shield_cans(comps)
             oscs = find_oscillators(comps)
 
             is_bottom = (layer_name == "Bottom")
 
+            # Build container interiors for Shield Cans and Interposers
+            # on the same layer (same approach as CKL-02-005).
+            containers = find_shield_cans(comps) + find_interposers(comps)
+            cont_interiors: list = []
+            for cont in containers:
+                interior = _resolve_container_interior(
+                    cont, packages, is_bottom=is_bottom,
+                )
+                if interior is not None and not interior.is_empty:
+                    cont_interiors.append(interior)
+
             for osc in oscs:
+                # Check if OSC centre is inside any Shield Can / Interposer
+                osc_pt = ShapelyPoint(osc.x, osc.y)
+                in_container = any(
+                    h.contains(osc_pt) for h in cont_interiors
+                )
+
                 # Distance from OSC pads to PCB outline
                 if board_poly is not None:
                     dist_pcb = pad_distance_to_outline(
@@ -89,31 +106,23 @@ class CKL03012(ChecklistRule):
                         dist_bth = d
                         nearest_bth = bth
 
-                # Check if OSC is inside any Shield Can outline on the same layer
-                in_sc = False
-                for sc in layer_shield_cans:
-                    inside = find_components_inside_outline(
-                        sc, [osc], packages, is_bottom=is_bottom
-                    )
-                    if inside:
-                        in_sc = True
-                        break
-
                 pcb_str = f"{dist_pcb:.3f}" if dist_pcb < float("inf") else "N/A"
                 bth_str = f"{dist_bth:.3f}" if dist_bth < float("inf") else "N/A"
 
-                status = (
-                    "PASS"
-                    if dist_pcb >= _MIN_CLEARANCE_MM and dist_bth >= _MIN_CLEARANCE_MM
-                    else "FAIL"
-                )
+                # Inside Shield Can / Interposer → always PASS
+                if in_container:
+                    status = "PASS"
+                elif dist_pcb >= _MIN_CLEARANCE_MM and dist_bth >= _MIN_CLEARANCE_MM:
+                    status = "PASS"
+                else:
+                    status = "FAIL"
 
                 rows.append({
                     "comp": osc.comp_name,
                     "cmp_layer": layer_name,
                     "to_pcb": pcb_str,
                     "to_BTH": bth_str,
-                    "inSC": "TRUE" if in_sc else "FALSE",
+                    "inSC/INP": "TRUE" if in_container else "FALSE",
                     "status": status,
                 })
 

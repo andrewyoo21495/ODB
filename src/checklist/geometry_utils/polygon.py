@@ -610,21 +610,83 @@ def _is_near_bbox_edge(
     return False
 
 
+def _extract_outline_coords(outline) -> list[tuple[float, float]]:
+    """Extract exterior ring coordinates from a Shapely outline geometry.
+
+    Returns the vertex list *without* the closing duplicate.
+    """
+    coords: list[tuple[float, float]] = []
+    if outline is None:
+        return coords
+    if hasattr(outline, "geoms"):
+        for g in outline.geoms:
+            if hasattr(g, "exterior"):
+                coords = list(g.exterior.coords[:-1])
+                break
+    elif hasattr(outline, "exterior"):
+        coords = list(outline.exterior.coords[:-1])
+    return coords
+
+
+def _find_corner_vertices(
+    coords: list[tuple[float, float]],
+    angle_threshold: float = 20.0,
+) -> list[tuple[float, float]]:
+    """Return vertices of a polygon where the outline has a corner.
+
+    A "corner" is a vertex where the interior angle deviates from 180°
+    by more than *angle_threshold* degrees.  Collinear or near-collinear
+    vertices (e.g. intermediate points along a straight segment or very
+    gentle curves) are excluded.
+
+    Args:
+        coords: Polygon vertices (no closing duplicate).
+        angle_threshold: Minimum deviation from 180° in degrees to
+            qualify as a real corner.
+    """
+    n = len(coords)
+    if n < 3:
+        return list(coords)
+
+    corners: list[tuple[float, float]] = []
+    for i in range(n):
+        p_prev = coords[(i - 1) % n]
+        p_curr = coords[i]
+        p_next = coords[(i + 1) % n]
+
+        dx1 = p_curr[0] - p_prev[0]
+        dy1 = p_curr[1] - p_prev[1]
+        dx2 = p_next[0] - p_curr[0]
+        dy2 = p_next[1] - p_curr[1]
+
+        len1 = math.hypot(dx1, dy1)
+        len2 = math.hypot(dx2, dy2)
+        if len1 < 1e-9 or len2 < 1e-9:
+            continue
+
+        # Cosine of the angle between incoming and outgoing vectors
+        cos_a = (dx1 * dx2 + dy1 * dy2) / (len1 * len2)
+        cos_a = max(-1.0, min(1.0, cos_a))
+        angle_deg = math.degrees(math.acos(cos_a))
+
+        # angle_deg is the deflection angle (0° = straight, 180° = U-turn).
+        # A real corner has a significant deflection.
+        if angle_deg >= angle_threshold:
+            corners.append(p_curr)
+
+    return corners
+
+
 def is_on_edge(comp_a: Component, comp_b: Component,
                packages: list[Package],
                tolerance: float = 0.254) -> bool:
-    """Return True if any pad of comp_a is in an edge area of comp_b.
+    """Return True if any pad of comp_a is near a corner vertex of comp_b.
 
-    Two detection methods are used (returns True if either matches):
-
-    1. **Outline short-segment check**: identify short-side segments of
-       *comp_b*'s outline polygon and test proximity to *comp_a* pads.
-    2. **Pad bbox edge check**: compute the bounding box of *comp_b*'s
-       pad centres.  *comp_a* is on the edge when its pads are near
-       the 4 bbox corners or the two short sides.
+    "Corner vertex" = a point on *comp_b*'s component outline where the
+    outline changes direction (angle deviation >= 20° from straight).
 
     Args:
-        tolerance: Radius in mm to consider as the edge area.
+        tolerance: Radius in mm around each corner vertex.
     """
     if not _HAS_SHAPELY:
         return False
@@ -633,58 +695,22 @@ def is_on_edge(comp_a: Component, comp_b: Component,
     if not pad_centers_a:
         return False
 
-    # --- 1. Outline short-segment check ------------------------------------
     outline_b = _resolve_outline(comp_b, packages)
-    if outline_b is not None:
-        coords: list[tuple[float, float]] = []
-        if hasattr(outline_b, "geoms"):
-            for g in outline_b.geoms:
-                if hasattr(g, "exterior"):
-                    coords = list(g.exterior.coords[:-1])
-                    break
-        elif hasattr(outline_b, "exterior"):
-            coords = list(outline_b.exterior.coords[:-1])
+    if outline_b is None:
+        return False
 
-        if len(coords) >= 4:
-            n = len(coords)
-            edges: list[tuple[tuple[float, float],
-                              tuple[float, float], float]] = []
-            for i in range(n):
-                p1 = coords[i]
-                p2 = coords[(i + 1) % n]
-                length = math.sqrt(
-                    (p2[0] - p1[0]) ** 2 + (p2[1] - p1[1]) ** 2)
-                edges.append((p1, p2, length))
+    coords = _extract_outline_coords(outline_b)
+    corners = _find_corner_vertices(coords)
+    if not corners:
+        return False
 
-            edges_sorted = sorted(edges, key=lambda e: e[2])
-            shortest = edges_sorted[0][2]
-            longest = edges_sorted[-1][2]
-
-            if longest > 0 and shortest / longest > 0.95:
-                short_segments = [(p1, p2) for p1, p2, _ in edges]
-            else:
-                len_threshold = shortest * 1.3
-                short_segments = [
-                    (p1, p2) for p1, p2, length in edges
-                    if length <= len_threshold
-                ]
-
-            if short_segments:
-                from shapely.geometry import LineString as _LS
-                for p1, p2 in short_segments:
-                    seg = _LS([p1, p2])
-                    edge_zone = seg.buffer(tolerance)
-                    for px, py in pad_centers_a:
-                        if edge_zone.contains(ShapelyPoint(px, py)):
-                            return True
-
-    # --- 2. Pad bbox edge check (corners + short sides) --------------------
-    pad_centers_b = _get_pad_centers(comp_b, packages)
-    bbox_b = _get_pad_bbox(comp_b, packages)
-    if pad_centers_a and pad_centers_b and bbox_b is not None:
-        if _is_near_bbox_edge(pad_centers_a, pad_centers_b,
-                              tolerance=tolerance, bbox_b=bbox_b):
-            return True
+    tol_sq = tolerance * tolerance
+    for px, py in pad_centers_a:
+        for cx, cy in corners:
+            dx = px - cx
+            dy = py - cy
+            if dx * dx + dy * dy <= tol_sq:
+                return True
 
     return False
 
@@ -767,87 +793,38 @@ def is_on_outline_edge(
     is_bottom_b: bool = False,
     tolerance: float = 0.254,
 ) -> bool:
-    """Return True if *comp_a*'s body or pads are near a short-edge of *comp_b*.
+    """Return True if *comp_a*'s pads are near a corner vertex of *comp_b*.
 
-    "Edge" means the 4 corners and/or the two shorter sides of the
-    bounding box of *comp_b*'s pad centres.
+    "Corner vertex" = a point on *comp_b*'s component outline where the
+    outline changes direction (angle deviation >= 20° from straight).
 
-    Two detection methods (returns True if either matches):
-
-    1. **Outline short-segment check**: identify short-side segments of
-       *comp_b*'s outline polygon and test proximity.
-    2. **Pad bbox edge check**: compute the bounding box of *comp_b*'s
-       pad centres.  *comp_a* is on the edge when its pads are near
-       the 4 bbox corners or the two short sides.
+    Args:
+        tolerance: Radius in mm around each corner vertex.
     """
     if not _HAS_SHAPELY:
         return False
 
-    from .overlap import _get_pad_union
-
     outline_b = _resolve_outline(comp_b, packages, is_bottom=is_bottom_b)
+    if outline_b is None:
+        return False
 
-    # --- 1. Outline short-segment check (original method) --------------------
-    if outline_b is not None:
-        body_a = _resolve_outline(comp_a, packages, is_bottom=is_bottom_a)
-        if body_a is None:
-            pad_a = _get_pad_union(comp_a, packages, is_bottom=is_bottom_a)
-            if pad_a is not None:
-                body_a = pad_a.convex_hull
+    coords = _extract_outline_coords(outline_b)
+    corners = _find_corner_vertices(coords)
+    if not corners:
+        return False
 
-        if body_a is not None:
-            coords: list[tuple[float, float]] = []
-            if hasattr(outline_b, "geoms"):
-                for g in outline_b.geoms:
-                    if hasattr(g, "exterior"):
-                        coords = list(g.exterior.coords[:-1])
-                        break
-            elif hasattr(outline_b, "exterior"):
-                coords = list(outline_b.exterior.coords[:-1])
-
-            if len(coords) >= 4:
-                n = len(coords)
-                edges: list[tuple[tuple[float, float],
-                                  tuple[float, float], float]] = []
-                for i in range(n):
-                    p1 = coords[i]
-                    p2 = coords[(i + 1) % n]
-                    length = math.sqrt(
-                        (p2[0] - p1[0]) ** 2 + (p2[1] - p1[1]) ** 2)
-                    edges.append((p1, p2, length))
-
-                edges_sorted = sorted(edges, key=lambda e: e[2])
-                shortest = edges_sorted[0][2]
-                longest = edges_sorted[-1][2]
-
-                if longest > 0 and shortest / longest > 0.95:
-                    short_segments = [(p1, p2) for p1, p2, _ in edges]
-                else:
-                    len_threshold = shortest * 1.3
-                    short_segments = [
-                        (p1, p2) for p1, p2, length in edges
-                        if length <= len_threshold
-                    ]
-
-                if short_segments:
-                    from shapely.geometry import LineString as _LS
-                    for p1, p2 in short_segments:
-                        seg = _LS([p1, p2])
-                        edge_zone = seg.buffer(tolerance)
-                        if body_a.intersects(edge_zone):
-                            return True
-
-    # --- 2. Pad bbox edge check (corners + short sides) ----------------------
     pad_centers_a = _get_pad_centers(
         comp_a, packages, is_bottom=is_bottom_a)
-    pad_centers_b = _get_pad_centers(
-        comp_b, packages, is_bottom=is_bottom_b)
-    bbox_b = _get_pad_bbox(comp_b, packages, is_bottom=is_bottom_b)
+    if not pad_centers_a:
+        return False
 
-    if pad_centers_a and pad_centers_b and bbox_b is not None:
-        if _is_near_bbox_edge(pad_centers_a, pad_centers_b,
-                              tolerance=tolerance, bbox_b=bbox_b):
-            return True
+    tol_sq = tolerance * tolerance
+    for px, py in pad_centers_a:
+        for cx, cy in corners:
+            dx = px - cx
+            dy = py - cy
+            if dx * dx + dy * dy <= tol_sq:
+                return True
 
     return False
 
