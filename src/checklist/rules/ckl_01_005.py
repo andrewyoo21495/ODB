@@ -15,6 +15,7 @@ from src.checklist.geometry_utils import (
     filter_by_size,
     find_outline_boundary_pad_overlapping_components,
     find_outline_overlapping_components,
+    find_pad_overlapping_components,
     get_component_orientation,
     is_on_edge,
 )
@@ -94,6 +95,19 @@ class CKL01005(ChecklistRule):
 
                 # Boundary-touching items → evaluate and add to result rows
                 for ind, sz in filtered:
+                    # If no pad-pad overlap with AP/Memory → PASS
+                    pad_hits = find_pad_overlapping_components(
+                        ap, [ind], packages,
+                        is_bottom_primary=ap_is_bottom,
+                        is_bottom_candidates=opp_is_bottom,
+                    )
+                    if not pad_hits:
+                        overlap_items.append({
+                            "comp": ind, "status": "PASS",
+                            "detail": "No pad overlap",
+                        })
+                        continue
+
                     on_edge = is_on_edge(ind, ap, packages)
                     orientation = get_component_orientation(ind, packages)
                     edge_str = "TRUE" if on_edge else "FALSE"

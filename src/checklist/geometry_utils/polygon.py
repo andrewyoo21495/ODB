@@ -380,6 +380,56 @@ def _get_pad_centers(comp: Component, packages: list[Package],
     return []
 
 
+def _get_pad_bbox(
+    comp: Component,
+    packages: list[Package],
+    *,
+    is_bottom: bool = False,
+) -> tuple[float, float, float, float] | None:
+    """Return (minx, miny, maxx, maxy) covering the outer edges of all pads.
+
+    Unlike *_get_pad_centers* which returns centre points only, this function
+    considers each pin's outline shape (RC, SQ, CR, CONTOUR) so that the
+    resulting bounding box encompasses the full physical extent of the pads.
+
+    Falls back to centre-based bbox when outline data is unavailable.
+    Returns None when the component has no pad information at all.
+    """
+    if comp.pkg_ref < 0 or comp.pkg_ref >= len(packages):
+        return None
+    pkg = packages[comp.pkg_ref]
+
+    all_xs: list[float] = []
+    all_ys: list[float] = []
+
+    if pkg.pins:
+        for pin in pkg.pins:
+            if pin.outlines:
+                for outline in pin.outlines:
+                    verts = _outline_vertices(outline)
+                    for lx, ly in verts:
+                        bx, by = transform_point(
+                            lx, ly, comp, is_bottom=is_bottom)
+                        all_xs.append(bx)
+                        all_ys.append(by)
+            else:
+                # No outline → use centre as fallback
+                bx, by = transform_point(
+                    pin.center.x, pin.center.y, comp, is_bottom=is_bottom)
+                all_xs.append(bx)
+                all_ys.append(by)
+
+    if not all_xs and comp.toeprints:
+        for tp in comp.toeprints:
+            all_xs.append(tp.x)
+            all_ys.append(tp.y)
+
+    if not all_xs:
+        return None
+
+    return (min(all_xs), min(all_ys), max(all_xs), max(all_ys))
+
+
 # ---------------------------------------------------------------------------
 # Edge / corner detection
 # ---------------------------------------------------------------------------
@@ -464,117 +514,97 @@ def _find_short_edge_pad_indices(
     return edge_pad_indices
 
 
-def _is_near_short_side_bbox(
+def _is_near_bbox_edge(
     pad_centers_a: list[tuple[float, float]],
     pad_centers_b: list[tuple[float, float]],
-    tolerance: float = 0.254,
+    tolerance: float = 0.5,
+    *,
+    bbox_b: tuple[float, float, float, float] | None = None,
 ) -> bool:
-    """Return True if any pad of comp_a is near a short side of comp_b's bbox.
+    """Return True if any pad of comp_a is near an edge zone of comp_b's pad bbox.
 
-    Computes the bounding box of *comp_b*'s pad centres and determines the
-    short axis.  A pad of *comp_a* is "on the edge" if it is positioned
-    beyond the inner boundary of the short-side tolerance zone.
+    "Edge zone" is defined by two rules applied to the axis-aligned bounding
+    box of *comp_b*'s pads:
 
-    For a horizontal connector (width > height) the short sides are left
-    and right; for a vertical connector (height > width) they are top and
-    bottom.
+    1. **Corner rule** — any of the 4 bbox corners.
+    2. **Short-side rule** — the two shorter sides of the bbox (or all
+       four sides when the bbox is roughly square).
+
+    A pad of *comp_a* is on the edge when its centre is within *tolerance*
+    distance of a corner point or a short-side line segment.
+
+    Args:
+        bbox_b: Pre-computed (minx, miny, maxx, maxy) for *comp_b*'s pads.
+                When supplied, *pad_centers_b* is ignored for bbox
+                calculation (but must still be non-empty for the guard
+                check).  Use ``_get_pad_bbox()`` to compute a bbox that
+                covers the full outer edges of each pad, not just centres.
     """
     if not pad_centers_a or not pad_centers_b:
         return False
 
-    xs_b = [p[0] for p in pad_centers_b]
-    ys_b = [p[1] for p in pad_centers_b]
-    minx, maxx = min(xs_b), max(xs_b)
-    miny, maxy = min(ys_b), max(ys_b)
+    if bbox_b is not None:
+        minx, miny, maxx, maxy = bbox_b
+    else:
+        xs_b = [p[0] for p in pad_centers_b]
+        ys_b = [p[1] for p in pad_centers_b]
+        minx, maxx = min(xs_b), max(xs_b)
+        miny, maxy = min(ys_b), max(ys_b)
     width = maxx - minx
     height = maxy - miny
 
     if width < 1e-6 and height < 1e-6:
         return False
 
-    # Near-square: treat all four sides as short
-    is_square = (max(width, height) < 1e-6
-                 or min(width, height) / max(width, height) > 0.85)
+    # 4 corners of the bbox
+    corners = [(minx, miny), (minx, maxy), (maxx, miny), (maxx, maxy)]
 
-    for px, py in pad_centers_a:
-        if is_square:
-            # All sides are short
-            if (px <= minx + tolerance or px >= maxx - tolerance
-                    or py <= miny + tolerance or py >= maxy - tolerance):
-                return True
-        elif width > height:
-            # Horizontal connector → short sides are left and right
-            if px <= minx + tolerance or px >= maxx - tolerance:
-                return True
-        else:
-            # Vertical connector → short sides are top and bottom
-            if py <= miny + tolerance or py >= maxy - tolerance:
-                return True
-
-    return False
-
-
-def _is_near_pad_hull_corner(
-    pad_centers_a: list[tuple[float, float]],
-    pad_centers_b: list[tuple[float, float]],
-    tolerance: float = 0.254,
-    max_interior_angle: float = 160.0,
-) -> bool:
-    """Return True if any pad of comp_a is near an angular vertex of comp_b's hull.
-
-    Builds the convex hull of *comp_b*'s pad centres.  For each hull vertex,
-    computes the interior angle.  Vertices with interior angle < *max_interior_angle*
-    are considered "angular" (corner) points.  Returns True if any pad of
-    *comp_a* falls within *tolerance* of such a vertex.
-    """
-    if not _HAS_SHAPELY or not pad_centers_a or len(pad_centers_b) < 3:
-        return False
-
-    from shapely.geometry import MultiPoint as _MP
-
-    hull = _MP(pad_centers_b).convex_hull
-    if hull.is_empty or hull.geom_type != "Polygon":
-        return False
-
-    coords = list(hull.exterior.coords[:-1])  # exclude closing duplicate
-    n = len(coords)
-    if n < 3:
-        return False
-
-    # Identify angular vertices (interior angle < max_interior_angle)
-    angular_vertices: list[tuple[float, float]] = []
-    for i in range(n):
-        p_prev = coords[(i - 1) % n]
-        p_curr = coords[i]
-        p_next = coords[(i + 1) % n]
-
-        # Vectors from current to prev and next
-        v1x = p_prev[0] - p_curr[0]
-        v1y = p_prev[1] - p_curr[1]
-        v2x = p_next[0] - p_curr[0]
-        v2y = p_next[1] - p_curr[1]
-
-        len1 = math.hypot(v1x, v1y)
-        len2 = math.hypot(v2x, v2y)
-        if len1 < 1e-9 or len2 < 1e-9:
-            continue
-
-        cos_angle = (v1x * v2x + v1y * v2y) / (len1 * len2)
-        cos_angle = max(-1.0, min(1.0, cos_angle))  # clamp for numerical safety
-        angle_deg = math.degrees(math.acos(cos_angle))
-
-        if angle_deg < max_interior_angle:
-            angular_vertices.append(p_curr)
-
-    if not angular_vertices:
-        return False
+    # Short sides as line segments
+    near_square = (max(width, height) < 1e-6
+                   or min(width, height) / max(width, height) > 0.85)
+    if near_square:
+        short_sides = [
+            ((minx, miny), (maxx, miny)),
+            ((minx, maxy), (maxx, maxy)),
+            ((minx, miny), (minx, maxy)),
+            ((maxx, miny), (maxx, maxy)),
+        ]
+    elif width < height:
+        # Vertical connector → short sides are top and bottom
+        short_sides = [
+            ((minx, maxy), (maxx, maxy)),
+            ((minx, miny), (maxx, miny)),
+        ]
+    else:
+        # Horizontal connector → short sides are left and right
+        short_sides = [
+            ((minx, miny), (minx, maxy)),
+            ((maxx, miny), (maxx, maxy)),
+        ]
 
     tol_sq = tolerance * tolerance
-    for vx, vy in angular_vertices:
-        for px, py in pad_centers_a:
-            dx = px - vx
-            dy = py - vy
+
+    for px, py in pad_centers_a:
+        # Rule 1: near any corner
+        for cx, cy in corners:
+            dx = px - cx
+            dy = py - cy
             if dx * dx + dy * dy <= tol_sq:
+                return True
+
+        # Rule 2: near a short-side segment
+        for (x1, y1), (x2, y2) in short_sides:
+            seg_dx = x2 - x1
+            seg_dy = y2 - y1
+            seg_len_sq = seg_dx * seg_dx + seg_dy * seg_dy
+            if seg_len_sq < 1e-18:
+                continue
+            t = ((px - x1) * seg_dx + (py - y1) * seg_dy) / seg_len_sq
+            t = max(0.0, min(1.0, t))
+            nx = x1 + t * seg_dx
+            ny = y1 + t * seg_dy
+            d_sq = (px - nx) ** 2 + (py - ny) ** 2
+            if d_sq <= tol_sq:
                 return True
 
     return False
@@ -585,121 +615,75 @@ def is_on_edge(comp_a: Component, comp_b: Component,
                tolerance: float = 0.254) -> bool:
     """Return True if any pad of comp_a is in an edge area of comp_b.
 
-    Three detection methods are used (returns True if any matches):
+    Two detection methods are used (returns True if either matches):
 
-    1. **Outline corner check**: any pad of *comp_a* falls within
-       *tolerance* of an outline polygon vertex of *comp_b*.
-    2. **Short-edge pad check**: for *comp_b*'s outline, identify the
-       short-side segments.  Find *comp_b*'s own pads that lie on those
-       short sides.  If any pad of *comp_a* overlaps (within *tolerance*)
-       one of these short-edge pads, it is considered on the edge.
-    3. **Corner-pad check**: the four pads of *comp_b* closest to its
-       bounding-box corners are identified.  If any pad of *comp_a* is
-       within *tolerance* of a corner pad **and** lies on the outward
-       side (away from *comp_b*'s centre), it is considered on the edge.
+    1. **Outline short-segment check**: identify short-side segments of
+       *comp_b*'s outline polygon and test proximity to *comp_a* pads.
+    2. **Pad bbox edge check**: compute the bounding box of *comp_b*'s
+       pad centres.  *comp_a* is on the edge when its pads are near
+       the 4 bbox corners or the two short sides.
 
     Args:
-        tolerance: Radius in mm around each corner vertex / corner pad
-                   to consider as the edge area.
+        tolerance: Radius in mm to consider as the edge area.
     """
     if not _HAS_SHAPELY:
         return False
 
-    pad_centers = _get_pad_centers(comp_a, packages)
-    outline_b = _resolve_outline(comp_b, packages)
-
-    if not pad_centers:
+    pad_centers_a = _get_pad_centers(comp_a, packages)
+    if not pad_centers_a:
         return False
 
-    # --- 1. Outline corner check -------------------------------------------
+    # --- 1. Outline short-segment check ------------------------------------
+    outline_b = _resolve_outline(comp_b, packages)
     if outline_b is not None:
-        corners: list[tuple[float, float]] = []
+        coords: list[tuple[float, float]] = []
         if hasattr(outline_b, "geoms"):
             for g in outline_b.geoms:
                 if hasattr(g, "exterior"):
-                    corners.extend(g.exterior.coords[:-1])
+                    coords = list(g.exterior.coords[:-1])
+                    break
         elif hasattr(outline_b, "exterior"):
-            corners = list(outline_b.exterior.coords[:-1])
+            coords = list(outline_b.exterior.coords[:-1])
 
-        for cx, cy in corners:
-            corner_region = ShapelyPoint(cx, cy).buffer(tolerance)
-            for px, py in pad_centers:
-                if corner_region.contains(ShapelyPoint(px, py)):
-                    return True
+        if len(coords) >= 4:
+            n = len(coords)
+            edges: list[tuple[tuple[float, float],
+                              tuple[float, float], float]] = []
+            for i in range(n):
+                p1 = coords[i]
+                p2 = coords[(i + 1) % n]
+                length = math.sqrt(
+                    (p2[0] - p1[0]) ** 2 + (p2[1] - p1[1]) ** 2)
+                edges.append((p1, p2, length))
 
-    # --- 2. Short-edge pad check -------------------------------------------
+            edges_sorted = sorted(edges, key=lambda e: e[2])
+            shortest = edges_sorted[0][2]
+            longest = edges_sorted[-1][2]
+
+            if longest > 0 and shortest / longest > 0.95:
+                short_segments = [(p1, p2) for p1, p2, _ in edges]
+            else:
+                len_threshold = shortest * 1.3
+                short_segments = [
+                    (p1, p2) for p1, p2, length in edges
+                    if length <= len_threshold
+                ]
+
+            if short_segments:
+                from shapely.geometry import LineString as _LS
+                for p1, p2 in short_segments:
+                    seg = _LS([p1, p2])
+                    edge_zone = seg.buffer(tolerance)
+                    for px, py in pad_centers_a:
+                        if edge_zone.contains(ShapelyPoint(px, py)):
+                            return True
+
+    # --- 2. Pad bbox edge check (corners + short sides) --------------------
     pad_centers_b = _get_pad_centers(comp_b, packages)
-    if pad_centers_b and outline_b is not None:
-        short_edge_indices = _find_short_edge_pad_indices(
-            pad_centers_b, outline_b, tolerance=tolerance,
-        )
-        if short_edge_indices:
-            tol_sq = tolerance * tolerance
-            for sei in short_edge_indices:
-                sex, sey = pad_centers_b[sei]
-                for px, py in pad_centers:
-                    dx = px - sex
-                    dy = py - sey
-                    if dx * dx + dy * dy <= tol_sq:
-                        return True
-
-    # --- 3. Corner-pad check -----------------------------------------------
-    if not pad_centers_b or len(pad_centers_b) < 4:
-        return False
-
-    # Bounding box of comp_b (prefer outline, fall back to pads)
-    if outline_b is not None:
-        minx, miny, maxx, maxy = outline_b.bounds
-    else:
-        xs_b = [p[0] for p in pad_centers_b]
-        ys_b = [p[1] for p in pad_centers_b]
-        minx, miny, maxx, maxy = min(xs_b), min(ys_b), max(xs_b), max(ys_b)
-
-    bbox_corners = [(minx, miny), (minx, maxy), (maxx, miny), (maxx, maxy)]
-
-    # For each bbox corner, find the nearest pad of comp_b
-    corner_pad_indices: set[int] = set()
-    for bcx, bcy in bbox_corners:
-        best_idx: int | None = None
-        best_dist = float("inf")
-        for i, (px, py) in enumerate(pad_centers_b):
-            d = (px - bcx) ** 2 + (py - bcy) ** 2
-            if d < best_dist:
-                best_dist = d
-                best_idx = i
-        if best_idx is not None:
-            corner_pad_indices.add(best_idx)
-
-    # Centroid of comp_b pads
-    center_x = sum(p[0] for p in pad_centers_b) / len(pad_centers_b)
-    center_y = sum(p[1] for p in pad_centers_b) / len(pad_centers_b)
-
-    tol_sq = tolerance * tolerance
-    for cp_idx in corner_pad_indices:
-        cpx, cpy = pad_centers_b[cp_idx]
-        # Direction vector: comp_b centre → corner pad (outward)
-        dx = cpx - center_x
-        dy = cpy - center_y
-        for px, py in pad_centers:
-            # Distance from comp_a pad to the corner pad
-            apx = px - cpx
-            apy = py - cpy
-            if apx * apx + apy * apy > tol_sq:
-                continue
-            # comp_a pad must be on the outward side (dot product >= 0)
-            if dx * apx + dy * apy >= 0:
-                return True
-
-    # --- 4. BBox short-side check (pad-centre based) -------------------------
-    if pad_centers_b:
-        if _is_near_short_side_bbox(pad_centers, pad_centers_b,
-                                    tolerance=tolerance):
-            return True
-
-    # --- 5. Pad convex-hull corner check -------------------------------------
-    if pad_centers_b and len(pad_centers_b) >= 3:
-        if _is_near_pad_hull_corner(pad_centers, pad_centers_b,
-                                    tolerance=tolerance):
+    bbox_b = _get_pad_bbox(comp_b, packages)
+    if pad_centers_a and pad_centers_b and bbox_b is not None:
+        if _is_near_bbox_edge(pad_centers_a, pad_centers_b,
+                              tolerance=tolerance, bbox_b=bbox_b):
             return True
 
     return False
@@ -785,19 +769,16 @@ def is_on_outline_edge(
 ) -> bool:
     """Return True if *comp_a*'s body or pads are near a short-edge of *comp_b*.
 
-    "Edge" means the two shorter sides of a rectangular component and/or the
-    angular (corner) vertices of the pad convex hull.
+    "Edge" means the 4 corners and/or the two shorter sides of the
+    bounding box of *comp_b*'s pad centres.
 
-    Five detection methods (returns True if any matches):
+    Two detection methods (returns True if either matches):
 
     1. **Outline short-segment check**: identify short-side segments of
        *comp_b*'s outline polygon and test proximity.
-    2. **BBox short-side check**: compute *comp_b*'s pad bounding box,
-       determine the short axis, and test if *comp_a*'s pads are near
-       the short sides.
-    3. **Pad convex-hull corner check**: build the convex hull of
-       *comp_b*'s pad centres, find angular vertices (interior angle <
-       160°), and test proximity.
+    2. **Pad bbox edge check**: compute the bounding box of *comp_b*'s
+       pad centres.  *comp_a* is on the edge when its pads are near
+       the 4 bbox corners or the two short sides.
     """
     if not _HAS_SHAPELY:
         return False
@@ -856,21 +837,16 @@ def is_on_outline_edge(
                         if body_a.intersects(edge_zone):
                             return True
 
-    # --- 2. BBox short-side check (pad-centre based) -------------------------
+    # --- 2. Pad bbox edge check (corners + short sides) ----------------------
     pad_centers_a = _get_pad_centers(
         comp_a, packages, is_bottom=is_bottom_a)
     pad_centers_b = _get_pad_centers(
         comp_b, packages, is_bottom=is_bottom_b)
+    bbox_b = _get_pad_bbox(comp_b, packages, is_bottom=is_bottom_b)
 
-    if pad_centers_a and pad_centers_b:
-        if _is_near_short_side_bbox(pad_centers_a, pad_centers_b,
-                                    tolerance=tolerance):
-            return True
-
-    # --- 3. Pad convex-hull corner check -------------------------------------
-    if pad_centers_a and pad_centers_b and len(pad_centers_b) >= 3:
-        if _is_near_pad_hull_corner(pad_centers_a, pad_centers_b,
-                                    tolerance=tolerance):
+    if pad_centers_a and pad_centers_b and bbox_b is not None:
+        if _is_near_bbox_edge(pad_centers_a, pad_centers_b,
+                              tolerance=tolerance, bbox_b=bbox_b):
             return True
 
     return False

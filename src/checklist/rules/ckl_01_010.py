@@ -4,8 +4,9 @@ If there is no fixing screw near a narrow PCB section (width <= 3.5 mm),
 the PCB width should be extended to at least 3.5 mm.
 
 Detection process:
-1. Find all PCB regions where local width is <= 3.5 mm using morphological
-   opening (same approach as CKL-03-011 bending detection).
+1. Find protruding PCB regions where local width is <= 3.5 mm and
+   protrusion depth >= 2 mm using morphological opening (same approach
+   as CKL-03-011 bending detection).
 2. (Future) Check for fixing screws / through-holes within 10 mm radius of
    each narrow region.
 3. Report each region with region index, screw presence, and pass/fail status.
@@ -30,6 +31,8 @@ from src.models import RuleResult
 
 # Width threshold in mm — regions narrower than this are flagged.
 _WIDTH_THRESHOLD = 3.5
+# Minimum protrusion depth in mm — only protruding regions are flagged.
+_PROTRUSION_DEPTH = 2.0
 
 
 @register_rule
@@ -46,12 +49,11 @@ class CKL01010(ChecklistRule):
         board_poly = build_board_polygon(profile)
 
         # Reuse bending-vulnerable-area detection with width_threshold=3.5 mm
-        # and protrusion_depth=0.0 to capture *all* narrow regions regardless
-        # of how far they protrude.
+        # and protrusion_depth=2.0 mm (same criteria as CKL-03-011).
         narrow_areas = find_bending_vulnerable_areas(
             board_poly,
             width_threshold=_WIDTH_THRESHOLD,
-            protrusion_depth=0.0,
+            protrusion_depth=_PROTRUSION_DEPTH,
         )
 
         columns = ["region", "screw", "status"]
@@ -82,7 +84,7 @@ class CKL01010(ChecklistRule):
             render_narrow_width_image(
                 board_poly, narrow_areas, region_labels, img_path,
                 rule_id=self.rule_id,
-                title="Narrow-width areas (width <= 3.5 mm)",
+                title="Narrow protruding areas (width <= 3.5 mm, depth >= 2 mm)",
             )
             images.append({
                 "path": img_path,
