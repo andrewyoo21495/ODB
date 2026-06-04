@@ -16,6 +16,13 @@ import math
 import tempfile
 from pathlib import Path
 
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
+from matplotlib.patches import Polygon as MplPolygon
+import numpy as np
+
 from src.checklist.component_classifier import find_interposers
 from src.checklist.engine import register_rule
 from src.checklist.geometry_utils.overlap import (
@@ -191,6 +198,108 @@ def detect_grouped_outer_pins(
     return grouped
 
 
+def _shapely_to_arrays(geom):
+    """Yield (xs, ys) arrays for each ring of a Shapely geometry."""
+    if geom is None or geom.is_empty:
+        return
+    if geom.geom_type == "Polygon":
+        xs, ys = geom.exterior.xy
+        yield np.array(xs), np.array(ys)
+    elif geom.geom_type in ("MultiPolygon", "GeometryCollection"):
+        for part in geom.geoms:
+            yield from _shapely_to_arrays(part)
+    elif geom.geom_type in ("Point", "MultiPoint"):
+        yield from _shapely_to_arrays(geom.buffer(0.05))
+
+
+def _render_interposer_image(
+    comp,
+    pkg,
+    outer_indices: set[int],
+    grouped_set: set[int],
+    pin_results: list[dict],
+    output_path: Path,
+    *,
+    rule_id: str,
+    layer_name: str,
+    is_bottom: bool = False,
+) -> Path:
+    """Render interposer outer pins coloured by grouped/normal status."""
+    fig, ax = plt.subplots(1, 1, figsize=(10, 10))
+
+    has_fail = any(r["status"] == "FAIL" for r in pin_results)
+    status_str = "FAIL" if has_fail else "PASS"
+    ax.set_title(
+        f"{comp.comp_name} ({comp.part_name}) — {layer_name} Layer\n"
+        f"{rule_id}: Interposer outer ball grouped check  [{status_str}]",
+        fontsize=12, fontweight="bold",
+    )
+    ax.set_aspect("equal")
+    ax.grid(True, alpha=0.3)
+
+    all_xs, all_ys = [], []
+    outer_set = set(outer_indices)
+
+    # Draw all pins
+    for idx, pin in enumerate(pkg.pins):
+        bx, by = transform_point(
+            pin.center.x, pin.center.y, comp, is_bottom=is_bottom,
+        )
+        all_xs.append(bx)
+        all_ys.append(by)
+
+        if idx not in outer_set:
+            # Interior pin — dim grey
+            ax.plot(bx, by, "o", color="#D0D0D0", markersize=3, zorder=2)
+        elif idx in grouped_set:
+            # Outer pin, grouped → green
+            ax.plot(bx, by, "o", color="#4CAF50", markersize=5, zorder=3)
+        else:
+            # Outer pin, normal — check if it's GND (PASS) or signal (FAIL)
+            matching = [
+                r for r in pin_results
+                if r["pin"] == pin.name and r["comp"] == comp.comp_name
+            ]
+            if matching and matching[0]["status"] == "FAIL":
+                ax.plot(bx, by, "o", color="#F44336", markersize=6, zorder=4)
+            else:
+                ax.plot(bx, by, "o", color="#FFC107", markersize=5, zorder=3)
+
+    # Component centre
+    ax.plot(comp.x, comp.y, "x", color="blue", markersize=10,
+            markeredgewidth=2, zorder=5)
+
+    # Viewport
+    if all_xs and all_ys:
+        cx = (max(all_xs) + min(all_xs)) / 2
+        cy = (max(all_ys) + min(all_ys)) / 2
+        span = max(max(all_xs) - min(all_xs),
+                   max(all_ys) - min(all_ys), 0.5)
+        margin = span * 0.15
+        ax.set_xlim(cx - span / 2 - margin, cx + span / 2 + margin)
+        ax.set_ylim(cy - span / 2 - margin, cy + span / 2 + margin)
+
+    # Legend
+    legend_elements = [
+        plt.Line2D([0], [0], marker="o", color="w", markerfacecolor="#D0D0D0",
+                   markersize=6, label="Interior pin"),
+        plt.Line2D([0], [0], marker="o", color="w", markerfacecolor="#4CAF50",
+                   markersize=8, label="Outer pin (grouped - PASS)"),
+        plt.Line2D([0], [0], marker="o", color="w", markerfacecolor="#FFC107",
+                   markersize=8, label="Outer pin (normal - GND PASS)"),
+        plt.Line2D([0], [0], marker="o", color="w", markerfacecolor="#F44336",
+                   markersize=8, label="Outer pin (normal - FAIL)"),
+    ]
+    ax.legend(handles=legend_elements, loc="upper left", fontsize=8)
+    ax.set_xlabel("X (mm)")
+    ax.set_ylabel("Y (mm)")
+
+    fig.tight_layout()
+    fig.savefig(str(output_path), dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    return output_path
+
+
 @register_rule
 class CKL01009(ChecklistRule):
     rule_id = "CKL-01-009"
@@ -210,6 +319,8 @@ class CKL01009(ChecklistRule):
 
         columns = ["comp", "cmp_layer", "pin", "shape", "signal", "status"]
         rows: list[dict] = []
+        images: list[dict] = []
+        image_dir = Path(tempfile.mkdtemp(prefix="ckl_01_009_"))
 
         for comps, layer in [(components_top, "Top"), (components_bot, "Bottom")]:
             is_bottom = layer == "Bottom"
@@ -245,6 +356,7 @@ class CKL01009(ChecklistRule):
                 for tp in inp.toeprints:
                     tp_by_name[tp.name] = tp
 
+                comp_pin_results: list[dict] = []
                 for idx in sorted(outer_indices):
                     pin = pkg.pins[idx]
                     is_grouped = idx in grouped_set
@@ -261,14 +373,32 @@ class CKL01009(ChecklistRule):
                     else:
                         status = "FAIL"
 
-                    rows.append({
+                    row = {
                         "comp": inp.comp_name,
                         "cmp_layer": layer,
                         "pin": pin.name,
                         "shape": shape,
                         "signal": net_name or "(none)",
                         "status": status,
-                    })
+                    }
+                    rows.append(row)
+                    comp_pin_results.append(row)
+
+                # Generate visualisation image for this interposer
+                safe = inp.comp_name.replace("/", "_")
+                img_path = image_dir / f"{safe}_{layer}.png"
+                _render_interposer_image(
+                    inp, pkg, outer_indices, grouped_set,
+                    comp_pin_results, img_path,
+                    rule_id=self.rule_id,
+                    layer_name=layer,
+                    is_bottom=is_bottom,
+                )
+                images.append({
+                    "path": img_path,
+                    "title": f"{inp.comp_name} ({layer})",
+                    "width": 500,
+                })
 
         fail_count = sum(1 for r in rows if r["status"] == "FAIL")
         passed = fail_count == 0
@@ -288,4 +418,5 @@ class CKL01009(ChecklistRule):
                 r["comp"] for r in rows if r["status"] == "FAIL"
             ],
             details={"columns": columns, "rows": rows},
+            images=images,
         )

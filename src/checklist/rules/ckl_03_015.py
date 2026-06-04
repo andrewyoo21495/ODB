@@ -36,7 +36,7 @@ from src.models import RuleResult
 
 
 _CLEARANCE_MM = 0.65
-_EXCLUDED_PREFIXES = ("ANT", "CN", "TP")
+_EXCLUDED_PREFIXES = ("ANT", "CN", "TP", "SC", "INP", "INT")
 
 
 def _shapely_to_arrays(geom):

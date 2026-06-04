@@ -89,35 +89,7 @@ class CKL01003(ChecklistRule):
 
                 overlap_items: list[dict] = []
                 for opp in hit_comps:
-                    # Step 2: check PAD-PAD overlap
-                    pad_hits = find_pad_overlapping_components(
-                        pmic, [opp], packages,
-                        is_bottom_primary=pmic_is_bottom,
-                        is_bottom_candidates=opp_is_bottom,
-                    )
-                    if not pad_hits:
-                        # No PAD overlap → PASS
-                        rows.append({
-                            "comp": pmic.comp_name,
-                            "cmp_layer": layer_name,
-                            "overlapping_cmp": opp.comp_name,
-                            "pad_overlap": "FALSE",
-                            "containment": "N/A",
-                            "status": "PASS",
-                        })
-                        overlap_items.append({
-                            "comp": opp, "status": "PASS",
-                            "detail": "No pad overlap",
-                        })
-                        continue
-
-                    # Step 3: PAD overlap exists — check containment
-                    # FULL (PASS) when either side completely contains the
-                    # other:
-                    #   A) PMIC pads are fully inside the opp IC, OR
-                    #   B) Opp IC pads are fully inside the PMIC outline
-                    #      (opp IC is small enough to sit entirely within
-                    #       the PMIC).
+                    # Build geometry for containment analysis
                     pmic_pads = _get_pad_union(
                         pmic, packages, is_bottom=pmic_is_bottom,
                     )
@@ -131,6 +103,20 @@ class CKL01003(ChecklistRule):
                         opp, packages, is_bottom=opp_is_bottom,
                     )
 
+                    # Step 2: check PAD-PAD overlap
+                    pad_hits = find_pad_overlapping_components(
+                        pmic, [opp], packages,
+                        is_bottom_primary=pmic_is_bottom,
+                        is_bottom_candidates=opp_is_bottom,
+                    )
+
+                    # Step 3: containment check
+                    # FULL (PASS) when either side completely contains the
+                    # other:
+                    #   A) PMIC pads are fully inside the opp IC, OR
+                    #   B) Opp IC pads are fully inside the PMIC outline
+                    #      (opp IC is small enough to sit entirely within
+                    #       the PMIC).
                     fully_contained = False
                     # A) PMIC inside opp IC
                     if pmic_pads is not None:
@@ -145,6 +131,44 @@ class CKL01003(ChecklistRule):
                         elif pmic_pads is not None and pmic_pads.contains(opp_pads):
                             fully_contained = True
 
+                    if not pad_hits and fully_contained:
+                        # No direct PAD overlap but one side is fully
+                        # contained within the other → PASS
+                        rows.append({
+                            "comp": pmic.comp_name,
+                            "cmp_layer": layer_name,
+                            "overlapping_cmp": opp.comp_name,
+                            "pad_overlap": "FALSE",
+                            "containment": "FULL",
+                            "status": "PASS",
+                        })
+                        overlap_items.append({
+                            "comp": opp, "status": "PASS",
+                            "detail": "No pad overlap (contained)",
+                        })
+                        continue
+
+                    if not pad_hits and not fully_contained:
+                        # No direct PAD overlap but outlines partially
+                        # overlap with interleaved pads → FAIL
+                        # (e.g. two BGA ICs whose pad grids don't collide
+                        #  but whose footprints are only partially
+                        #  overlapping)
+                        rows.append({
+                            "comp": pmic.comp_name,
+                            "cmp_layer": layer_name,
+                            "overlapping_cmp": opp.comp_name,
+                            "pad_overlap": "FALSE",
+                            "containment": "PARTIAL",
+                            "status": "FAIL",
+                        })
+                        overlap_items.append({
+                            "comp": opp, "status": "FAIL",
+                            "detail": "PARTIAL (interleaved)",
+                        })
+                        continue
+
+                    # PAD overlap exists — use containment result
                     if fully_contained:
                         status = "PASS"
                         containment = "FULL"

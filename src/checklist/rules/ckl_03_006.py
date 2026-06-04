@@ -237,7 +237,10 @@ class CKL03006(ChecklistRule):
             (components_top, "Top", False),
             (components_bot, "Bottom", True),
         ]:
-            washers = find_washers(comps)
+            washers = [
+                w for w in find_washers(comps)
+                if not (w.comp_name or "").upper().startswith("ANT")
+            ]
 
             for comp in washers:
                 if comp.pkg_ref < 0 or comp.pkg_ref >= len(packages):
