@@ -537,7 +537,8 @@ def _build_rule_section(
     lines.append('</div>')
 
     # Detail tables
-    lines.append(_render_details(result.details))
+    lines.append(_render_details(result.details,
+                                   recommended=result.recommended))
 
     # Images
     if result.images:
@@ -566,7 +567,7 @@ def _build_rule_section(
 # Detail rendering helpers
 # ---------------------------------------------------------------------------
 
-def _render_details(details: dict) -> str:
+def _render_details(details: dict, *, recommended: bool = False) -> str:
     if not details:
         return ""
 
@@ -577,13 +578,15 @@ def _render_details(details: dict) -> str:
 
     # Tabular mode
     if isinstance(columns, list) and isinstance(rows, list):
-        parts.append(_render_tabular_table(columns, rows))
+        parts.append(_render_tabular_table(columns, rows,
+                                           recommended=recommended))
 
         # Optional signal table (e.g. CKL-03-015)
         sig_columns = details.get("signal_columns")
         sig_rows = details.get("signal_rows")
         if isinstance(sig_columns, list) and isinstance(sig_rows, list) and sig_rows:
-            parts.append(_render_tabular_table(sig_columns, sig_rows))
+            parts.append(_render_tabular_table(sig_columns, sig_rows,
+                                               recommended=recommended))
     else:
         # Legacy mode
         for key, value in details.items():
@@ -614,7 +617,9 @@ def _render_details(details: dict) -> str:
     return "\n".join(parts)
 
 
-def _render_tabular_table(columns: list[str], rows: list[dict]) -> str:
+def _render_tabular_table(
+    columns: list[str], rows: list[dict], *, recommended: bool = False,
+) -> str:
     lines = ['<table class="detail-table"><thead><tr>']
     for col in columns:
         lines.append(f'<th>{html.escape(col)}</th>')
@@ -629,7 +634,10 @@ def _render_tabular_table(columns: list[str], rows: list[dict]) -> str:
                 if val_upper == "PASS":
                     cell_cls = ' class="status-pass"'
                 elif val_upper == "FAIL":
-                    cell_cls = ' class="status-fail"'
+                    # Recommended rules use orange (warn) instead of red
+                    cell_cls = (' class="status-warn"'
+                                if recommended
+                                else ' class="status-fail"')
                 elif val_upper == "NC":
                     cell_cls = ' class="status-nc"'
             lines.append(

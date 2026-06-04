@@ -184,8 +184,10 @@ class CKL02002(ChecklistRule):
                         "detail": ", ".join(detail_parts),
                     })
 
-                # Generate visualisation image for this connector
-                if overlap_items:
+                # Generate visualisation image only when FAIL exists
+                if overlap_items and any(
+                    i["status"] == "FAIL" for i in overlap_items
+                ):
                     safe_name = conn.comp_name.replace("/", "_")
                     img_path = image_dir / f"{safe_name}_{conn_layer}.png"
                     render_overlap_image(

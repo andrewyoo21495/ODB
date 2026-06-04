@@ -340,32 +340,39 @@ class CKL01002(ChecklistRule):
                             "status": status,
                         })
 
-                # Generate visualisation image
-                all_check_indices = outermost_indices | corner_indices
-                safe_name = comp.comp_name.replace("/", "_")
-                img_path = image_dir / f"{safe_name}_{layer_name}.png"
-                comp_label = (
-                    f"PMIC (outermost NC + corner)"
-                    if is_pmic_comp
-                    else f"IC — {ic_type}"
-                )
-                render_via_check_image(
-                    comp, pkg, via_positions, is_bottom, img_path,
-                    rule_id=self.rule_id,
-                    comp_type=comp_label,
-                    fid_resolved=fid_resolved,
-                    signal_layer_name=sig_name,
-                    pin_indices=all_check_indices,
-                    eda_data=eda,
-                    layers_data=layers_data,
-                    nc_map=nc_map,
-                    nc_is_fail=True,
-                )
-                images.append({
-                    "path": img_path,
-                    "title": f"{comp.comp_name} ({layer_name}) — {ic_type}",
-                    "width": 500,
-                })
+                # Generate visualisation image only when there is a FAIL
+                comp_rows = [
+                    r for r in rows
+                    if r["comp"] == comp.comp_name
+                    and r["cmp_layer"] == layer_name
+                ]
+                has_fail = any(r["status"] == "FAIL" for r in comp_rows)
+                if has_fail:
+                    all_check_indices = outermost_indices | corner_indices
+                    safe_name = comp.comp_name.replace("/", "_")
+                    img_path = image_dir / f"{safe_name}_{layer_name}.png"
+                    comp_label = (
+                        f"PMIC (outermost NC + corner)"
+                        if is_pmic_comp
+                        else f"IC — {ic_type}"
+                    )
+                    render_via_check_image(
+                        comp, pkg, via_positions, is_bottom, img_path,
+                        rule_id=self.rule_id,
+                        comp_type=comp_label,
+                        fid_resolved=fid_resolved,
+                        signal_layer_name=sig_name,
+                        pin_indices=all_check_indices,
+                        eda_data=eda,
+                        layers_data=layers_data,
+                        nc_map=nc_map,
+                        nc_is_fail=True,
+                    )
+                    images.append({
+                        "path": img_path,
+                        "title": f"{comp.comp_name} ({layer_name}) — {ic_type}",
+                        "width": 500,
+                    })
 
         fail_count = sum(1 for r in rows if r["status"] == "FAIL")
         passed = fail_count == 0
