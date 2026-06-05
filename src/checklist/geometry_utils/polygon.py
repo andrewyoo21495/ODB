@@ -679,7 +679,7 @@ def _find_corner_vertices(
 
 def is_on_edge(comp_a: Component, comp_b: Component,
                packages: list[Package],
-               tolerance: float = 0.254) -> bool:
+               tolerance: float = 0.4) -> bool:
     """Return True if any pad of comp_a is near a corner vertex of comp_b.
 
     "Corner vertex" = a point on *comp_b*'s component outline where the
@@ -791,7 +791,7 @@ def is_on_outline_edge(
     *,
     is_bottom_a: bool = False,
     is_bottom_b: bool = False,
-    tolerance: float = 0.254,
+    tolerance: float = 0.4,
 ) -> bool:
     """Return True if *comp_a*'s pads are near a corner vertex of *comp_b*.
 
