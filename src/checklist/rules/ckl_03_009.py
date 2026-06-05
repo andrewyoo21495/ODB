@@ -1,8 +1,8 @@
-"""CKL-03-009: SIM socket outermost pads must have at least 4 VIAs.
+"""CKL-03-009: SIM socket outermost ground pads must have at least 4 VIAs.
 
-For each SIM socket component, only the outermost (perimeter) pads are checked.
-Inner pads that have neighbors on all four cardinal sides are excluded.
-Each perimeter pad must have at least 4 VIAs for robustness against tearing.
+For each SIM socket component, only the outermost (perimeter) pads that are
+connected to a ground net are checked.  Each such ground pad must have at
+least 4 VIAs for robustness against tearing.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ from src.checklist.geometry_utils import (
 )
 from src.checklist.rule_base import ChecklistRule
 from src.checklist.visualizers.via_check_viz import render_via_check_image
-from src.models import Pin, RuleResult
+from src.models import EdaData, Pin, RuleResult, Toeprint
 from src.visualizer.fid_lookup import (
     _find_top_bottom_signal_layers,
     build_fid_map,
@@ -76,11 +76,38 @@ def _find_outermost_pin_indices(pins: list[Pin]) -> set[int]:
     return outermost
 
 
+_GND_PATTERNS = {
+    "GND", "GROUND", "VSS", "VSSA", "VSSQ", "DGND", "AGND",
+    "PGND", "SGND", "AVSS", "DVSS",
+}
+
+
+def _is_ground_net(net_name: str) -> bool:
+    """Return True if *net_name* looks like a ground net."""
+    if not net_name:
+        return False
+    upper = net_name.strip().upper()
+    if upper in _GND_PATTERNS:
+        return True
+    if "GND" in upper or "GROUND" in upper or "VSS" in upper:
+        return True
+    return False
+
+
+def _get_net_name(toeprint: Toeprint | None, eda_data: EdaData | None) -> str:
+    """Resolve net name for a toeprint from EDA data."""
+    if eda_data is None or toeprint is None:
+        return ""
+    if toeprint.net_num < 0 or toeprint.net_num >= len(eda_data.nets):
+        return ""
+    return eda_data.nets[toeprint.net_num].name or ""
+
+
 @register_rule
 class CKL03009(ChecklistRule):
     rule_id = "CKL-03-009"
     description = (
-        "SIM 소켓 최외곽 패드에는 인열 저항을 위해 최소 4개의 VIA가 있어야 합니다"
+        "SIM 소켓 최외곽 GND 패드에는 인열 저항을 위해 최소 4개의 VIA가 있어야 합니다"
     )
     category = "Placement"
 
@@ -131,7 +158,15 @@ class CKL03009(ChecklistRule):
                 perimeter_indices = _find_outermost_pin_indices(pkg.pins)
                 toep_by_pin = build_toeprint_lookup(comp, pkg)
 
-                for pin_idx in sorted(perimeter_indices):
+                # Filter to ground-connected perimeter pads only
+                gnd_perimeter: set[int] = set()
+                for pin_idx in perimeter_indices:
+                    tp = toep_by_pin.get(pin_idx)
+                    net_name = _get_net_name(tp, eda)
+                    if _is_ground_net(net_name):
+                        gnd_perimeter.add(pin_idx)
+
+                for pin_idx in sorted(gnd_perimeter):
                     pin = pkg.pins[pin_idx]
                     tp = toep_by_pin.get(pin_idx)
                     rpads = lookup_resolved_pads_for_pin(
@@ -161,7 +196,7 @@ class CKL03009(ChecklistRule):
                     comp_type="SIM Socket",
                     fid_resolved=fid_resolved,
                     signal_layer_name=sig_name,
-                    pin_indices=perimeter_indices,  # = outermost indices
+                    pin_indices=gnd_perimeter,  # = outermost GND indices
                 )
                 images.append({
                     "path": img_path,
@@ -178,9 +213,9 @@ class CKL03009(ChecklistRule):
             category=self.category,
             passed=passed,
             message=(
-                f"VIA가 4개 미만인 SIM 소켓 외곽 패드가 {fail_count}건 감지되었습니다."
+                f"VIA가 4개 미만인 SIM 소켓 외곽 GND 패드가 {fail_count}건 감지되었습니다."
                 if not passed
-                else "모든 SIM 소켓 외곽 패드에 최소 4개의 VIA가 있습니다."
+                else "모든 SIM 소켓 외곽 GND 패드에 최소 4개의 VIA가 있습니다."
             ),
             affected_components=[
                 r["comp"] for r in rows if r["status"] == "FAIL"

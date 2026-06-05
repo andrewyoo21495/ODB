@@ -316,6 +316,359 @@ def _gen_03_015(fail_rows: list[dict]) -> list[str]:
     return bullets
 
 
+def _gen_01_004(fail_rows: list[dict]) -> list[str]:
+    """CKL-01-004: opposite-side overlap, group by comp."""
+    grouped: dict[str, list[str]] = defaultdict(list)
+    for r in fail_rows:
+        comp = r.get("comp", "")
+        opp = r.get("overlapping_cmp", "")
+        if comp and opp and opp not in grouped[comp]:
+            grouped[comp].append(opp)
+
+    bullets: list[str] = []
+    for comp, opps in grouped.items():
+        for opp in opps:
+            bullets.append(
+                f"{opp}는 {comp}의 배면 outline과 겹치지 않도록 하거나 수평배치 할 것."
+            )
+    return bullets
+
+
+def _gen_01_005(fail_rows: list[dict]) -> list[str]:
+    """CKL-01-005: inductor vs comp, edge/vertical split."""
+    grouped: dict[str, dict] = defaultdict(lambda: {"edge": [], "vertical": []})
+    for r in fail_rows:
+        comp = r.get("comp", "")
+        ind = r.get("overlapping_ind", "")
+        if not comp or not ind:
+            continue
+        if r.get("edge") == "TRUE":
+            if ind not in grouped[comp]["edge"]:
+                grouped[comp]["edge"].append(ind)
+        elif r.get("hori/verti") == "Vertical":
+            if ind not in grouped[comp]["vertical"]:
+                grouped[comp]["vertical"].append(ind)
+
+    for comp in grouped:
+        edge_set = set(grouped[comp]["edge"])
+        grouped[comp]["vertical"] = [
+            x for x in grouped[comp]["vertical"] if x not in edge_set
+        ]
+
+    bullets: list[str] = []
+    for comp, cases in grouped.items():
+        for ind in cases["edge"]:
+            bullets.append(
+                f"{ind}는 {comp}의 배면 outline edge 에 위치하므로 이격할 것."
+            )
+        for ind in cases["vertical"]:
+            bullets.append(f"{ind}는 {comp}와 수평배치 할 것.")
+    return bullets
+
+
+def _gen_01_006(fail_rows: list[dict]) -> list[str]:
+    """CKL-01-006: opposite-side pad overlap."""
+    bullets: list[str] = []
+    for r in fail_rows:
+        comp = r.get("comp", "")
+        opp = r.get("overlapping_cmp", "")
+        if comp and opp:
+            bullets.append(f"{comp}는 배면 {opp} 패드와 회피 배치할 것.")
+    return bullets
+
+
+def _gen_01_007(fail_rows: list[dict]) -> list[str]:
+    """CKL-01-007: opposite-side comp overlap."""
+    bullets: list[str] = []
+    for r in fail_rows:
+        comp = r.get("comp", "")
+        opp = r.get("overlapping_cmp", "")
+        if comp and opp:
+            bullets.append(f"{comp}는 배면 {opp} 와 회피 배치할 것.")
+    return bullets
+
+
+def _gen_01_008(fail_rows: list[dict]) -> list[str]:
+    """CKL-01-008: signal ball on curved area, group pin by comp."""
+    grouped: dict[str, list[str]] = defaultdict(list)
+    for r in fail_rows:
+        comp = r.get("comp", "")
+        pin = r.get("pin", "")
+        if comp and pin and pin not in grouped[comp]:
+            grouped[comp].append(pin)
+
+    bullets: list[str] = []
+    for comp, pins in grouped.items():
+        pin_str = ", ".join(pins)
+        bullets.append(f"{comp}의 곡선부 {pin_str} 에는 signal ball 설계 회피할 것.")
+    return bullets
+
+
+def _gen_01_009(fail_rows: list[dict]) -> list[str]:
+    """CKL-01-009: bundle or ground, group pin by comp."""
+    grouped: dict[str, list[str]] = defaultdict(list)
+    for r in fail_rows:
+        comp = r.get("comp", "")
+        pin = r.get("pin", "")
+        if comp and pin and pin not in grouped[comp]:
+            grouped[comp].append(pin)
+
+    bullets: list[str] = []
+    for comp, pins in grouped.items():
+        pin_str = ", ".join(pins)
+        bullets.append(
+            f"{comp}의 {pin_str} 들은 묶음구조 적용 또는 Ground 처리할 것."
+        )
+    return bullets
+
+
+def _gen_01_010(fail_rows: list[dict]) -> list[str]:
+    """CKL-01-010: narrow PCB region."""
+    bullets: list[str] = []
+    for r in fail_rows:
+        region = r.get("region", "")
+        if region:
+            bullets.append(
+                f"PCB의 {region} 영역은 (하단 이미지 참고) 폭 3.5mm 이상 설계 "
+                f"또는 고정 Screw 설계할 것."
+            )
+    return bullets
+
+
+def _gen_02_001(fail_rows: list[dict]) -> list[str]:
+    """CKL-02-001: capacitor clearance from component."""
+    bullets: list[str] = []
+    for r in fail_rows:
+        comp = r.get("comp", "")
+        part = r.get("part_name", "")
+        opp = r.get("overlapping_cmp", "")
+        if comp and opp:
+            bullets.append(
+                f"{comp}({part}) 는 {opp} 에서 1.5mm 이상 이격할 것."
+            )
+    return bullets
+
+
+def _gen_02_004(fail_rows: list[dict]) -> list[str]:
+    """CKL-02-004: opposite-side clearance."""
+    bullets: list[str] = []
+    for r in fail_rows:
+        opp = r.get("overlapping_cmp", "")
+        part = r.get("part_name", "")
+        comp = r.get("comp", "")
+        if opp and comp:
+            bullets.append(
+                f"{opp}({part}) 는 배면 {comp}에서 0.5mm 이상 이격할 것."
+            )
+    return bullets
+
+
+def _gen_02_009(fail_rows: list[dict]) -> list[str]:
+    """CKL-02-009: inductor vs connector/shield, split by check_type and edge/vertical."""
+    grouped: dict[str, dict] = defaultdict(lambda: {"edge": [], "vertical": []})
+    for r in fail_rows:
+        comp = r.get("comp", "")
+        ind = r.get("overlapping_ind", "")
+        if not comp or not ind:
+            continue
+        if r.get("edge") == "TRUE":
+            if ind not in grouped[comp]["edge"]:
+                grouped[comp]["edge"].append(ind)
+        elif r.get("hori/verti") == "Vertical":
+            if ind not in grouped[comp]["vertical"]:
+                grouped[comp]["vertical"].append(ind)
+
+    for comp in grouped:
+        edge_set = set(grouped[comp]["edge"])
+        grouped[comp]["vertical"] = [
+            x for x in grouped[comp]["vertical"] if x not in edge_set
+        ]
+
+    bullets: list[str] = []
+    for comp, cases in grouped.items():
+        for ind in cases["edge"]:
+            bullets.append(
+                f"{ind}는 {comp}의 배면 edge 에 위치하므로 이격할 것."
+            )
+        for ind in cases["vertical"]:
+            bullets.append(f"{ind}는 {comp}와 수평배치 할 것.")
+    return bullets
+
+
+def _gen_02_011(fail_rows: list[dict]) -> list[str]:
+    """CKL-02-011: opposite-side outline overlap."""
+    bullets: list[str] = []
+    for r in fail_rows:
+        comp = r.get("comp", "")
+        opp = r.get("overlapping_cmp", "")
+        if comp and opp:
+            bullets.append(
+                f"{comp}는 배면 {opp} outline과 겹치지 않도록 하거나 수평배치할 것."
+            )
+    return bullets
+
+
+def _gen_02_012(fail_rows: list[dict]) -> list[str]:
+    """CKL-02-012: opposite-side antenna pattern overlap."""
+    bullets: list[str] = []
+    for r in fail_rows:
+        comp = r.get("comp", "")
+        ap = r.get("overlapping_ap", "")
+        if comp and ap:
+            bullets.append(f"{comp}는 배면 {ap} 와 회피 배치할 것.")
+    return bullets
+
+
+def _gen_03_002(fail_rows: list[dict]) -> list[str]:
+    """CKL-03-002: resin application, group by cmp_layer."""
+    grouped: dict[str, list[str]] = defaultdict(list)
+    for r in fail_rows:
+        layer = r.get("cmp_layer", "")
+        comp = r.get("comp", "")
+        if layer and comp and comp not in grouped[layer]:
+            grouped[layer].append(comp)
+
+    bullets: list[str] = []
+    for layer, comps in grouped.items():
+        comp_str = ", ".join(comps)
+        bullets.append(f"{layer} 층에 위치한 {comp_str} 부품 수지 적용할 것.")
+    return bullets
+
+
+def _gen_03_003(fail_rows: list[dict]) -> list[str]:
+    """CKL-03-003: edge pad clearance, group by cmp_layer."""
+    grouped: dict[str, list[str]] = defaultdict(list)
+    for r in fail_rows:
+        layer = r.get("cmp_layer", "")
+        comp = r.get("comp", "")
+        if layer and comp and comp not in grouped[layer]:
+            grouped[layer].append(comp)
+
+    bullets: list[str] = []
+    for layer, comps in grouped.items():
+        comp_str = ", ".join(comps)
+        bullets.append(
+            f"{layer} 층에 위치한 {comp_str} 의 edge Pad 0mm 초과 이격할 것."
+        )
+    return bullets
+
+
+def _gen_comp_pad_via(fail_rows: list[dict], min_via: str = "1개") -> list[str]:
+    """Shared: group pad by comp, via requirement message."""
+    grouped: dict[str, list[str]] = defaultdict(list)
+    for r in fail_rows:
+        comp = r.get("comp", "")
+        pad = r.get("pad", "")
+        if comp and pad and pad not in grouped[comp]:
+            grouped[comp].append(pad)
+
+    bullets: list[str] = []
+    for comp, pads in grouped.items():
+        pad_str = ", ".join(pads)
+        bullets.append(f"{comp}의 {pad_str}는 via {min_via} 이상 설계할 것.")
+    return bullets
+
+
+def _gen_03_004(fail_rows: list[dict]) -> list[str]:
+    """CKL-03-004: pad via >= 1."""
+    return _gen_comp_pad_via(fail_rows, "1개")
+
+
+def _gen_03_005(fail_rows: list[dict]) -> list[str]:
+    """CKL-03-005: pad via >= 1."""
+    return _gen_comp_pad_via(fail_rows, "1개")
+
+
+def _gen_03_006(fail_rows: list[dict]) -> list[str]:
+    """CKL-03-006: hole solder mask overlap."""
+    bullets: list[str] = []
+    for r in fail_rows:
+        comp = r.get("comp", "")
+        if comp:
+            bullets.append(
+                f"{comp}는 Hole의 solder mask와 겹치지 않게 설계할 것."
+            )
+    return bullets
+
+
+def _gen_03_007(fail_rows: list[dict]) -> list[str]:
+    """CKL-03-007: GND pad via >= 1, group pad by comp."""
+    grouped: dict[str, list[str]] = defaultdict(list)
+    for r in fail_rows:
+        comp = r.get("comp", "")
+        pad = r.get("pad", "")
+        if comp and pad and pad not in grouped[comp]:
+            grouped[comp].append(pad)
+
+    bullets: list[str] = []
+    for comp, pads in grouped.items():
+        pad_str = ", ".join(pads)
+        bullets.append(
+            f"{comp}의 GND 패드 {pad_str} 는 via 1개 이상 설계할 것."
+        )
+    return bullets
+
+
+def _gen_03_008(fail_rows: list[dict]) -> list[str]:
+    """CKL-03-008: pad via >= 4, group pad by comp."""
+    return _gen_comp_pad_via(fail_rows, "4개")
+
+
+def _gen_03_011(fail_rows: list[dict]) -> list[str]:
+    """CKL-03-011: bending area placement."""
+    bullets: list[str] = []
+    for r in fail_rows:
+        comp = r.get("comp", "")
+        if comp:
+            bullets.append(
+                f"{comp}는 Bending 취약 돌출부 이외의 위치에 배치할 것."
+            )
+    return bullets
+
+
+def _gen_03_012(fail_rows: list[dict]) -> list[str]:
+    """CKL-03-012: PCB edge and hole clearance."""
+    bullets: list[str] = []
+    for r in fail_rows:
+        comp = r.get("comp", "")
+        if comp:
+            bullets.append(
+                f"{comp}는 PCB 끝단 및 hole에서 1mm 이상 이격할 것."
+            )
+    return bullets
+
+
+def _gen_03_013(fail_rows: list[dict]) -> list[str]:
+    """CKL-03-013: pad via >= 1."""
+    return _gen_comp_pad_via(fail_rows, "1개")
+
+
+def _gen_03_014(fail_rows: list[dict]) -> list[str]:
+    """CKL-03-014: signal pattern clearance under pad."""
+    bullets: list[str] = []
+    for r in fail_rows:
+        comp = r.get("comp", "")
+        if comp:
+            bullets.append(
+                f"{comp}의 패드 하단에 위치한 Signal 패턴들은 Pad 기준 "
+                f"0.2mm 이격할 것."
+            )
+    return bullets
+
+
+def _gen_03_016(fail_rows: list[dict]) -> list[str]:
+    """CKL-03-016: opposite-side comp overlap."""
+    bullets: list[str] = []
+    for r in fail_rows:
+        comp = r.get("comp", "")
+        opp = r.get("overlapping_cmp", "")
+        if comp and opp:
+            bullets.append(
+                f"{comp} 는 배면의 {opp} 와 회피 배치할 것."
+            )
+    return bullets
+
+
 # ---------------------------------------------------------------------------
 # Generator registry
 # ---------------------------------------------------------------------------
@@ -324,14 +677,38 @@ _GENERATORS: dict[str, callable] = {
     "CKL-01-001": _gen_01_001,
     "CKL-01-002": _gen_01_002,
     "CKL-01-003": _gen_01_003,
+    "CKL-01-004": _gen_01_004,
+    "CKL-01-005": _gen_01_005,
+    "CKL-01-006": _gen_01_006,
+    "CKL-01-007": _gen_01_007,
+    "CKL-01-008": _gen_01_008,
+    "CKL-01-009": _gen_01_009,
+    "CKL-01-010": _gen_01_010,
+    "CKL-02-001": _gen_02_001,
     "CKL-02-002": _gen_02_002,
     "CKL-02-003": _gen_02_003,
+    "CKL-02-004": _gen_02_004,
     "CKL-02-005": _gen_02_005,
     "CKL-02-006": _gen_02_006,
     "CKL-02-007": _gen_02_007,
     "CKL-02-008": _gen_02_008,
+    "CKL-02-009": _gen_02_009,
     "CKL-02-010": _gen_02_010,
+    "CKL-02-011": _gen_02_011,
+    "CKL-02-012": _gen_02_012,
     "CKL-03-001": _gen_03_001,
+    "CKL-03-002": _gen_03_002,
+    "CKL-03-003": _gen_03_003,
+    "CKL-03-004": _gen_03_004,
+    "CKL-03-005": _gen_03_005,
+    "CKL-03-006": _gen_03_006,
+    "CKL-03-007": _gen_03_007,
+    "CKL-03-008": _gen_03_008,
     "CKL-03-009": _gen_03_009,
+    "CKL-03-011": _gen_03_011,
+    "CKL-03-012": _gen_03_012,
+    "CKL-03-013": _gen_03_013,
+    "CKL-03-014": _gen_03_014,
     "CKL-03-015": _gen_03_015,
+    "CKL-03-016": _gen_03_016,
 }

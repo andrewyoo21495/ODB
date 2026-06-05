@@ -29,15 +29,16 @@ def classify_component(comp: Component) -> ComponentCategory:
     """Return the category for *comp* using priority-ordered rules.
 
     Rules (first match wins):
-        1. Connector  – comp_name starts with "SOC"
-        2. SIM_Socket – comp_name starts with "SIM"
-        3. Inductor   – properties TYPE or DEVICE_TYPE == "inductor" (case-insensitive),
+        1. Unknown    – comp_name starts with "ANT" (antenna, not connector)
+        2. Connector  – comp_name starts with "SOC" OR DEVICE_TYPE == "connector"
+        3. SIM_Socket – comp_name starts with "SIM"
+        4. Inductor   – properties TYPE or DEVICE_TYPE == "inductor" (case-insensitive),
                         OR part_name starts with "2703-"
-        4. Capacitor  – properties TYPE or DEVICE_TYPE == "capacitor" (case-insensitive),
-                        OR part_name starts with "2203-"
-        5. IC         – comp_name starts with "U" but NOT "USB"
-        6. INP        – comp_name starts with "INP" or "INT"
-        7. Unknown    – everything else
+        5. Capacitor  – properties TYPE or DEVICE_TYPE == "capacitor" (case-insensitive),
+                        OR part_name starts with "2203-" or "CAP"
+        6. IC         – comp_name starts with "U" but NOT "USB"
+        7. INP        – comp_name starts with "INP" or "INT"
+        8. Unknown    – everything else
     """
     name = comp.comp_name or ""
     part = comp.part_name or ""
@@ -46,7 +47,10 @@ def classify_component(comp: Component) -> ComponentCategory:
     comp_type = props.get("TYPE", "").lower()
     device_type = props.get("DEVICE_TYPE", "").lower()
 
-    if name.startswith("SOC"):
+    if name.startswith("ANT"):
+        return ComponentCategory.UNKNOWN
+
+    if name.startswith("SOC") or device_type == "connector":
         return ComponentCategory.CONNECTOR
 
     if name.startswith("SIM"):
@@ -55,7 +59,7 @@ def classify_component(comp: Component) -> ComponentCategory:
     if comp_type == "inductor" or device_type == "inductor" or part.startswith("2703-"):
         return ComponentCategory.INDUCTOR
 
-    if comp_type == "capacitor" or device_type == "capacitor" or part.startswith("2203-"):
+    if comp_type == "capacitor" or device_type == "capacitor" or part.startswith(("2203-", "CAP")):
         return ComponentCategory.CAPACITOR
 
     if name.startswith("U") and not name.startswith("USB"):
@@ -90,6 +94,8 @@ def find_ics(components: Sequence[Component]) -> list[Component]:
         props = c.properties or {}
         comp_type = props.get("TYPE", "").lower()
         device_type = props.get("DEVICE_TYPE", "").lower()
+        if device_type == "connector":
+            continue
         if (
             (name.startswith("U") and not name.startswith("USB"))
             or device_type in _IC_DEVICE_TYPES
@@ -166,7 +172,7 @@ def find_capacitors(components: Sequence[Component]) -> list[Component]:
 
     Matches when pkg_type (PKG_TYPE property) or pkg_device_type
     (PKG_DEVICE_TYPE property) is 'Capacitor' (case-insensitive),
-    or part_name starts with '2203-'.
+    or part_name starts with '2203-' or 'CAP'.
     """
     result = []
     for c in components:
@@ -174,7 +180,7 @@ def find_capacitors(components: Sequence[Component]) -> list[Component]:
         comp_type = props.get("TYPE", "").lower()
         device_type = props.get("DEVICE_TYPE", "").lower()
         part = c.part_name or ""
-        if comp_type == "capacitor" or device_type == "capacitor" or part.startswith("2203-"):
+        if comp_type == "capacitor" or device_type == "capacitor" or part.startswith(("2203-", "CAP")):
             result.append(c)
     return result
 
