@@ -135,7 +135,7 @@ class CKL03009(ChecklistRule):
             top_sig_name, bot_sig_name = _find_top_bottom_signal_layers(
                 layers_data)
 
-        columns = ["comp", "cmp_layer", "pad", "via", "status"]
+        columns = ["comp", "cmp_layer", "pad", "signal", "via", "status"]
         rows: list[dict] = []
         images: list[dict] = []
         image_dir = Path(tempfile.mkdtemp(prefix="ckl_03_009_"))
@@ -169,6 +169,7 @@ class CKL03009(ChecklistRule):
                 for pin_idx in sorted(gnd_perimeter):
                     pin = pkg.pins[pin_idx]
                     tp = toep_by_pin.get(pin_idx)
+                    net_name = _get_net_name(tp, eda)
                     rpads = lookup_resolved_pads_for_pin(
                         fid_resolved, comp, is_bottom,
                         pin_idx, signal_layer_name=sig_name,
@@ -183,6 +184,7 @@ class CKL03009(ChecklistRule):
                         "comp": comp.comp_name,
                         "cmp_layer": layer_name,
                         "pad": pin.name,
+                        "signal": net_name,
                         "via": str(via_count),
                         "status": "PASS" if via_count >= 4 else "FAIL",
                     })
