@@ -184,6 +184,9 @@ td.center, th.center { text-align: center; }
 /* Rule metadata */
 .rule-meta { padding: 12px 0 8px; font-size: 0.88rem; }
 .rule-meta p { margin: 3px 0; }
+.rule-report { padding: 8px 0; font-size: 0.88rem; }
+.rule-report > p { margin: 0 0 4px; }
+.rule-report ul { margin: 0; padding-left: 24px; }
 
 /* Detail tables */
 .detail-table {
