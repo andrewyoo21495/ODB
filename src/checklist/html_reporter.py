@@ -10,6 +10,7 @@ from datetime import datetime
 from pathlib import Path
 
 from src.checklist.reporter import _load_csv_part_map, _count_usage
+from src.checklist.report_text_generator import generate_report_bullets
 from src.models import RuleResult
 
 
@@ -535,6 +536,17 @@ def _build_rule_section(
             f'<p><strong>Affected Components ({len(result.affected_components)}):</strong> '
             f'{html.escape(comps)}</p>')
     lines.append('</div>')
+
+    # Report bullets (한글 가이드)
+    bullets = generate_report_bullets(result.rule_id, result.details)
+    if bullets:
+        lines.append('<div class="rule-report">')
+        lines.append('<p><strong>Report:</strong></p>')
+        lines.append('<ul>')
+        for b in bullets:
+            lines.append(f'<li>{html.escape(b)}</li>')
+        lines.append('</ul>')
+        lines.append('</div>')
 
     # Detail tables
     lines.append(_render_details(result.details,

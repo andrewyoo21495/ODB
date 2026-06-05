@@ -11,6 +11,7 @@ from openpyxl.drawing.image import Image as XlImage
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
+from src.checklist.report_text_generator import generate_report_bullets
 from src.models import RuleResult
 
 
@@ -222,15 +223,26 @@ def _create_rule_sheet(wb: Workbook, result: RuleResult):
     ws["B5"] = result.message
     ws["A5"].font = Font(bold=True)
 
+    # -- Report bullets (한글 가이드) ------------------------------------------
+    bullets = generate_report_bullets(result.rule_id, result.details)
+    report_end_row = 6  # after the header block
+    if bullets:
+        ws.cell(row=7, column=1, value="Report:").font = Font(bold=True)
+        for idx, bullet_text in enumerate(bullets):
+            ws.cell(row=8 + idx, column=1, value=f"• {bullet_text}")
+        report_end_row = 8 + len(bullets)  # next available row after bullets
+
+    detail_start = report_end_row + 1  # blank row then table
+
     # -- Tabular detail rows ---------------------------------------------------
     columns = result.details.get("columns")
     rows = result.details.get("rows")
 
-    end_row = 6  # after the header block
+    end_row = detail_start - 1
 
     if isinstance(columns, list) and isinstance(rows, list):
-        _write_tabular_details(ws, columns, rows, start_row=7)
-        end_row = 7 + len(rows)  # header row + data rows
+        _write_tabular_details(ws, columns, rows, start_row=detail_start)
+        end_row = detail_start + len(rows)  # header row + data rows
 
         # Optional second table (e.g. signal-layer results for CKL-03-015)
         sig_columns = result.details.get("signal_columns")
@@ -242,14 +254,17 @@ def _create_rule_sheet(wb: Workbook, result: RuleResult):
 
     else:
         # -- Legacy detail rendering -------------------------------------------
+        legacy_start = detail_start
         if result.affected_components:
-            ws["A7"] = "Affected Components:"
-            ws["A7"].font = Font(bold=True)
+            ws.cell(row=legacy_start, column=1,
+                    value="Affected Components:").font = Font(bold=True)
             for i, comp_name in enumerate(result.affected_components):
-                cell = ws.cell(row=8 + i, column=1, value=comp_name)
+                cell = ws.cell(row=legacy_start + 1 + i, column=1,
+                               value=comp_name)
                 cell.border = _THIN_BORDER
 
-        start_row = 8 + len(result.affected_components) + 2 if result.affected_components else 8
+        start_row = (legacy_start + 1 + len(result.affected_components) + 2
+                     if result.affected_components else legacy_start + 1)
 
         for key, value in result.details.items():
             if key in ("columns", "rows"):
