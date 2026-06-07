@@ -107,15 +107,16 @@ def find_ics(components: Sequence[Component]) -> list[Component]:
 def find_pmics(components: Sequence[Component]) -> list[Component]:
     """Return PMIC components from among the ICs.
 
-    An IC is considered a PMIC if its 'FNC' property contains 'POWER'
-    or its 'SSHEET' property contains 'PMIC' (both case-insensitive).
+    An IC is considered a PMIC if its 'FNC' property contains
+    'POWER SUPERVISOR' or its 'SSHEET' property contains 'PMIC'
+    (both case-insensitive).
     """
     result = []
     for c in find_ics(components):
         props = c.properties or {}
         fnc = props.get("FNC", "").upper()
         ssheet = props.get("SSHEET", "").upper()
-        if "POWER" in fnc or "PMIC" in ssheet:
+        if "POWER SUPERVISOR" in fnc or "PMIC" in ssheet:
             result.append(c)
     return result
 

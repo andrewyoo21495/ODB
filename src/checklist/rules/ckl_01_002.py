@@ -69,7 +69,7 @@ def _is_pmic(comp: Component, pmic_parts: set[str]) -> bool:
     props = comp.properties or {}
     fnc = props.get("FNC", "").upper()
     ssheet = props.get("SSHEET", "").upper()
-    return "POWER" in fnc or "PMIC" in ssheet
+    return "POWER SUPERVISOR" in fnc or "PMIC" in ssheet
 
 
 def _find_corner_pin_indices(pins: list[Pin]) -> set[int]:
