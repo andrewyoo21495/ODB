@@ -77,7 +77,8 @@ class CKL02012(ChecklistRule):
                 )
                 # Filter to size >= 2012
                 filtered = filter_by_size(
-                    overlapping_inds, 2012, size_maps, packages
+                    overlapping_inds, 2012, size_maps, packages,
+                    desc_index=2,
                 )
 
                 overlap_items: list[dict] = []

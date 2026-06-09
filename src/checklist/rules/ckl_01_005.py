@@ -71,7 +71,8 @@ class CKL01005(ChecklistRule):
                     is_bottom_candidates=opp_is_bottom,
                 )
                 # Filter to size >= 2012
-                filtered = filter_by_size(boundary_hits, 2012, size_maps, packages)
+                filtered = filter_by_size(boundary_hits, 2012, size_maps, packages,
+                                         desc_index=2)
                 boundary_ids = {id(ind) for ind, _ in filtered}
 
                 # Inductors overlapping footprint but NOT touching boundary
@@ -81,7 +82,8 @@ class CKL01005(ChecklistRule):
                     is_bottom_primary=ap_is_bottom,
                     is_bottom_candidates=opp_is_bottom,
                 )
-                fp_filtered = filter_by_size(footprint_hits, 2012, size_maps, packages)
+                fp_filtered = filter_by_size(footprint_hits, 2012, size_maps, packages,
+                                             desc_index=2)
 
                 overlap_items: list[dict] = []
 

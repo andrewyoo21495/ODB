@@ -1,8 +1,8 @@
-"""CKL-02-010: SIM socket vs capacitors/inductors (>=2012) on opposite side.
+"""CKL-02-010: SIM socket vs capacitors/inductors on opposite side.
 
-Inspect capacitors and inductors of size 2012 or larger overlapping
+Inspect all capacitors and inductors of size 2012 or larger overlapping
 the opposite side of SIM socket components.  Check horizontal/vertical
-orientation.
+orientation.  Capacitors are included regardless of size.
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ from src.models import RuleResult
 class CKL02010(ChecklistRule):
     rule_id = "CKL-02-010"
     description = (
-        "SIM 소켓: 반대면의 2012 이상 캐패시터/인덕터는 "
+        "SIM 소켓: 반대면의 캐패시터 및 2012 이상 인덕터는 "
         "수평 방향이어야 합니다"
     )
     category = "Placement"
@@ -40,10 +40,8 @@ class CKL02010(ChecklistRule):
         eda = job_data.get("eda_data")
         packages = eda.packages if eda else []
 
-        # Build size maps from reference CSVs
-        cap_size_map = get_part_size_map("capacitors_10_list")
+        # Build size map from reference CSV (inductors only — caps have no size filter)
         ind_size_map = get_part_size_map("inductors_2s_list")
-        size_maps = [cap_size_map, ind_size_map]
 
         columns = [
             "comp", "cmp_layer", "overlapping_cmp", "part_name",
@@ -63,20 +61,30 @@ class CKL02010(ChecklistRule):
             sims = find_simsockets(sim_comps)
             opp_caps = find_capacitors(opp_comps)
             opp_inds = find_inductors(opp_comps)
-            opp_targets = opp_caps + opp_inds
 
-            if not sims or not opp_targets:
+            if not sims or not (opp_caps or opp_inds):
                 continue
 
             for sim in sims:
-                # Check if cap/ind pads cross the SIM socket outline boundary
-                overlaps = find_outline_boundary_pad_overlapping_components(
-                    sim, opp_targets, packages,
-                    is_bottom_primary=sim_is_bottom,
-                    is_bottom_candidates=cap_is_bottom,
-                )
-                # Filter to size >= 2012
-                filtered = filter_by_size(overlaps, 2012, size_maps, packages)
+                # Caps: all sizes included; Inductors: size >= 2012 only
+                filtered: list[tuple] = []
+                if opp_caps:
+                    cap_overlaps = find_outline_boundary_pad_overlapping_components(
+                        sim, opp_caps, packages,
+                        is_bottom_primary=sim_is_bottom,
+                        is_bottom_candidates=cap_is_bottom,
+                    )
+                    # Capacitors are included regardless of size
+                    filtered += [(c, 0) for c in cap_overlaps]
+                if opp_inds:
+                    ind_overlaps = find_outline_boundary_pad_overlapping_components(
+                        sim, opp_inds, packages,
+                        is_bottom_primary=sim_is_bottom,
+                        is_bottom_candidates=cap_is_bottom,
+                    )
+                    filtered += filter_by_size(ind_overlaps, 2012,
+                                              [ind_size_map], packages,
+                                              desc_index=2)
 
                 overlap_items: list[dict] = []
                 for comp, sz in filtered:

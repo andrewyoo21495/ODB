@@ -160,7 +160,8 @@ class CKL02009(ChecklistRule):
                     conn, opp_general_ind, packages,
                     user_symbols=user_symbols,
                 )
-                filtered = filter_by_size(overlaps, 2012, size_maps, packages)
+                filtered = filter_by_size(overlaps, 2012, size_maps, packages,
+                                         desc_index=2)
 
                 overlap_items: list[dict] = []
                 for ind, sz in filtered:
@@ -237,7 +238,8 @@ class CKL02009(ChecklistRule):
                     is_bottom_candidates=ind_is_bottom,
                     user_symbols=user_symbols,
                 )
-                filtered = filter_by_size(overlaps, 2012, size_maps, packages)
+                filtered = filter_by_size(overlaps, 2012, size_maps, packages,
+                                         desc_index=2)
 
                 overlap_items: list[dict] = []
                 for ind, sz in filtered:
