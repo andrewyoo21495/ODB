@@ -16,6 +16,8 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
+from shapely.ops import unary_union
+
 from src.checklist.component_classifier import (
     find_antennas,
     find_connectors,
@@ -84,6 +86,8 @@ class CKL03016(ChecklistRule):
 
             for osc in oscs:
                 overlap_items: list[dict] = []
+                inp_outer_polys: list = []
+                inp_inner_polys: list = []
 
                 # -------------------------------------------------------
                 # Non-interposer targets: existing logic
@@ -133,11 +137,15 @@ class CKL03016(ChecklistRule):
                 # Interposer targets: outline-based logic
                 # -------------------------------------------------------
                 for inp in opp_interposers:
-                    outer_poly, _inner_poly = build_interposer_outline(
+                    outer_poly, inner_poly = build_interposer_outline(
                         inp, packages,
                         is_bottom=opp_is_bottom,
                         user_symbols=user_symbols,
                     )
+                    if outer_poly is not None:
+                        inp_outer_polys.append(outer_poly)
+                    if inner_poly is not None:
+                        inp_inner_polys.append(inner_poly)
 
                     pad_union_osc = _get_pad_union(
                         osc, packages,
@@ -213,6 +221,10 @@ class CKL03016(ChecklistRule):
                     )
                     safe = osc.comp_name.replace("/", "_")
                     img_path = image_dir / f"{safe}_{osc_layer}.png"
+                    inp_outer = (unary_union(inp_outer_polys)
+                                 if inp_outer_polys else None)
+                    inp_inner = (unary_union(inp_inner_polys)
+                                 if inp_inner_polys else None)
                     render_overlap_image(
                         osc, packages, overlap_items, opp_comps, img_path,
                         rule_id=self.rule_id,
@@ -222,6 +234,8 @@ class CKL03016(ChecklistRule):
                         primary_is_bottom=osc_is_bottom,
                         overlap_is_bottom=opp_is_bottom,
                         user_symbols=user_symbols,
+                        interposer_outer_outline=inp_outer,
+                        interposer_inner_outline=inp_inner,
                     )
                     images.append({"path": img_path,
                                    "title": f"{osc.comp_name} ({osc_layer})",

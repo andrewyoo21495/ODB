@@ -188,9 +188,9 @@ def render_overlap_image(
     if _has_inp_outer:
         _first = True
         for xs, ys in _shapely_to_arrays(interposer_outer_outline):
-            ax.plot(xs, ys, color="#0066CC", linewidth=1.8, linestyle="--",
+            ax.plot(xs, ys, color="black", linewidth=1.5, linestyle="--",
                     zorder=6,
-                    label="Interposer outer border" if _first else None)
+                    label="Interposer outer outline" if _first else None)
             _first = False
 
     _has_inp_inner = (interposer_inner_outline is not None
@@ -198,9 +198,9 @@ def render_overlap_image(
     if _has_inp_inner:
         _first = True
         for xs, ys in _shapely_to_arrays(interposer_inner_outline):
-            ax.plot(xs, ys, color="#CC6600", linewidth=1.8, linestyle="--",
+            ax.plot(xs, ys, color="black", linewidth=1.5, linestyle="--",
                     zorder=6,
-                    label="Interposer inner border" if _first else None)
+                    label="Interposer inner outline" if _first else None)
             _first = False
 
     # --- draw inner wall pads (orange/red to distinguish from perimeter) ------
@@ -336,13 +336,13 @@ def render_overlap_image(
         )
     if _has_inp_outer:
         legend_elements.append(
-            plt.Line2D([0], [0], color="#0066CC", linewidth=1.8,
-                       linestyle="--", label="Interposer outer border")
+            plt.Line2D([0], [0], color="black", linewidth=1.5,
+                       linestyle="--", label="Interposer outer outline")
         )
     if _has_inp_inner:
         legend_elements.append(
-            plt.Line2D([0], [0], color="#CC6600", linewidth=1.8,
-                       linestyle="--", label="Interposer inner border")
+            plt.Line2D([0], [0], color="black", linewidth=1.5,
+                       linestyle="--", label="Interposer inner outline")
         )
     if inner_walls:
         legend_elements.append(
