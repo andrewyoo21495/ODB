@@ -1166,19 +1166,9 @@ def _estimate_merge_buffer(pad_polys: list) -> float:
     if n < 2:
         return 0.1
 
-    from scipy.spatial import KDTree
-
-    centroids = np.array([
-        (p.centroid.x, p.centroid.y) for p in pad_polys
-    ])
-    tree = KDTree(centroids)
-
     min_gap = float("inf")
     for i in range(n):
-        dists, idxs = tree.query(centroids[i], k=min(6, n))
-        for d, j in zip(dists, idxs):
-            if j == i:
-                continue
+        for j in range(i + 1, n):
             gap = pad_polys[i].distance(pad_polys[j])
             if gap < min_gap:
                 min_gap = gap
