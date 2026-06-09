@@ -1070,3 +1070,227 @@ def find_empty_center_ics(
     """Return IC components whose pad layout has an empty interior."""
     from src.checklist.component_classifier import find_ics
     return [c for c in find_ics(components) if has_empty_center(c, packages)]
+
+
+# ---------------------------------------------------------------------------
+# Interposer outline construction
+# ---------------------------------------------------------------------------
+
+def _get_individual_pad_polygons(
+    comp: Component,
+    packages: list[Package],
+    *,
+    is_bottom: bool = False,
+    user_symbols: dict | None = None,
+) -> list:
+    """Return a list of individual pad Shapely polygons (not unioned).
+
+    Uses the same pad discovery logic as ``_get_pad_union`` but returns
+    individual geometries instead of their union.
+    """
+    if not _HAS_SHAPELY:
+        return []
+    if comp.pkg_ref < 0 or comp.pkg_ref >= len(packages):
+        return []
+
+    user_symbols = user_symbols or {}
+
+    # Primary path: FID-resolved toeprint geometry
+    tp_geom_polys: list = []
+    for tp in comp.toeprints:
+        if tp.geom is None:
+            continue
+        geom = tp.geom
+        pad_rot = -geom.rotation if is_bottom else geom.rotation
+
+        if geom.is_user_symbol and geom.symbol_name in user_symbols:
+            g = _user_symbol_to_shapely(
+                user_symbols[geom.symbol_name],
+                geom.x, geom.y, pad_rot, geom.mirror,
+            )
+        else:
+            g = _symbol_to_shapely(
+                geom.symbol_name, geom.x, geom.y, pad_rot, geom.mirror,
+                geom.units, geom.unit_override, geom.resize_factor,
+            )
+
+        if g is not None and not g.is_empty:
+            tp_geom_polys.append(g)
+
+    if tp_geom_polys:
+        return tp_geom_polys
+
+    # Fallback: package-level pin outlines
+    pkg = packages[comp.pkg_ref]
+    pad_polys: list = []
+
+    for pin in pkg.pins:
+        placed = False
+        for outline in pin.outlines:
+            verts = _outline_vertices(outline)
+            if not verts:
+                continue
+            board_verts = [
+                transform_point(v[0], v[1], comp, is_bottom=is_bottom)
+                for v in verts
+            ]
+            if len(board_verts) >= 3:
+                try:
+                    poly = ShapelyPolygon(board_verts)
+                    if poly.is_valid and not poly.is_empty:
+                        pad_polys.append(poly)
+                        placed = True
+                        break
+                except Exception:
+                    pass
+        if not placed:
+            bx, by = transform_point(
+                pin.center.x, pin.center.y, comp, is_bottom=is_bottom)
+            pad_polys.append(ShapelyPoint(bx, by).buffer(0.05))
+
+    if not pad_polys and comp.toeprints:
+        for tp in comp.toeprints:
+            pad_polys.append(ShapelyPoint(tp.x, tp.y).buffer(0.05))
+
+    return pad_polys
+
+
+def _estimate_merge_buffer(pad_polys: list) -> float:
+    """Auto-calculate buffer distance from smallest edge-to-edge gap.
+
+    Finds the minimum Shapely boundary distance between any two nearest
+    pad polygons, then returns ``gap * 0.55`` so that buffered pads just
+    barely merge.
+    """
+    n = len(pad_polys)
+    if n < 2:
+        return 0.1
+
+    from scipy.spatial import KDTree
+
+    centroids = np.array([
+        (p.centroid.x, p.centroid.y) for p in pad_polys
+    ])
+    tree = KDTree(centroids)
+
+    min_gap = float("inf")
+    for i in range(n):
+        dists, idxs = tree.query(centroids[i], k=min(6, n))
+        for d, j in zip(dists, idxs):
+            if j == i:
+                continue
+            gap = pad_polys[i].distance(pad_polys[j])
+            if gap < min_gap:
+                min_gap = gap
+
+    if min_gap <= 0:
+        return 0.02
+    return min_gap * 0.55
+
+
+def _bridge_clusters(union, buffer_distance: float):
+    """Connect disconnected polygon clusters by building thin bridges.
+
+    Uses a minimum spanning tree approach: sort all cluster pairs by
+    inter-boundary distance, then greedily connect the closest disjoint
+    pair until all clusters form a single connected polygon.
+    """
+    from itertools import combinations
+    from shapely.geometry import LineString
+    from shapely.ops import nearest_points
+
+    if union.geom_type != "MultiPolygon":
+        return union
+
+    polys = list(union.geoms)
+    bridges: list = []
+
+    # Union-find sets for MST
+    connected = [{i} for i in range(len(polys))]
+
+    def _find_set(idx: int):
+        for s in connected:
+            if idx in s:
+                return s
+        return None
+
+    pairs = []
+    for i, j in combinations(range(len(polys)), 2):
+        d = polys[i].distance(polys[j])
+        pairs.append((d, i, j))
+    pairs.sort()
+
+    for d, i, j in pairs:
+        si, sj = _find_set(i), _find_set(j)
+        if si is sj:
+            continue
+
+        p1, p2 = nearest_points(polys[i], polys[j])
+        bridge_width = buffer_distance * 2.0
+        bridge = LineString([p1, p2]).buffer(bridge_width, cap_style=1)
+        bridges.append(bridge)
+
+        si.update(sj)
+        connected.remove(sj)
+
+        if len(connected) == 1:
+            break
+
+    return unary_union([union] + bridges)
+
+
+def build_interposer_outline(
+    comp: Component,
+    packages: list[Package],
+    *,
+    is_bottom: bool = False,
+    user_symbols: dict | None = None,
+) -> tuple:
+    """Build outer and inner outline polygons from an interposer's pads.
+
+    Each pad is buffered so that neighbours merge into a ring-shaped
+    polygon.  If the pads form disconnected clusters, thin bridges are
+    inserted to connect them.
+
+    Returns ``(outer_polygon, inner_polygon)`` where:
+    - *outer_polygon*: exterior boundary of the buffered pad union.
+    - *inner_polygon*: largest interior hole (if any), or ``None``.
+
+    Returns ``(None, None)`` when pad geometry is unavailable.
+    """
+    if not _HAS_SHAPELY:
+        return (None, None)
+
+    pad_polys = _get_individual_pad_polygons(
+        comp, packages, is_bottom=is_bottom, user_symbols=user_symbols)
+    if not pad_polys:
+        return (None, None)
+
+    buffer_dist = _estimate_merge_buffer(pad_polys)
+
+    buffered = [p.buffer(buffer_dist) for p in pad_polys]
+    merged = unary_union(buffered)
+
+    # Bridge disconnected clusters
+    if merged.geom_type == "MultiPolygon":
+        merged = _bridge_clusters(merged, buffer_dist)
+
+    outer = None
+    inner = None
+
+    if merged.geom_type == "Polygon":
+        outer = ShapelyPolygon(merged.exterior)
+        if merged.interiors:
+            inner_rings = list(merged.interiors)
+            inner = ShapelyPolygon(
+                max(inner_rings, key=lambda r: ShapelyPolygon(r).area))
+    elif merged.geom_type == "MultiPolygon":
+        # Fallback: still MultiPolygon after bridging
+        largest = max(merged.geoms, key=lambda g: g.area)
+        outer = ShapelyPolygon(largest.exterior)
+        if largest.interiors:
+            inner_rings = list(largest.interiors)
+            inner = ShapelyPolygon(
+                max(inner_rings, key=lambda r: ShapelyPolygon(r).area))
+
+    return (outer, inner)

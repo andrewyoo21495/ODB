@@ -50,6 +50,7 @@ from .overlap import (
     is_sandwiched_between,
     has_empty_center,
     find_empty_center_ics,
+    build_interposer_outline,
 )
 
 from .distance import (

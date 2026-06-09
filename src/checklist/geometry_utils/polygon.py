@@ -430,6 +430,70 @@ def _get_pad_bbox(
     return (min(all_xs), min(all_ys), max(all_xs), max(all_ys))
 
 
+def _get_pad_boundary_points(
+    comp: Component,
+    packages: list[Package],
+    *,
+    is_bottom: bool = False,
+) -> list[tuple[float, float]]:
+    """Return boundary sample points for every pad of *comp* in board coords.
+
+    For each pin with outline data, ``_outline_vertices()`` is used to produce
+    shape vertices (16 pts for circles, 4 pts for rectangles/squares).
+    Falls back to toeprint positions when outline data is unavailable.
+    """
+    if comp.pkg_ref < 0 or comp.pkg_ref >= len(packages):
+        return []
+    pkg = packages[comp.pkg_ref]
+
+    pts: list[tuple[float, float]] = []
+
+    if pkg.pins:
+        for pin in pkg.pins:
+            if pin.outlines:
+                for outline in pin.outlines:
+                    verts = _outline_vertices(outline)
+                    for lx, ly in verts:
+                        bx, by = transform_point(
+                            lx, ly, comp, is_bottom=is_bottom)
+                        pts.append((bx, by))
+            else:
+                bx, by = transform_point(
+                    pin.center.x, pin.center.y, comp, is_bottom=is_bottom)
+                pts.append((bx, by))
+
+    if not pts and comp.toeprints:
+        for tp in comp.toeprints:
+            pts.append((tp.x, tp.y))
+
+    return pts
+
+
+def _build_pad_convex_hull(
+    comp: Component,
+    packages: list[Package],
+    *,
+    is_bottom: bool = False,
+) -> Optional[Polygon]:
+    """Build a convex hull polygon from all pad boundary points of *comp*.
+
+    Returns a Shapely ``Polygon`` whose vertices are the convex hull of
+    every pad's outline sample points, or ``None`` when fewer than 3
+    boundary points are available.
+    """
+    if not _HAS_SHAPELY:
+        return None
+
+    pts = _get_pad_boundary_points(comp, packages, is_bottom=is_bottom)
+    if len(pts) < 3:
+        return None
+
+    hull = MultiPoint(pts).convex_hull
+    if hull.is_empty or hull.geom_type != "Polygon":
+        return None
+    return hull
+
+
 # ---------------------------------------------------------------------------
 # Edge / corner detection
 # ---------------------------------------------------------------------------
@@ -695,11 +759,11 @@ def is_on_edge(comp_a: Component, comp_b: Component,
     if not pad_centers_a:
         return False
 
-    outline_b = _resolve_outline(comp_b, packages)
-    if outline_b is None:
+    hull_b = _build_pad_convex_hull(comp_b, packages)
+    if hull_b is None:
         return False
 
-    coords = _extract_outline_coords(outline_b)
+    coords = _extract_outline_coords(hull_b)
     corners = _find_corner_vertices(coords)
     if not corners:
         return False
@@ -804,11 +868,11 @@ def is_on_outline_edge(
     if not _HAS_SHAPELY:
         return False
 
-    outline_b = _resolve_outline(comp_b, packages, is_bottom=is_bottom_b)
-    if outline_b is None:
+    hull_b = _build_pad_convex_hull(comp_b, packages, is_bottom=is_bottom_b)
+    if hull_b is None:
         return False
 
-    coords = _extract_outline_coords(outline_b)
+    coords = _extract_outline_coords(hull_b)
     corners = _find_corner_vertices(coords)
     if not corners:
         return False

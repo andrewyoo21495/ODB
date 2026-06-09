@@ -3,8 +3,12 @@
 Interposers, Shield Cans, SIM Sockets, and Connectors must not have
 pad-level overlap with Oscillator components on the opposite side.
 
-- Outline-only overlap (no pad contact) → PASS
-- Pad-to-pad overlap → FAIL
+- For non-interposer targets:
+  - Pad-to-pad overlap → FAIL
+  - Outline-only overlap (no pad contact) → PASS
+- For interposers (special handling):
+  - OSC pads intersect interposer pad-ring outline → FAIL
+  - OSC pads overlap interposer pads only (no outline hit) → PASS
 """
 
 from __future__ import annotations
@@ -22,6 +26,8 @@ from src.checklist.component_classifier import (
 )
 from src.checklist.engine import register_rule
 from src.checklist.geometry_utils import (
+    _get_pad_union,
+    build_interposer_outline,
     find_overlapping_components,
     find_pad_overlapping_components,
 )
@@ -66,60 +72,145 @@ class CKL03016(ChecklistRule):
             opp_simsockets = find_simsockets(opp_comps)
             opp_connectors = find_connectors(opp_comps)
             opp_antennas = find_antennas(opp_comps)
-            opp_targets = (
-                opp_interposers + opp_shield_cans
-                + opp_simsockets + opp_connectors + opp_antennas
+
+            # Non-interposer targets use existing pad/outline overlap logic
+            opp_non_interposers = (
+                opp_shield_cans + opp_simsockets
+                + opp_connectors + opp_antennas
             )
 
-            if not opp_targets:
+            if not opp_non_interposers and not opp_interposers:
                 continue
 
             for osc in oscs:
-                # Step 1: Check pad-level overlap (FAIL)
-                pad_overlaps = find_pad_overlapping_components(
-                    osc, opp_targets, packages,
-                    is_bottom_primary=osc_is_bottom,
-                    is_bottom_candidates=opp_is_bottom,
-                    user_symbols=user_symbols,
-                )
-                pad_overlap_ids = {id(c) for c in pad_overlaps}
-
-                # Step 2: Check outline-only overlap (PASS)
-                outline_overlaps = find_overlapping_components(
-                    osc, opp_targets, packages,
-                    is_bottom_primary=osc_is_bottom,
-                    is_bottom_candidates=opp_is_bottom,
-                )
-
                 overlap_items: list[dict] = []
 
-                # Pad overlaps → FAIL
-                for ovl in pad_overlaps:
-                    rows.append({
-                        "comp": osc.comp_name,
-                        "cmp_layer": osc_layer,
-                        "overlapping_cmp": ovl.comp_name,
-                        "part_name": ovl.part_name or "",
-                        "overlap_type": "PAD",
-                        "status": "FAIL",
-                    })
-                    overlap_items.append({"comp": ovl, "status": "FAIL"})
+                # -------------------------------------------------------
+                # Non-interposer targets: existing logic
+                # -------------------------------------------------------
+                if opp_non_interposers:
+                    pad_overlaps = find_pad_overlapping_components(
+                        osc, opp_non_interposers, packages,
+                        is_bottom_primary=osc_is_bottom,
+                        is_bottom_candidates=opp_is_bottom,
+                        user_symbols=user_symbols,
+                    )
+                    pad_overlap_ids = {id(c) for c in pad_overlaps}
 
-                # Outline-only overlaps (not pad) → PASS
-                for ovl in outline_overlaps:
-                    if id(ovl) in pad_overlap_ids:
-                        continue  # Already reported as FAIL
-                    rows.append({
-                        "comp": osc.comp_name,
-                        "cmp_layer": osc_layer,
-                        "overlapping_cmp": ovl.comp_name,
-                        "part_name": ovl.part_name or "",
-                        "overlap_type": "OUTLINE_ONLY",
-                        "status": "PASS",
-                    })
-                    overlap_items.append({"comp": ovl, "status": "PASS"})
+                    outline_overlaps = find_overlapping_components(
+                        osc, opp_non_interposers, packages,
+                        is_bottom_primary=osc_is_bottom,
+                        is_bottom_candidates=opp_is_bottom,
+                    )
 
-                if overlap_items and any(i["status"] == "FAIL" for i in overlap_items):
+                    # Pad overlaps → FAIL
+                    for ovl in pad_overlaps:
+                        rows.append({
+                            "comp": osc.comp_name,
+                            "cmp_layer": osc_layer,
+                            "overlapping_cmp": ovl.comp_name,
+                            "part_name": ovl.part_name or "",
+                            "overlap_type": "PAD",
+                            "status": "FAIL",
+                        })
+                        overlap_items.append({"comp": ovl, "status": "FAIL"})
+
+                    # Outline-only overlaps (not pad) → PASS
+                    for ovl in outline_overlaps:
+                        if id(ovl) in pad_overlap_ids:
+                            continue
+                        rows.append({
+                            "comp": osc.comp_name,
+                            "cmp_layer": osc_layer,
+                            "overlapping_cmp": ovl.comp_name,
+                            "part_name": ovl.part_name or "",
+                            "overlap_type": "OUTLINE_ONLY",
+                            "status": "PASS",
+                        })
+                        overlap_items.append({"comp": ovl, "status": "PASS"})
+
+                # -------------------------------------------------------
+                # Interposer targets: outline-based logic
+                # -------------------------------------------------------
+                for inp in opp_interposers:
+                    outer_poly, _inner_poly = build_interposer_outline(
+                        inp, packages,
+                        is_bottom=opp_is_bottom,
+                        user_symbols=user_symbols,
+                    )
+
+                    pad_union_osc = _get_pad_union(
+                        osc, packages,
+                        is_bottom=osc_is_bottom,
+                        user_symbols=user_symbols,
+                    )
+                    if pad_union_osc is None:
+                        continue
+
+                    if outer_poly is None:
+                        # Fallback: no outline available → treat like
+                        # non-interposer (pad overlap = FAIL)
+                        pad_union_inp = _get_pad_union(
+                            inp, packages,
+                            is_bottom=opp_is_bottom,
+                            user_symbols=user_symbols,
+                        )
+                        if (pad_union_inp is not None
+                                and pad_union_osc.intersects(pad_union_inp)):
+                            rows.append({
+                                "comp": osc.comp_name,
+                                "cmp_layer": osc_layer,
+                                "overlapping_cmp": inp.comp_name,
+                                "part_name": inp.part_name or "",
+                                "overlap_type": "PAD",
+                                "status": "FAIL",
+                            })
+                            overlap_items.append(
+                                {"comp": inp, "status": "FAIL"})
+                        continue
+
+                    if pad_union_osc.intersects(outer_poly):
+                        # OSC pads touch interposer outline → FAIL
+                        rows.append({
+                            "comp": osc.comp_name,
+                            "cmp_layer": osc_layer,
+                            "overlapping_cmp": inp.comp_name,
+                            "part_name": inp.part_name or "",
+                            "overlap_type": "PAD_VS_INP_OUTLINE",
+                            "status": "FAIL",
+                        })
+                        overlap_items.append(
+                            {"comp": inp, "status": "FAIL"})
+                    else:
+                        # No outline intersection — check pad-only overlap
+                        pad_union_inp = _get_pad_union(
+                            inp, packages,
+                            is_bottom=opp_is_bottom,
+                            user_symbols=user_symbols,
+                        )
+                        if (pad_union_inp is not None
+                                and pad_union_osc.intersects(pad_union_inp)):
+                            # Pad overlap but no outline intersection → PASS
+                            rows.append({
+                                "comp": osc.comp_name,
+                                "cmp_layer": osc_layer,
+                                "overlapping_cmp": inp.comp_name,
+                                "part_name": inp.part_name or "",
+                                "overlap_type": "PAD_ONLY_NO_OUTLINE",
+                                "status": "PASS",
+                            })
+                            overlap_items.append(
+                                {"comp": inp, "status": "PASS"})
+
+                # -------------------------------------------------------
+                # Visualization (shared for all target types)
+                # -------------------------------------------------------
+                if overlap_items and any(
+                    i["status"] == "FAIL" for i in overlap_items
+                ):
+                    opp_targets = (
+                        opp_interposers + opp_non_interposers
+                    )
                     safe = osc.comp_name.replace("/", "_")
                     img_path = image_dir / f"{safe}_{osc_layer}.png"
                     render_overlap_image(
