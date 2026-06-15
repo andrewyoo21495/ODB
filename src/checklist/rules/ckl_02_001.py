@@ -3,6 +3,11 @@
 Verify placement and distance between 10 managed capacitor types and
 connector, interposer, and shield can components on the opposite side.
 Distance must be >= 1.5mm.
+
+Exemption: if a managed capacitor's EDA package name (pkg_name) matches the
+``pad_geom_name`` listed for its part in ``references/capacitors_10_list.csv``
+(exact or ``<pad_geom_name>_<suffix>`` variant), the capacitor already uses
+the approved pad geometry and is treated as PASS regardless of distance.
 """
 
 from __future__ import annotations
@@ -20,13 +25,50 @@ from src.checklist.geometry_utils import (
     find_overlapping_components,
     pad_to_pad_distance,
 )
-from src.checklist.reference_loader import get_managed_part_names
+from src.checklist.reference_loader import (
+    get_managed_part_names,
+    load_reference_csv,
+)
 from src.checklist.rule_base import ChecklistRule
 from src.checklist.visualizers.overlap_viz import render_overlap_image
-from src.models import Component, RuleResult
+from src.models import Component, Package, RuleResult
 
 
 _MIN_DISTANCE_MM = 1.5
+
+
+def _load_pad_geom_map() -> dict[str, str]:
+    """Return {part_name: pad_geom_name} from capacitors_10_list.csv.
+
+    Rows missing either column are dropped.
+    """
+    out: dict[str, str] = {}
+    for r in load_reference_csv("capacitors_10_list.csv"):
+        pn = (r.get("part_name") or "").strip()
+        geom = (r.get("pad_geom_name") or "").strip()
+        if pn and geom:
+            out[pn] = geom
+    return out
+
+
+def _package_name(comp: Component, packages: list[Package]) -> str:
+    """Return the EDA package (pad geometry) name for *comp*."""
+    if 0 <= comp.pkg_ref < len(packages):
+        return packages[comp.pkg_ref].name or ""
+    return ""
+
+
+def _matches_pad_geom(actual: str, expected: str) -> bool:
+    """True if *actual* package equals *expected* or is a suffixed variant.
+
+    EDA tools sometimes append a suffix to the canonical pad-geom name
+    (e.g. ``HE_CAP17098`` → ``HE_CAP17098_OSP``).  Any ``<expected>_<suffix>``
+    is treated as the same approved geometry.  The underscore boundary
+    prevents accidental prefix collisions.
+    """
+    if not expected or not actual:
+        return False
+    return actual == expected or actual.startswith(expected + "_")
 
 
 @register_rule
@@ -46,9 +88,10 @@ class CKL02001(ChecklistRule):
         user_symbols: dict = job_data.get("user_symbols") or {}
 
         managed_parts = get_managed_part_names("capacitors_10_list")
+        pad_geom_map = _load_pad_geom_map()
 
         columns = [
-            "comp", "cmp_layer", "part_name",
+            "comp", "cmp_layer", "part_name", "pkg_name",
             "overlapping_cmp", "opp_type", "distance", "status",
         ]
         rows: list[dict] = []
@@ -84,6 +127,23 @@ class CKL02001(ChecklistRule):
             opp_type_map = {id(c): t for c, t in opp_targets}
 
             for cap in managed_caps:
+                pkg_name = _package_name(cap, packages)
+
+                # Exemption: capacitor already uses the approved pad geometry
+                expected_geom = pad_geom_map.get(cap.part_name or "")
+                if _matches_pad_geom(pkg_name, expected_geom or ""):
+                    rows.append({
+                        "comp": cap.comp_name,
+                        "cmp_layer": cap_layer,
+                        "part_name": cap.part_name or "",
+                        "pkg_name": pkg_name,
+                        "overlapping_cmp": "-",
+                        "opp_type": "-",
+                        "distance": "-",
+                        "status": "PASS",
+                    })
+                    continue
+
                 # Use footprint overlap to find spatially nearby candidates first
                 overlaps = find_overlapping_components(
                     cap, opp_all, packages,
@@ -108,6 +168,7 @@ class CKL02001(ChecklistRule):
                             "comp": cap.comp_name,
                             "cmp_layer": cap_layer,
                             "part_name": cap.part_name or "",
+                            "pkg_name": pkg_name,
                             "overlapping_cmp": opp.comp_name,
                             "opp_type": opp_type,
                             "distance": dist_str,
@@ -123,6 +184,7 @@ class CKL02001(ChecklistRule):
                         "comp": cap.comp_name,
                         "cmp_layer": cap_layer,
                         "part_name": cap.part_name or "",
+                        "pkg_name": pkg_name,
                         "overlapping_cmp": "-",
                         "opp_type": "-",
                         "distance": "-",

@@ -1,13 +1,12 @@
-"""CKL-01-002: VIA presence check for outermost NC pads on ICs.
+"""CKL-01-002: VIA presence check for outermost NC pads on PMICs.
 
-For PMIC components (identified by part_name in references/pmic_list.csv
-or FNC/SSHEET properties), each outermost (outer perimeter) pad that is NC
+This rule applies **only to PMIC components** (identified by part_name in
+references/pmic_list.csv or FNC/SSHEET properties).  Non-PMIC ICs are not
+evaluated.
+
+For each PMIC, every outermost (outer perimeter) pad that is NC
 (Not Connected) must have at least one VIA.  Additionally, the four corner
 balls of a PMIC must have VIA even if they are connected.
-
-For non-PMIC ICs, the same NC+VIA check applies, but a pad only FAILs
-when the IC's opposite side has pad overlap with a Connector or Shield Can.
-Without such overlap, non-PMIC ICs always PASS.
 """
 
 from __future__ import annotations
@@ -17,10 +16,7 @@ import tempfile
 from pathlib import Path
 
 from src.checklist.component_classifier import (
-    find_connectors,
     find_ics,
-    find_pmics,
-    find_shield_cans,
 )
 from src.checklist.engine import register_rule
 from src.checklist.geometry_utils import (
@@ -28,7 +24,6 @@ from src.checklist.geometry_utils import (
     build_via_position_set,
     count_vias_at_pad,
     find_outermost_pin_indices,
-    find_pad_overlapping_components,
     is_pad_nc,
     is_pad_nc_by_signal_layer,
     lookup_resolved_pads_for_pin,
@@ -156,9 +151,8 @@ def _is_pad_nc_robust(
 class CKL01002(ChecklistRule):
     rule_id = "CKL-01-002"
     description = (
-        "IC 부품의 최외곽 패드에 VIA 설계가 적용되어야 합니다 "
-        "(PMIC: NC+corner VIA 필수 / 일반 IC: 반대면 connector·shield can "
-        "겹침 시에만 적용)"
+        "PMIC 부품의 최외곽 NC 패드 및 4개 코너 볼에 VIA 설계가 "
+        "적용되어야 합니다"
     )
     category = "Placement"
 
@@ -168,7 +162,6 @@ class CKL01002(ChecklistRule):
         eda = job_data.get("eda_data")
         layers_data = job_data.get("layers_data", {})
         packages = eda.packages if eda else []
-        user_symbols: dict = job_data.get("user_symbols") or {}
 
         pmic_parts = get_managed_part_names("pmic_list")
 
@@ -197,43 +190,27 @@ class CKL01002(ChecklistRule):
         images: list[dict] = []
         image_dir = Path(tempfile.mkdtemp(prefix="ckl_01_002_"))
 
-        for comps, layer_name, is_bottom, opp_comps in [
-            (components_top, "Top", False, components_bot),
-            (components_bot, "Bottom", True, components_top),
+        for comps, layer_name, is_bottom in [
+            (components_top, "Top", False),
+            (components_bot, "Bottom", True),
         ]:
             via_positions = via_bot if is_bottom else via_top
             sig_name = bot_sig_name if is_bottom else top_sig_name
-            opp_is_bottom = not is_bottom
 
-            # Collect all ICs on this side
-            all_ics = find_ics(comps)
+            # Collect PMIC components on this side (PMIC-only rule)
+            pmics = [
+                c for c in find_ics(comps)
+                if _is_pmic(c, pmic_parts)
+            ]
 
-            for comp in all_ics:
+            for comp in pmics:
                 if comp.pkg_ref < 0 or comp.pkg_ref >= len(packages):
                     continue
                 pkg = packages[comp.pkg_ref]
                 if not pkg.pins:
                     continue
 
-                is_pmic_comp = _is_pmic(comp, pmic_parts)
                 ic_type = _get_ic_type(comp)
-
-                # For non-PMIC ICs: check if opposite side has
-                # connector or shield can pad overlap
-                opp_has_overlap = False
-                if not is_pmic_comp:
-                    opp_targets = (
-                        find_connectors(opp_comps)
-                        + find_shield_cans(opp_comps)
-                    )
-                    if opp_targets:
-                        overlaps = find_pad_overlapping_components(
-                            comp, opp_targets, packages,
-                            is_bottom_primary=is_bottom,
-                            is_bottom_candidates=opp_is_bottom,
-                            user_symbols=user_symbols,
-                        )
-                        opp_has_overlap = len(overlaps) > 0
 
                 outermost_indices = find_outermost_pin_indices(pkg.pins)
                 corner_indices = _find_corner_pin_indices(pkg.pins)
@@ -272,15 +249,8 @@ class CKL01002(ChecklistRule):
                     has_via = via_count > 0
                     is_corner = pin_idx in corner_indices
 
-                    # Status determination
-                    if is_pmic_comp:
-                        status = "PASS" if has_via else "FAIL"
-                    else:
-                        # Non-PMIC: FAIL only if opposite side overlap exists
-                        if opp_has_overlap:
-                            status = "PASS" if has_via else "FAIL"
-                        else:
-                            status = "PASS"
+                    # Status determination (PMIC: NC pad must have VIA)
+                    status = "PASS" if has_via else "FAIL"
 
                     rows.append({
                         "comp": comp.comp_name,
@@ -294,51 +264,50 @@ class CKL01002(ChecklistRule):
                     })
                     processed.add(pin_idx)
 
-                # --- Phase 2: Corner pin check (PMIC only) ---
-                if is_pmic_comp:
-                    for pin_idx in sorted(corner_indices):
-                        if pin_idx in processed:
-                            continue
-                        processed.add(pin_idx)
+                # --- Phase 2: Corner pin check ---
+                for pin_idx in sorted(corner_indices):
+                    if pin_idx in processed:
+                        continue
+                    processed.add(pin_idx)
 
-                        pin = pkg.pins[pin_idx]
-                        tp = toep_by_pin.get(pin_idx)
-                        rpads = lookup_resolved_pads_for_pin(
-                            fid_resolved, comp, is_bottom,
-                            pin_idx, signal_layer_name=sig_name,
-                        )
+                    pin = pkg.pins[pin_idx]
+                    tp = toep_by_pin.get(pin_idx)
+                    rpads = lookup_resolved_pads_for_pin(
+                        fid_resolved, comp, is_bottom,
+                        pin_idx, signal_layer_name=sig_name,
+                    )
 
-                        nc = _is_pad_nc_robust(
-                            comp, pin, is_bottom, layers_data,
-                            signal_layer_name=sig_name,
-                            resolved_pads=rpads,
-                            toeprint=tp,
-                            eda_data=eda,
-                            via_positions=via_positions,
-                        )
+                    nc = _is_pad_nc_robust(
+                        comp, pin, is_bottom, layers_data,
+                        signal_layer_name=sig_name,
+                        resolved_pads=rpads,
+                        toeprint=tp,
+                        eda_data=eda,
+                        via_positions=via_positions,
+                    )
 
-                        via_count = count_vias_at_pad(
-                            comp, pin.center.x, pin.center.y,
-                            via_positions, is_bottom=is_bottom,
-                            toeprint=tp, pin=pin,
-                            resolved_pads=rpads,
-                        )
-                        has_via = via_count > 0
-                        status = "PASS" if has_via else "FAIL"
+                    via_count = count_vias_at_pad(
+                        comp, pin.center.x, pin.center.y,
+                        via_positions, is_bottom=is_bottom,
+                        toeprint=tp, pin=pin,
+                        resolved_pads=rpads,
+                    )
+                    has_via = via_count > 0
+                    status = "PASS" if has_via else "FAIL"
 
-                        if pin_idx not in nc_map:
-                            nc_map[pin_idx] = True
+                    if pin_idx not in nc_map:
+                        nc_map[pin_idx] = True
 
-                        rows.append({
-                            "comp": comp.comp_name,
-                            "IC_type": ic_type,
-                            "cmp_layer": layer_name,
-                            "pad_name": pin.name,
-                            "pad_type": "NC" if nc else "Connected",
-                            "corner": "TRUE",
-                            "via": "TRUE" if has_via else "FALSE",
-                            "status": status,
-                        })
+                    rows.append({
+                        "comp": comp.comp_name,
+                        "IC_type": ic_type,
+                        "cmp_layer": layer_name,
+                        "pad_name": pin.name,
+                        "pad_type": "NC" if nc else "Connected",
+                        "corner": "TRUE",
+                        "via": "TRUE" if has_via else "FALSE",
+                        "status": status,
+                    })
 
                 # Generate visualisation image only when there is a FAIL
                 comp_rows = [
@@ -351,11 +320,7 @@ class CKL01002(ChecklistRule):
                     all_check_indices = outermost_indices | corner_indices
                     safe_name = comp.comp_name.replace("/", "_")
                     img_path = image_dir / f"{safe_name}_{layer_name}.png"
-                    comp_label = (
-                        f"PMIC (outermost NC + corner)"
-                        if is_pmic_comp
-                        else f"IC — {ic_type}"
-                    )
+                    comp_label = "PMIC (outermost NC + corner)"
                     render_via_check_image(
                         comp, pkg, via_positions, is_bottom, img_path,
                         rule_id=self.rule_id,
@@ -378,14 +343,14 @@ class CKL01002(ChecklistRule):
         passed = fail_count == 0
 
         if not rows:
-            msg = "IC 부품에서 검사 대상 최외곽/코너 패드가 발견되지 않았습니다."
+            msg = "PMIC 부품에서 검사 대상 최외곽/코너 패드가 발견되지 않았습니다."
         elif not passed:
             msg = (
-                f"VIA가 없는 최외곽/코너 IC 패드가 {fail_count}건"
+                f"VIA가 없는 최외곽/코너 PMIC 패드가 {fail_count}건"
                 f" 감지되었습니다."
             )
         else:
-            msg = "모든 최외곽 및 코너 IC 패드에 VIA 설계가 적용되어 있습니다."
+            msg = "모든 최외곽 및 코너 PMIC 패드에 VIA 설계가 적용되어 있습니다."
 
         return RuleResult(
             rule_id=self.rule_id,
