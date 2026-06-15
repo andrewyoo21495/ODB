@@ -158,31 +158,28 @@ def _gen_02_003(fail_rows: list[dict]) -> list[str]:
 
 
 def _gen_02_005(fail_rows: list[dict]) -> list[str]:
-    """CKL-02-005: D-pad application, split by location."""
-    inside: dict[str, list[str]] = defaultdict(list)
-    outside: dict[str, list[str]] = defaultdict(list)
+    """CKL-02-005: D-pad application, grouped into two bullets by location."""
+    inside: list[str] = []
+    outside: list[str] = []
 
     for r in fail_rows:
         comp = r.get("comp", "")
         part = r.get("part_name", "")
         loc = r.get("location", "")
-        container = r.get("container", "")
         entry = f"{comp}({part})"
 
         if loc == "INSIDE":
-            if entry not in inside[container]:
-                inside[container].append(entry)
+            if entry not in inside:
+                inside.append(entry)
         elif loc == "OUTSIDE":
-            if entry not in outside[container]:
-                outside[container].append(entry)
+            if entry not in outside:
+                outside.append(entry)
 
     bullets: list[str] = []
-    for _container, entries in inside.items():
-        for entry in entries:
-            bullets.append(f"{entry}는 D-pad 적용할 것.")
-    for _container, entries in outside.items():
-        for entry in entries:
-            bullets.append(f"{entry}는 일반 Pad 적용할 것.")
+    if inside:
+        bullets.append(f"{', '.join(inside)} 는 D-pad 적용할 것.")
+    if outside:
+        bullets.append(f"{', '.join(outside)} 는 일반 Pad 적용할 것.")
     return bullets
 
 

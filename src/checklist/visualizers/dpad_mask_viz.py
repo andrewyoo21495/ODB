@@ -26,6 +26,7 @@ from matplotlib.patches import Polygon as MplPolygon
 import numpy as np
 
 from src.checklist.geometry_utils import (
+    _resolve_container_interior,
     _resolve_footprint,
     _resolve_outline,
 )
@@ -131,8 +132,9 @@ def render_dpad_side_image(
         image title; all coordinates are in native board coords regardless.
     """
     # Resolve geometries — all in top-view board coordinates.
-    cont_hulls:  list[tuple] = []
-    cont_frames: list[tuple] = []
+    cont_hulls:     list[tuple] = []
+    cont_frames:    list[tuple] = []
+    cont_interiors: list[tuple] = []
     for cont in containers:
         hull = _resolve_footprint(cont, packages, is_bottom=is_bottom)
         if hull is not None and not hull.is_empty:
@@ -140,6 +142,12 @@ def render_dpad_side_image(
         frame = _resolve_outline(cont, packages, is_bottom=is_bottom)
         if frame is not None and not frame.is_empty:
             cont_frames.append((cont, frame))
+        # The ACTUAL region used for the INSIDE/OUTSIDE verdict
+        # (exterior-filled outline). Drawn in purple for visual debugging.
+        interior = _resolve_container_interior(
+            cont, packages, is_bottom=is_bottom)
+        if interior is not None and not interior.is_empty:
+            cont_interiors.append((cont, interior))
 
     cap_geoms: list[tuple[dict, object]] = []
     for item in cap_items:
@@ -190,6 +198,16 @@ def render_dpad_side_image(
             ax, hull,
             facecolor="#B0C4DE", edgecolor="steelblue",
             alpha=0.18, linewidth=1.0,
+        )
+
+    # ACTUAL interior used for the INSIDE/OUTSIDE verdict
+    # (exterior-filled outline) — purple, semi-transparent. This lets the
+    # computed interior be visually checked against the real container shape.
+    for cont, interior in cont_interiors:
+        _draw_geom(
+            ax, interior,
+            facecolor="#9C27B0", edgecolor="#6A1B9A",
+            alpha=0.25, linewidth=1.0, zorder=2,
         )
 
     # Container frame outlines (dashed grey).
@@ -248,7 +266,10 @@ def render_dpad_side_image(
                        label=f"{mask_layer_name} (solder mask)"),
         mpatches.Patch(facecolor="#B0C4DE", edgecolor="steelblue",
                        alpha=0.5,
-                       label="Container inside region (convex hull)"),
+                       label="Footprint convex hull (context only)"),
+        mpatches.Patch(facecolor="#9C27B0", edgecolor="#6A1B9A",
+                       alpha=0.45,
+                       label="Interior used for INSIDE verdict"),
         plt.Line2D([0], [0], color="#444444", linewidth=1.2,
                    linestyle="--", label="Container frame"),
         mpatches.Patch(facecolor="#90EE90", edgecolor="darkgreen",
