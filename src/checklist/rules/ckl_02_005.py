@@ -31,7 +31,7 @@ from src.checklist.component_classifier import (
 from src.checklist.engine import register_rule
 from src.checklist.geometry_utils import (
     _resolve_container_interior,
-    _resolve_container_interior_filled,
+    _resolve_outer_outline_filled,
 )
 from src.checklist.reference_loader import load_reference_csv
 from src.checklist.rule_base import ChecklistRule
@@ -138,16 +138,17 @@ class CKL02005(ChecklistRule):
                 continue
 
             # Container interior region.
-            # Interposers are donut/frame shaped: their inner hole(s) must
-            # count as INSIDE, so the outer boundary is filled completely.
-            # Shield cans use the plain outline-filled interior.
+            # Interposers are donut/frame shaped: the INSIDE region is the
+            # area enclosed by the OUTERMOST container-frame outline (inner
+            # hole filled, non-convex silhouette preserved).  Shield cans use
+            # the plain outline-filled interior.
             interposers = find_interposers(comps)
             interposer_ids = {id(c) for c in interposers}
             containers = interposers + find_shield_cans(comps)
             cont_hulls: list[tuple] = []
             for cont in containers:
                 if id(cont) in interposer_ids:
-                    interior = _resolve_container_interior_filled(
+                    interior = _resolve_outer_outline_filled(
                         cont, packages, is_bottom=is_bottom,
                     )
                 else:

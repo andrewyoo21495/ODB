@@ -28,7 +28,7 @@ import numpy as np
 from src.checklist.component_classifier import find_interposers
 from src.checklist.geometry_utils import (
     _resolve_container_interior,
-    _resolve_container_interior_filled,
+    _resolve_outer_outline_filled,
     _resolve_footprint,
     _resolve_outline,
 )
@@ -146,11 +146,12 @@ def render_dpad_side_image(
         if frame is not None and not frame.is_empty:
             cont_frames.append((cont, frame))
         # The ACTUAL region used for the INSIDE/OUTSIDE verdict. Drawn in
-        # purple for visual debugging. Interposers use the outer-boundary
-        # filled interior (inner holes count as INSIDE); shield cans use the
-        # plain outline-filled interior — mirroring the rule logic.
+        # purple for visual debugging. Interposers use the outermost
+        # container-frame outline filled (inner hole counts as INSIDE,
+        # non-convex silhouette preserved); shield cans use the plain
+        # outline-filled interior — mirroring the rule logic in ckl_02_005.
         if id(cont) in interposer_ids:
-            interior = _resolve_container_interior_filled(
+            interior = _resolve_outer_outline_filled(
                 cont, packages, is_bottom=is_bottom)
         else:
             interior = _resolve_container_interior(
