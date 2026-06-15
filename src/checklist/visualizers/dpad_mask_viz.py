@@ -25,8 +25,10 @@ import matplotlib.patches as mpatches
 from matplotlib.patches import Polygon as MplPolygon
 import numpy as np
 
+from src.checklist.component_classifier import find_interposers
 from src.checklist.geometry_utils import (
     _resolve_container_interior,
+    _resolve_container_interior_filled,
     _resolve_footprint,
     _resolve_outline,
 )
@@ -135,6 +137,7 @@ def render_dpad_side_image(
     cont_hulls:     list[tuple] = []
     cont_frames:    list[tuple] = []
     cont_interiors: list[tuple] = []
+    interposer_ids = {id(c) for c in find_interposers(containers)}
     for cont in containers:
         hull = _resolve_footprint(cont, packages, is_bottom=is_bottom)
         if hull is not None and not hull.is_empty:
@@ -142,10 +145,16 @@ def render_dpad_side_image(
         frame = _resolve_outline(cont, packages, is_bottom=is_bottom)
         if frame is not None and not frame.is_empty:
             cont_frames.append((cont, frame))
-        # The ACTUAL region used for the INSIDE/OUTSIDE verdict
-        # (exterior-filled outline). Drawn in purple for visual debugging.
-        interior = _resolve_container_interior(
-            cont, packages, is_bottom=is_bottom)
+        # The ACTUAL region used for the INSIDE/OUTSIDE verdict. Drawn in
+        # purple for visual debugging. Interposers use the outer-boundary
+        # filled interior (inner holes count as INSIDE); shield cans use the
+        # plain outline-filled interior — mirroring the rule logic.
+        if id(cont) in interposer_ids:
+            interior = _resolve_container_interior_filled(
+                cont, packages, is_bottom=is_bottom)
+        else:
+            interior = _resolve_container_interior(
+                cont, packages, is_bottom=is_bottom)
         if interior is not None and not interior.is_empty:
             cont_interiors.append((cont, interior))
 

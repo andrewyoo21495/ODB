@@ -29,7 +29,10 @@ from src.checklist.component_classifier import (
     find_capacitors, find_interposers, find_shield_cans,
 )
 from src.checklist.engine import register_rule
-from src.checklist.geometry_utils import _resolve_container_interior
+from src.checklist.geometry_utils import (
+    _resolve_container_interior,
+    _resolve_container_interior_filled,
+)
 from src.checklist.reference_loader import load_reference_csv
 from src.checklist.rule_base import ChecklistRule
 from src.checklist.visualizers.dpad_mask_viz import render_dpad_side_image
@@ -134,13 +137,23 @@ class CKL02005(ChecklistRule):
             if not target_caps:
                 continue
 
-            # Container interior = filled inner ring of SC / Interposer outline.
-            containers = find_interposers(comps) + find_shield_cans(comps)
+            # Container interior region.
+            # Interposers are donut/frame shaped: their inner hole(s) must
+            # count as INSIDE, so the outer boundary is filled completely.
+            # Shield cans use the plain outline-filled interior.
+            interposers = find_interposers(comps)
+            interposer_ids = {id(c) for c in interposers}
+            containers = interposers + find_shield_cans(comps)
             cont_hulls: list[tuple] = []
             for cont in containers:
-                interior = _resolve_container_interior(
-                    cont, packages, is_bottom=is_bottom,
-                )
+                if id(cont) in interposer_ids:
+                    interior = _resolve_container_interior_filled(
+                        cont, packages, is_bottom=is_bottom,
+                    )
+                else:
+                    interior = _resolve_container_interior(
+                        cont, packages, is_bottom=is_bottom,
+                    )
                 if interior is not None and not interior.is_empty:
                     cont_hulls.append((interior, cont))
 

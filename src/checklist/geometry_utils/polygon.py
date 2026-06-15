@@ -25,7 +25,7 @@ try:
         Point as ShapelyPoint,
         Polygon as ShapelyPolygon,
     )
-    from shapely.ops import unary_union
+    from shapely.ops import polygonize, unary_union
     from shapely.validation import make_valid
     _HAS_SHAPELY = True
 except ImportError:
@@ -325,6 +325,53 @@ def get_container_interior(comp: Component, pkg: Package,
     return get_component_footprint(comp, pkg, is_bottom=is_bottom)
 
 
+def _drop_holes(geom):
+    """Return *geom* with all interior rings removed (exterior boundary only)."""
+    if geom is None or geom.is_empty:
+        return geom
+    if hasattr(geom, "exterior"):
+        return ShapelyPolygon(geom.exterior)
+    if hasattr(geom, "geoms"):
+        filled = [
+            ShapelyPolygon(g.exterior)
+            for g in geom.geoms if hasattr(g, "exterior")
+        ]
+        if filled:
+            return unary_union(filled)
+    return geom
+
+
+def get_container_interior_filled(comp: Component, pkg: Package,
+                                  *, is_bottom: bool = False):
+    """Like ``get_container_interior`` but fills the entire outer boundary.
+
+    Interposers are donut/frame-shaped: their outline produces a ring whose
+    central hole(s) are *not* filled by the plain exterior-fill in
+    ``get_container_interior`` when the boundary fragments into a
+    MultiPolygon.  This left capacitors sitting inside an inner hole judged
+    as OUTSIDE.
+
+    Here the container outline's full boundary is re-polygonized so that
+    *every* enclosed face — the frame ring(s) and the central hole(s) — is
+    recovered, then unioned and stripped of any remaining holes.  The result
+    is the solid region bounded by the outermost perimeter, so anything
+    inside the outer outline (including the inner holes) is treated as INSIDE.
+    Non-convex outer shapes are preserved (unlike a convex hull).
+    """
+    base = get_container_interior(comp, pkg, is_bottom=is_bottom)
+    if base is None or base.is_empty:
+        return base
+
+    try:
+        faces = list(polygonize(unary_union(base).boundary))
+        if faces:
+            base = unary_union(faces)
+    except Exception:
+        pass
+
+    return _drop_holes(base)
+
+
 def _resolve_container_interior(comp: Component, packages: list[Package],
                                 *, is_bottom: bool = False):
     """Look up the package and build the filled container interior polygon."""
@@ -332,6 +379,19 @@ def _resolve_container_interior(comp: Component, packages: list[Package],
         return None
     pkg = packages[comp.pkg_ref]
     return get_container_interior(comp, pkg, is_bottom=is_bottom)
+
+
+def _resolve_container_interior_filled(comp: Component, packages: list[Package],
+                                       *, is_bottom: bool = False):
+    """Look up the package and build the outer-boundary-filled interior.
+
+    Used for interposers (donut/frame shaped) so that inner holes count as
+    INSIDE.  See ``get_container_interior_filled``.
+    """
+    if comp.pkg_ref < 0 or comp.pkg_ref >= len(packages):
+        return None
+    pkg = packages[comp.pkg_ref]
+    return get_container_interior_filled(comp, pkg, is_bottom=is_bottom)
 
 
 def _resolve_outline(comp: Component, packages: list[Package],
