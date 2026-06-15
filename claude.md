@@ -1,5 +1,17 @@
 # ODB++ Processing System
 
+## 작업 프로세스 (필수)
+
+코드 수정·기능 추가 요청을 받으면 **곧바로 구현하지 말 것.** 다음 순서를 따른다:
+
+1. **이슈 파악** — 관련 코드를 읽고 요구사항·원인·영향 범위를 먼저 분석한다.
+2. **설계 제안** — 변경할 파일, 접근 방식, 트레이드오프를 요약해 제시한다.
+3. **승인 대기** — 사용자가 "진행"이라고 확인할 때까지 코드를 수정하지 않는다.
+4. **구현** — 승인된 설계대로만 구현하고, 설계에서 벗어나야 하면 다시 확인을 받는다.
+
+**예외:** 오타 수정, 명백한 한두 줄 수정 등 사소한 변경은 위 단계를 건너뛰고 바로 진행해도 된다.
+판단이 애매하면 보수적으로 설계 제안 단계를 거친다.
+
 ## Project Overview
 
 PCB (Printed Circuit Board) design analysis tool that parses ODB++ archives, visualizes PCB layers, validates design rules via an automated checklist, and calculates copper ratios. Pure Python 3.10+ project with no build system — run directly via `python main.py`.
