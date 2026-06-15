@@ -25,7 +25,7 @@ try:
         Point as ShapelyPoint,
         Polygon as ShapelyPolygon,
     )
-    from shapely.ops import polygonize, unary_union
+    from shapely.ops import unary_union
     from shapely.validation import make_valid
     _HAS_SHAPELY = True
 except ImportError:
@@ -333,16 +333,18 @@ def get_outer_outline_filled(comp: Component, pkg: Package,
     all ``pkg.outlines``, i.e. the dashed frame shown in visualizations).
 
     Donut/frame-shaped interposers are stored as a single CONTOUR that traces
-    the frame "bread" — the outer perimeter and the inner perimeter joined by
-    a bridge into one self-touching ring.  Plain exterior-fill
-    (``get_container_interior``) therefore keeps only the bread and leaves the
-    central hole empty, so a capacitor in the middle is wrongly judged
-    OUTSIDE.
+    the frame "bread".  In practice this is a *simple* polygon whose central
+    hole is connected to the outside through a thin mouth/bridge (so it has no
+    interior ring).  Plain exterior-fill (``get_container_interior``)
+    therefore keeps only the bread and leaves the centre empty, so a capacitor
+    sitting in the middle is wrongly judged OUTSIDE.
 
-    Here the outline's *boundary* is re-polygonized: every region enclosed by
-    the boundary — the bread faces AND the central hole — is recovered and
-    unioned, so the whole area inside the outermost perimeter becomes solid.
-    The non-convex outer silhouette is preserved (unlike a convex hull).
+    The fix is a morphological *close* (buffer out then back in by a small
+    ``eps``) that seals the thin mouth, turning the centre into a real
+    enclosed hole; the exterior ring of the closed shape then fills that hole.
+    ``eps`` is ~2% of the outline's larger dimension — wide enough to bridge
+    the thin mouth, small enough to preserve genuine (wider) outer notches, so
+    the non-convex outer silhouette is kept (unlike a convex hull).
     """
     if not _HAS_SHAPELY:
         return None
@@ -352,28 +354,29 @@ def get_outer_outline_filled(comp: Component, pkg: Package,
         # No frame outline — fall back to the standard resolver chain.
         return get_container_interior(comp, pkg, is_bottom=is_bottom)
 
-    # Recover all faces enclosed by the outline boundary, then union them.
+    # Seal the thin mouth so the centre becomes a real enclosed hole.
+    geom = outline
     try:
-        boundary = unary_union(outline.boundary)
-        faces = list(polygonize(boundary))
-        if faces:
-            filled = unary_union(faces)
-            if filled is not None and not filled.is_empty:
-                return filled
+        minx, miny, maxx, maxy = geom.bounds
+        eps = max(maxx - minx, maxy - miny) * 0.02
+        if eps > 0:
+            closed = geom.buffer(eps).buffer(-eps)
+            if closed is not None and not closed.is_empty:
+                geom = closed
     except Exception:
         pass
 
-    # Fallback: exterior-fill (simple convex frames / degenerate boundaries).
-    if hasattr(outline, "exterior"):
-        return ShapelyPolygon(outline.exterior)
-    if hasattr(outline, "geoms"):
+    # Fill the enclosed hole via the exterior ring of the (closed) outline.
+    if hasattr(geom, "exterior"):
+        return ShapelyPolygon(geom.exterior)
+    if hasattr(geom, "geoms"):
         filled = [
             ShapelyPolygon(g.exterior)
-            for g in outline.geoms if hasattr(g, "exterior")
+            for g in geom.geoms if hasattr(g, "exterior")
         ]
         if filled:
             return unary_union(filled)
-    return outline
+    return geom
 
 
 def _resolve_container_interior(comp: Component, packages: list[Package],
