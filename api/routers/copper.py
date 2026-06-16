@@ -20,6 +20,10 @@ def _run_copper(job_id: str, method: str, n_rows: int, n_cols: int, task_id: str
         cache_dir, cache_name = job_store.cache_args(job_id, workspace_root=WORKSPACE_ROOT)
         meta = job_store.get_meta(job_id, workspace_root=WORKSPACE_ROOT)
         rdir = job_store.reports_dir(job_id, workspace_root=WORKSPACE_ROOT)
+
+        def on_progress(frac: float, msg: str) -> None:
+            registry.update(task_id, progress=frac, message=msg)
+
         summary = copper_service.run_report(
             cache_dir, cache_name,
             html_path=rdir / _REPORT_NAME,
@@ -27,7 +31,12 @@ def _run_copper(job_id: str, method: str, n_rows: int, n_cols: int, task_id: str
             odb_filename=meta.get("original_filename", job_id),
             n_rows=n_rows, n_cols=n_cols, method=method,
             log=lambda m: None,
+            progress=on_progress,
         )
+        job_store.record_result(job_id, "copper", report=summary.get("report"),
+                                summary=summary,
+                                params={"method": method, "n_rows": n_rows, "n_cols": n_cols},
+                                workspace_root=WORKSPACE_ROOT)
         registry.update(task_id, status="done", progress=1.0, result=summary)
     except Exception as exc:  # noqa: BLE001
         registry.update(task_id, status="error", error=str(exc))

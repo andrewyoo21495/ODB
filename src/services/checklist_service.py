@@ -9,23 +9,25 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from src.checklist.engine import discover_rules, load_rules, run_checklist
+from src.checklist.engine import ProgressFn, discover_rules, load_rules, run_checklist
 from src.models import RuleResult
 
 
-def evaluate(job_data: dict, rule_ids: list[str] | None = None) -> list[RuleResult]:
+def evaluate(job_data: dict, rule_ids: list[str] | None = None,
+             progress: ProgressFn | None = None) -> list[RuleResult]:
     """Discover and run checklist rules against parsed job data.
 
     Args:
         job_data: parsed job dict (from ``data_service.load_job``).
         rule_ids: optional subset of rule IDs to run; ``None`` runs all.
+        progress: optional ``(fraction, message)`` callback for UI progress.
 
     Returns:
         One :class:`RuleResult` per rule that was run.
     """
     discover_rules()
     rules = load_rules(rule_ids)
-    return run_checklist(job_data, rules)
+    return run_checklist(job_data, rules, progress=progress)
 
 
 def write_report(results: list[RuleResult], *, html_path: Path,

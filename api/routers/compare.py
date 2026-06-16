@@ -29,11 +29,15 @@ def _run_compare(old_id: str, new_id: str, task_id: str) -> None:
             old_job_name=old_meta.get("original_filename", old_id),
             new_job_name=new_meta.get("original_filename", new_id),
         )
-        registry.update(task_id, status="done", progress=1.0, result={
+        result = {
             "report": report_name,
             "summaries": [{"comparator_id": r.comparator_id, "title": r.title,
                            "summary": r.summary} for r in results],
-        })
+        }
+        job_store.record_result(new_id, "compare", report=report_name,
+                                summary=result, params={"old_job_id": old_id},
+                                workspace_root=WORKSPACE_ROOT)
+        registry.update(task_id, status="done", progress=1.0, result=result)
     except Exception as exc:  # noqa: BLE001
         registry.update(task_id, status="error", error=str(exc))
 

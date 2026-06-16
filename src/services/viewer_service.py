@@ -4,7 +4,9 @@ The web viewer is client-rendered (HTML5 Canvas): the backend computes a
 layer's copper geometry once (reusing :mod:`copper_vector`), serializes it to
 coordinate rings, and the frontend handles pan/zoom locally.
 
-No matplotlib needed here — geometry comes from shapely polygons.
+Layer/net geometry comes from shapely polygons; component pad geometry is
+flattened from matplotlib pad patches (Agg backend forced for headless server
+threads).
 """
 
 from __future__ import annotations
@@ -12,6 +14,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Callable
+
+import matplotlib
+
+matplotlib.use("Agg")  # headless — component pad patches built in server threads
 
 from src.services import data_service
 
@@ -186,45 +192,123 @@ def _outline_ring(outline, comp, is_bottom: bool):
     return [[round(float(x), 4), round(float(y), 4)] for x, y in board]
 
 
+# Component-view colors mirror the legacy ``view-comp`` viewer (on a dark
+# canvas): pads cyan (top) / pink (bottom), package outlines yellow.
+_PAD_COLOR_TOP = "#2BFFF4"
+_PAD_COLOR_BOT = "#FC5BA1"
+_OUTLINE_COLOR = "#FFFF00"
+
+
+def _patch_to_ring(patch) -> dict | None:
+    """Flatten a matplotlib pad patch (Circle/Polygon/Path/etc.) into a
+    ``{exterior, holes}`` ring by sampling its path. Curves are tessellated by
+    ``Path.to_polygons``; the largest sub-polygon is the exterior, the rest are
+    treated as holes (e.g. donut pads)."""
+    if patch is None:
+        return None
+    try:
+        path = patch.get_path()
+        polys = path.to_polygons(patch.get_patch_transform())
+    except Exception:
+        return None
+
+    def _round(poly):
+        return [[round(float(x), 4), round(float(y), 4)] for x, y in poly]
+
+    def _area(poly):
+        a = 0.0
+        for i in range(len(poly)):
+            x1, y1 = poly[i]
+            x2, y2 = poly[(i + 1) % len(poly)]
+            a += x1 * y2 - x2 * y1
+        return abs(a) / 2.0
+
+    rings = [p for p in polys if len(p) >= 3]
+    if not rings:
+        return None
+    rings.sort(key=_area, reverse=True)
+    return {"exterior": _round(rings[0]), "holes": [_round(r) for r in rings[1:]]}
+
+
+def _pad_rings(comp, is_bottom: bool, user_symbols: dict) -> list[dict]:
+    """Pin-pad rings for one component, resolved from ``Toeprint.geom`` exactly
+    as the legacy ``draw_components`` does (same rotation handling)."""
+    from src.visualizer.symbol_renderer import symbol_to_patch, user_symbol_to_patches
+
+    out: list[dict] = []
+    for tp in comp.toeprints:
+        geom = tp.geom
+        if geom is None:
+            continue
+        pad_rot = -geom.rotation if is_bottom else geom.rotation
+        if geom.is_user_symbol and geom.symbol_name in user_symbols:
+            patches = user_symbol_to_patches(
+                user_symbols[geom.symbol_name], geom.x, geom.y,
+                pad_rot, geom.mirror, "#000", 1.0,
+            )
+        else:
+            patch = symbol_to_patch(
+                geom.symbol_name, geom.x, geom.y, pad_rot, geom.mirror,
+                geom.units, geom.unit_override, "#000", 1.0, geom.resize_factor,
+            )
+            patches = [patch] if patch is not None else []
+        for p in patches:
+            ring = _patch_to_ring(p)
+            if ring:
+                out.append(ring)
+    return out
+
+
 def build_component_geometry(cache_dir: str | Path, cache_name: str, side: str,
                              out_path: Path, *, log: LogFn | None = None) -> dict:
-    """Component bodies (package outlines, colored by category) + pin points
-    for one side, flattened into the common geometry shape."""
+    """Component pads + package outlines for one side, matching the legacy
+    ``view-comp`` look: pads cyan(top)/pink(bottom) filled, outlines yellow
+    (stroke-only). Each polygon carries ``meta`` (refdes/part/category) for
+    click-identify."""
     _log = log if log is not None else (lambda m: None)
     from src.checklist.component_classifier import classify_component
 
     data = data_service.load_job(cache_dir, cache_name, log=lambda m: None)
     comps = data.get("components_top" if side == "top" else "components_bot", [])
     eda = data.get("eda_data")
+    user_symbols = data.get("user_symbols", {})
     packages = eda.packages if eda else []
     pkg_lookup = {i: pkg for i, pkg in enumerate(packages)}
     is_bottom = side == "bottom"
+    pad_color = _PAD_COLOR_BOT if is_bottom else _PAD_COLOR_TOP
 
     polygons: list[dict] = []
-    points: list[list[float]] = []
+    n_pads = n_outlines = 0
     for comp in comps:
         category = classify_component(comp).value
-        color = _CATEGORY_COLOR.get(category, "#8c8c8c")
         meta = {"refdes": comp.comp_name or "", "part": comp.part_name or "",
                 "category": category}
+        # Package outlines (yellow, stroke-only).
         pkg = pkg_lookup.get(comp.pkg_ref)
         if pkg and getattr(pkg, "outlines", None):
             for outline in pkg.outlines:
                 ring = _outline_ring(outline, comp, is_bottom)
                 if ring:
                     polygons.append({"exterior": ring, "holes": [],
-                                     "color": color, "meta": meta})
-        for tp in comp.toeprints:
-            points.append([round(float(tp.x), 4), round(float(tp.y), 4)])
+                                     "color": _OUTLINE_COLOR, "fill": False,
+                                     "meta": meta})
+                    n_outlines += 1
+        # Pin pads (cyan/pink, filled).
+        for ring in _pad_rings(comp, is_bottom, user_symbols):
+            ring["color"] = pad_color
+            ring["meta"] = meta
+            polygons.append(ring)
+            n_pads += 1
 
-    _log(f"{side}: {len(comps)} components, {len(polygons)} outlines, {len(points)} pins")
+    points: list[list[float]] = []
+    _log(f"{side}: {len(comps)} components, {n_outlines} outlines, {n_pads} pads")
 
     profile_rings, pbounds = _profile_rings_and_bounds(data.get("profile"))
     if pbounds:
         bounds = pbounds
-    elif points:
-        xs = [p[0] for p in points]
-        ys = [p[1] for p in points]
+    elif polygons:
+        xs = [pt[0] for poly in polygons for pt in poly["exterior"]]
+        ys = [pt[1] for poly in polygons for pt in poly["exterior"]]
         bounds = [min(xs), min(ys), max(xs), max(ys)]
     else:
         bounds = [0.0, 0.0, 1.0, 1.0]

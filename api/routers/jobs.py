@@ -6,9 +6,10 @@ import tempfile
 from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile
+from fastapi.responses import FileResponse
 
 from api.deps import WORKSPACE_ROOT, get_current_user
-from api.schemas import JobOut, JobStatus
+from api.schemas import JobOut, JobStatus, ResultOut, TaskOut
 from api.tasks import registry
 from src.services import job_store
 
@@ -72,6 +73,60 @@ def get_job(job_id: str, user: str = Depends(get_current_user)) -> JobOut:
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="job not found")
     return JobOut(**meta)
+
+
+@router.get("/jobs/{job_id}/results", response_model=list[ResultOut])
+def job_results(job_id: str, user: str = Depends(get_current_user)) -> list[ResultOut]:
+    """Completed analyses recorded for this job (checklist/copper/extract/…).
+
+    Lets a feature page show a prior run instead of a blank screen, and the
+    dashboard list which analyses are done — independent of the in-memory task
+    registry, so it survives navigation and server restarts."""
+    return [ResultOut(**r) for r in job_store.list_results(job_id, workspace_root=WORKSPACE_ROOT)]
+
+
+@router.get("/jobs/{job_id}/report/{kind}")
+def job_report(job_id: str, kind: str, download: bool = False,
+               user: str = Depends(get_current_user)):
+    """Serve a job's recorded report for a feature *kind* (task-independent)."""
+    result = job_store.get_result(job_id, kind, workspace_root=WORKSPACE_ROOT)
+    if not result or not result.get("report"):
+        raise HTTPException(status_code=404, detail="no report for this kind")
+    name = result["report"]
+    if "/" in name or "\\" in name or ".." in name:
+        raise HTTPException(status_code=400, detail="invalid report name")
+    path = job_store.reports_dir(job_id, workspace_root=WORKSPACE_ROOT) / name
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="report file missing")
+    if download:
+        return FileResponse(path, media_type="text/html",
+                            content_disposition_type="attachment",
+                            filename=f"{kind}_{job_id}.html")
+    return FileResponse(path, media_type="text/html",
+                        content_disposition_type="inline")
+
+
+@router.get("/jobs/{job_id}/artifact/{name}")
+def job_artifact(job_id: str, name: str, user: str = Depends(get_current_user)):
+    """Download a named artifact (e.g. parts.json) from a job's reports dir."""
+    if "/" in name or "\\" in name or ".." in name:
+        raise HTTPException(status_code=400, detail="invalid artifact name")
+    path = job_store.reports_dir(job_id, workspace_root=WORKSPACE_ROOT) / name
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="artifact not found")
+    return FileResponse(path, filename=name)
+
+
+@router.get("/jobs/{job_id}/tasks/{kind}", response_model=TaskOut | None)
+def latest_task(job_id: str, kind: str, user: str = Depends(get_current_user)):
+    """Most recent in-memory task of *kind* for this job (to re-attach a page to
+    a still-running analysis after navigating away). ``null`` if none."""
+    task = registry.latest_for_job(job_id, kind)
+    if task is None:
+        return None
+    return TaskOut(task_id=task.id, kind=task.kind, job_id=task.job_id,
+                   status=task.status, progress=task.progress,
+                   message=task.message, result=task.result, error=task.error)
 
 
 @router.get("/jobs/{job_id}/status", response_model=JobStatus)

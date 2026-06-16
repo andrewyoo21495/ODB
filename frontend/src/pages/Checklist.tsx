@@ -7,22 +7,18 @@ import {
   Progress,
   Select,
   Space,
-  Statistic,
 } from "antd";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { api } from "../api/client";
-import { useJob } from "../JobContext";
-import { useTask } from "../hooks/useTask";
+import { useFeature } from "../hooks/useFeature";
 import ReportView from "../components/ReportView";
 
 export default function Checklist() {
-  const { jobId } = useJob();
   const { message } = AntdApp.useApp();
   const [selected, setSelected] = useState<string[]>([]);
-  const [taskId, setTaskId] = useState<string | null>(null);
+  const { jobId, taskId, setTaskId, task, prior } = useFeature("checklist");
 
   const rules = useQuery({ queryKey: ["rules"], queryFn: api.getRules });
-  const task = useTask(taskId);
 
   const run = useMutation({
     mutationFn: () => api.runChecklist(jobId as string, selected.length ? selected : null),
@@ -37,30 +33,31 @@ export default function Checklist() {
   const status = task.data?.status;
   const running = run.isPending || (!!taskId && status !== "done" && status !== "error");
   const done = status === "done";
-  const res = task.data?.result as
-    | { passed: number; failed: number; total: number }
-    | undefined;
 
   return (
     <Card title={`체크리스트 — job ${jobId}`}>
       <Space direction="vertical" style={{ width: "100%" }} size="middle">
-        <Select
-          mode="multiple"
-          allowClear
-          style={{ width: "100%" }}
-          placeholder="룰 선택 (비우면 전체 실행)"
-          loading={rules.isLoading}
-          value={selected}
-          onChange={setSelected}
-          options={(rules.data ?? []).map((r) => ({
-            label: `${r.rule_id} — ${r.description}`,
-            value: r.rule_id,
-          }))}
-        />
-
-        <Button type="primary" loading={running} onClick={() => run.mutate()}>
-          실행
-        </Button>
+        <Space.Compact style={{ width: "100%" }}>
+          <Button style={{ cursor: "default" }} disabled>
+            체크리스트 항목 선택:
+          </Button>
+          <Select
+            mode="multiple"
+            allowClear
+            style={{ flex: 1 }}
+            placeholder="검토하려는 항목 선택. 비우면 전체 검토 실행"
+            loading={rules.isLoading}
+            value={selected}
+            onChange={setSelected}
+            options={(rules.data ?? []).map((r) => ({
+              label: `${r.rule_id} — ${r.description}`,
+              value: r.rule_id,
+            }))}
+          />
+          <Button type="primary" loading={running} onClick={() => run.mutate()}>
+            {prior && !done ? "다시 실행" : "실행"}
+          </Button>
+        </Space.Compact>
 
         {running && taskId && (
           <Progress
@@ -73,15 +70,19 @@ export default function Checklist() {
           <Alert type="error" showIcon message={task.data?.error ?? "실행 오류"} />
         )}
 
-        {done && res && (
-          <>
-            <Space size="large">
-              <Statistic title="Pass" value={res.passed} valueStyle={{ color: "#3f8600" }} />
-              <Statistic title="Fail" value={res.failed} valueStyle={{ color: "#cf1322" }} />
-              <Statistic title="Total" value={res.total} />
-            </Space>
-            <ReportView src={api.reportUrl(taskId as string)} />
-          </>
+        {done ? (
+          <ReportView src={api.reportUrl(taskId as string)} downloadName={`checklist_${jobId}.html`} />
+        ) : (
+          !running && prior && (
+            <>
+              <Alert
+                type="success"
+                showIcon
+                message={`이전 검토 결과 (${new Date(prior.completed_at).toLocaleString()})`}
+              />
+              <ReportView src={api.reportByKindUrl(jobId, "checklist")} downloadName={`checklist_${jobId}.html`} />
+            </>
+          )
         )}
       </Space>
     </Card>

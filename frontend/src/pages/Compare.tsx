@@ -84,7 +84,7 @@ export default function Compare() {
                 </List.Item>
               )}
             />
-            <ReportView src={api.reportUrl(taskId as string)} />
+            <ReportView src={api.reportUrl(taskId as string)} downloadName="compare.html" />
           </>
         )}
       </Space>

@@ -25,6 +25,7 @@ import hashlib
 import json
 import os
 import shutil
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -40,8 +41,13 @@ CACHE_NAME = "cache"         # data_service cache_name -> workspace/<id>/cache/
 _CACHE_NAME = CACHE_NAME      # backward-compatible alias
 _REPORTS_SUBDIR = "reports"
 _META_FILE = "meta.json"
+_RESULTS_FILE = "results.json"
 _SOURCE_FILE = "source.tgz"
 _LOCK_DIR = ".lock"
+
+# Serialises read-modify-write of results.json within this process (the server
+# is single-process; tasks run in a threadpool).
+_RESULTS_LOCK = threading.Lock()
 
 _JOB_ID_LEN = 16
 
@@ -214,6 +220,63 @@ def get_meta(job_id: str, *, workspace_root: str | Path = DEFAULT_WORKSPACE_ROOT
     if not p.exists():
         raise FileNotFoundError(f"No meta.json for job_id={job_id}")
     return json.loads(p.read_text(encoding="utf-8"))
+
+
+# --------------------------------------------------------------------------- #
+# Results index — records completed analyses so a job's prior reports survive
+# page navigation and server restarts (in-memory TaskRegistry does not persist).
+# --------------------------------------------------------------------------- #
+def _results_path(job_id: str, *, workspace_root: str | Path) -> Path:
+    return job_dir(job_id, workspace_root=workspace_root) / _RESULTS_FILE
+
+
+def record_result(job_id: str, kind: str, *, report: str | None = None,
+                  summary: dict | None = None, params: dict | None = None,
+                  workspace_root: str | Path = DEFAULT_WORKSPACE_ROOT) -> dict:
+    """Persist (or overwrite) the latest completed result for a (job, kind).
+
+    Stores the report filename + summary + params so a feature page can show a
+    prior run without recomputing.  Keyed by ``kind`` (latest wins)."""
+    entry = {
+        "kind": kind,
+        "report": report,
+        "summary": summary or {},
+        "params": params or {},
+        "completed_at": datetime.now(timezone.utc).isoformat(),
+    }
+    path = _results_path(job_id, workspace_root=workspace_root)
+    with _RESULTS_LOCK:
+        results: dict = {}
+        if path.exists():
+            with contextlib.suppress(json.JSONDecodeError):
+                results = json.loads(path.read_text(encoding="utf-8"))
+        results[kind] = entry
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(results, indent=2, ensure_ascii=False),
+                        encoding="utf-8")
+    return entry
+
+
+def list_results(job_id: str, *,
+                 workspace_root: str | Path = DEFAULT_WORKSPACE_ROOT) -> list[dict]:
+    """All recorded results for a job (one entry per kind)."""
+    path = _results_path(job_id, workspace_root=workspace_root)
+    if not path.exists():
+        return []
+    with contextlib.suppress(json.JSONDecodeError):
+        return list(json.loads(path.read_text(encoding="utf-8")).values())
+    return []
+
+
+def get_result(job_id: str, kind: str, *,
+               workspace_root: str | Path = DEFAULT_WORKSPACE_ROOT) -> dict | None:
+    """The recorded result for one (job, kind), or ``None``."""
+    path = _results_path(job_id, workspace_root=workspace_root)
+    if not path.exists():
+        return None
+    with contextlib.suppress(json.JSONDecodeError):
+        return json.loads(path.read_text(encoding="utf-8")).get(kind)
+    return None
 
 
 def list_jobs(*, workspace_root: str | Path = DEFAULT_WORKSPACE_ROOT) -> list[dict]:

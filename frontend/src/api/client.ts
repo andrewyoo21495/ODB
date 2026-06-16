@@ -1,6 +1,6 @@
 // Thin fetch wrapper over the FastAPI backend (proxied at /api in dev).
 
-import type { JobOut, JobStatus, LayerGeometry, LayerInfo, RuleInfo, TaskOut } from "../types";
+import type { JobOut, JobStatus, LayerGeometry, LayerInfo, ResultOut, RuleInfo, TaskOut } from "../types";
 
 const BASE = "/api";
 
@@ -30,6 +30,12 @@ export const api = {
   },
   listJobs: () => jsonGet<JobOut[]>("/jobs"),
   jobStatus: (id: string) => jsonGet<JobStatus>(`/jobs/${id}/status`),
+  getResults: (id: string) => jsonGet<ResultOut[]>(`/jobs/${id}/results`),
+  getLatestTask: (id: string, kind: string) =>
+    jsonGet<TaskOut | null>(`/jobs/${id}/tasks/${kind}`),
+  // Report served by job+kind (independent of an in-memory task).
+  reportByKindUrl: (id: string, kind: string) => `${BASE}/jobs/${id}/report/${kind}`,
+  jobArtifactUrl: (id: string, name: string) => `${BASE}/jobs/${id}/artifact/${name}`,
   getRules: () => jsonGet<RuleInfo[]>("/rules"),
   runChecklist: (id: string, ruleIds: string[] | null) =>
     jsonPost<TaskOut>(`/jobs/${id}/checklist`, { rule_ids: ruleIds }),

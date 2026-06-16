@@ -19,8 +19,14 @@ def _run_checklist(job_id: str, rule_ids: list[str] | None, task_id: str) -> Non
     try:
         data = job_store.load_job_data(job_id, workspace_root=WORKSPACE_ROOT,
                                        log=lambda m: None)
-        results = checklist_service.evaluate(data, rule_ids)
 
+        # Rules occupy 0–90% of the bar; report writing the final 10%.
+        def on_progress(frac: float, msg: str) -> None:
+            registry.update(task_id, progress=round(frac * 0.9, 3), message=msg)
+
+        results = checklist_service.evaluate(data, rule_ids, progress=on_progress)
+
+        registry.update(task_id, progress=0.9, message="generating report")
         meta = job_store.get_meta(job_id, workspace_root=WORKSPACE_ROOT)
         job_info = data.get("job_info")
         html_path = job_store.reports_dir(job_id, workspace_root=WORKSPACE_ROOT) / _REPORT_NAME
@@ -35,12 +41,16 @@ def _run_checklist(job_id: str, rule_ids: list[str] | None, task_id: str) -> Non
         )
 
         passed = sum(1 for r in results if r.passed)
-        registry.update(task_id, status="done", progress=1.0, result={
+        summary = {
             "passed": passed,
             "failed": len(results) - passed,
             "total": len(results),
             "report": _REPORT_NAME,
-        })
+        }
+        job_store.record_result(job_id, "checklist", report=_REPORT_NAME,
+                                summary=summary, params={"rule_ids": rule_ids},
+                                workspace_root=WORKSPACE_ROOT)
+        registry.update(task_id, status="done", progress=1.0, result=summary)
     except Exception as exc:  # noqa: BLE001
         registry.update(task_id, status="error", error=str(exc))
 

@@ -69,13 +69,19 @@ export default function Viewer() {
       setOverlays((prev) => prev.map((o) => (o.key === key ? { ...o, visible: true } : o)));
       return;
     }
+    // Insert a loading placeholder right away so the selection chip/checkbox
+    // reflects the choice immediately (geometry fills in when it arrives).
+    setOverlays((prev) =>
+      prev.some((o) => o.key === key) ? prev : [...prev, { key, color, visible: true, loading: true }],
+    );
     setLoading((n) => n + 1);
     try {
       const geom = await loadGeom(start);
-      setOverlays((prev) => (prev.some((o) => o.key === key) ? prev : [...prev, { key, color, visible: true, geom }]));
+      setOverlays((prev) => prev.map((o) => (o.key === key ? { ...o, geom, loading: false } : o)));
       setFitToken((t) => t + 1);
     } catch (e) {
       message.error(String(e));
+      removeOverlay(key); // drop the failed placeholder
     } finally {
       setLoading((n) => n - 1);
     }
@@ -202,7 +208,7 @@ export default function Viewer() {
                 onClick={() => toggleVisible(o.key)}
                 style={{ cursor: "pointer", opacity: o.visible ? 1 : 0.4, borderLeft: `6px solid ${o.color}` }}
               >
-                {labelOf(o.key)} {o.visible ? "" : "(숨김)"}
+                {labelOf(o.key)} {o.loading ? "(로딩중…)" : o.visible ? "" : "(숨김)"}
               </Tag>
             ))}
           </Space>

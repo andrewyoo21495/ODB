@@ -25,6 +25,9 @@ def _run_extract(job_id: str, categories: list[str] | None, task_id: str) -> Non
             categories=categories,
             log=lambda m: None,
         )
+        job_store.record_result(job_id, "extract", report=summary.get("report"),
+                                summary=summary, params={"categories": categories},
+                                workspace_root=WORKSPACE_ROOT)
         registry.update(task_id, status="done", progress=1.0, result=summary)
     except Exception as exc:  # noqa: BLE001
         registry.update(task_id, status="error", error=str(exc))

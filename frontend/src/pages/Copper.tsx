@@ -6,25 +6,23 @@ import {
   Card,
   InputNumber,
   Progress,
-  Segmented,
   Space,
   Statistic,
 } from "antd";
 import { useMutation } from "@tanstack/react-query";
 import { api } from "../api/client";
-import { useJob } from "../JobContext";
-import { useTask } from "../hooks/useTask";
+import { useFeature } from "../hooks/useFeature";
 import ReportView from "../components/ReportView";
 
+type CopperSummary = { layers: number; avg_ratio: number; report: string };
+
 export default function Copper() {
-  const { jobId } = useJob();
   const { message } = AntdApp.useApp();
-  const [method, setMethod] = useState<"vector" | "raster">("vector");
+  // VECTOR 방식 고정 사용 (raster 경로는 백엔드에 보존되어 있으나 UI에서는 숨김).
+  const method = "vector" as const;
   const [rows, setRows] = useState(5);
   const [cols, setCols] = useState(5);
-  const [taskId, setTaskId] = useState<string | null>(null);
-
-  const task = useTask(taskId);
+  const { jobId, taskId, setTaskId, task, prior } = useFeature("copper");
 
   const run = useMutation({
     mutationFn: () =>
@@ -40,23 +38,13 @@ export default function Copper() {
   const status = task.data?.status;
   const running = run.isPending || (!!taskId && status !== "done" && status !== "error");
   const done = status === "done";
-  const res = task.data?.result as
-    | { layers: number; avg_ratio: number; report: string }
-    | undefined;
+  const res = task.data?.result as CopperSummary | undefined;
+  const priorRes = prior?.summary as CopperSummary | undefined;
 
   return (
     <Card title={`Copper Calculator — job ${jobId}`}>
       <Space direction="vertical" style={{ width: "100%" }} size="middle">
         <Space wrap>
-          <span>계산 방식:</span>
-          <Segmented
-            options={[
-              { label: "vector", value: "vector" },
-              { label: "raster", value: "raster" },
-            ]}
-            value={method}
-            onChange={(v) => setMethod(v as "vector" | "raster")}
-          />
           <span>grid:</span>
           <InputNumber min={1} max={50} value={rows} onChange={(v) => setRows(v ?? 5)} />
           <span>×</span>
@@ -64,7 +52,7 @@ export default function Copper() {
         </Space>
 
         <Button type="primary" loading={running} onClick={() => run.mutate()}>
-          계산 실행
+          {prior && !done ? "다시 계산" : "계산 실행"}
         </Button>
 
         {running && taskId && (
@@ -86,7 +74,22 @@ export default function Copper() {
               <Statistic title="평균 Copper Ratio" value={(res.avg_ratio * 100).toFixed(1)} suffix="%" />
               <Statistic title="Signal 레이어" value={res.layers} />
             </Space>
-            <ReportView src={api.reportUrl(taskId as string)} />
+            <ReportView src={api.reportUrl(taskId as string)} downloadName={`copper_${jobId}.html`} />
+          </>
+        )}
+
+        {!done && !running && priorRes && (
+          <>
+            <Alert
+              type="success"
+              showIcon
+              message={`이전 계산 결과 (${new Date(prior!.completed_at).toLocaleString()})`}
+            />
+            <Space size="large">
+              <Statistic title="평균 Copper Ratio" value={(priorRes.avg_ratio * 100).toFixed(1)} suffix="%" />
+              <Statistic title="Signal 레이어" value={priorRes.layers} />
+            </Space>
+            <ReportView src={api.reportByKindUrl(jobId, "copper")} downloadName={`copper_${jobId}.html`} />
           </>
         )}
       </Space>

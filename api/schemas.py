@@ -39,6 +39,15 @@ class TaskOut(BaseModel):
     error: str | None = None
 
 
+class ResultOut(BaseModel):
+    """A completed analysis recorded for a job (survives restarts/navigation)."""
+    kind: str
+    report: str | None = None
+    summary: dict = {}
+    params: dict = {}
+    completed_at: str = ""
+
+
 class RuleInfo(BaseModel):
     rule_id: str
     description: str = ""

@@ -1,4 +1,13 @@
 import { Layout, Menu } from "antd";
+import {
+  DashboardOutlined,
+  ExportOutlined,
+  CheckSquareOutlined,
+  PercentageOutlined,
+  BorderOuterOutlined,
+  EyeOutlined,
+  DiffOutlined,
+} from "@ant-design/icons";
 import { Link, Route, Routes, useLocation } from "react-router-dom";
 import Dashboard from "./pages/Dashboard";
 import Checklist from "./pages/Checklist";
@@ -26,23 +35,25 @@ export default function App() {
 
   return (
     <Layout style={{ minHeight: "100vh" }}>
-      <Header style={{ color: "#fff", fontSize: 18, fontWeight: 600 }}>
-        ODB++ 자동화 허브
+      <Header style={{ fontSize: 18, fontWeight: 600 }}>
+        <Link to="/" style={{ color: "#fff" }}>
+          ODB++ 자동화 허브
+        </Link>
       </Header>
       <Layout>
-        <Sider width={200} theme="light">
+        <Sider width={230} theme="light">
           <Menu
             mode="inline"
             selectedKeys={[selected]}
             style={{ height: "100%" }}
             items={[
-              { key: "dashboard", label: <Link to="/">대시보드</Link> },
-              { key: "extract", label: <Link to="/extract">Extract</Link> },
-              { key: "checklist", label: <Link to="/checklist">체크리스트</Link> },
-              { key: "copper", label: <Link to="/copper">Copper</Link> },
-              { key: "interposer", label: <Link to="/interposer">Interposer</Link> },
-              { key: "viewer", label: <Link to="/viewer">Viewer</Link> },
-              { key: "compare", label: <Link to="/compare">비교</Link> },
+              { key: "dashboard", icon: <DashboardOutlined />, label: <Link to="/">대시보드</Link> },
+              { key: "extract", icon: <ExportOutlined />, label: <Link to="/extract">데이터 추출</Link> },
+              { key: "checklist", icon: <CheckSquareOutlined />, label: <Link to="/checklist">체크리스트</Link> },
+              { key: "copper", icon: <PercentageOutlined />, label: <Link to="/copper">동박율 계산</Link> },
+              { key: "interposer", icon: <BorderOuterOutlined />, label: <Link to="/interposer">인터포저 영역 계산</Link> },
+              { key: "viewer", icon: <EyeOutlined />, label: <Link to="/viewer">ODB 뷰어</Link> },
+              { key: "compare", icon: <DiffOutlined />, label: <Link to="/compare">리비전 비교</Link> },
             ]}
           />
         </Sider>

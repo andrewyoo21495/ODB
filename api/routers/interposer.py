@@ -24,6 +24,8 @@ def _run_interposer(job_id: str, task_id: str) -> None:
             odb_filename=meta.get("original_filename", job_id),
             log=lambda m: None,
         )
+        job_store.record_result(job_id, "interposer", report=summary.get("report"),
+                                summary=summary, workspace_root=WORKSPACE_ROOT)
         registry.update(task_id, status="done", progress=1.0, result=summary)
     except Exception as exc:  # noqa: BLE001
         registry.update(task_id, status="error", error=str(exc))

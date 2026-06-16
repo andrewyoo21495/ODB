@@ -21,6 +21,7 @@ matplotlib.use("Agg")  # must precede any pyplot import in this process
 from src.services import data_service
 
 LogFn = Callable[[str], None]
+ProgressFn = Callable[[float, str], None]
 
 # Characters that are unsafe in image file names.
 _UNSAFE = '/\\:[]*?'
@@ -56,12 +57,14 @@ def _load(cache_dir: str | Path, cache_name: str):
 def run_report(cache_dir: str | Path, cache_name: str, *, html_path: Path,
                images_dir: Path, odb_filename: str,
                n_rows: int = 5, n_cols: int = 5, method: str = "vector",
-               log: LogFn | None = None) -> dict:
+               log: LogFn | None = None,
+               progress: ProgressFn | None = None) -> dict:
     """Compute copper ratios for all signal layers and write the HTML report.
 
     Returns a summary dict ``{"layers", "avg_ratio", "report"}``.
     """
     _log = log if log is not None else (lambda m: None)
+    _progress = progress if progress is not None else (lambda f, m: None)
     from src.visualizer import copper_utils, copper_vector
     from src.copper_html_reporter import generate_copper_html_report
 
@@ -83,8 +86,12 @@ def run_report(cache_dir: str | Path, cache_name: str, *, html_path: Path,
     use_vector = method == "vector"
 
     layer_results: list[dict] = []
+    n_layers = len(signal_layers) or 1
     for i, layer_name in enumerate(signal_layers):
         _log(f"[{i + 1}/{len(signal_layers)}] {layer_name}")
+        # Layer loop occupies 0–90%; report writing the final 10%.
+        _progress(round((i / n_layers) * 0.9, 3),
+                  f"{layer_name} ({i + 1}/{len(signal_layers)})")
 
         if use_vector:
             total_ratio = copper_vector.calculate_copper_ratio(
@@ -123,6 +130,7 @@ def run_report(cache_dir: str | Path, cache_name: str, *, html_path: Path,
         })
 
     _log("Generating HTML report...")
+    _progress(0.9, "generating report")
     generate_copper_html_report(
         layer_results, copper_data, all_matrix_layers,
         html_path, odb_filename=odb_filename,

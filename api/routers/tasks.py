@@ -24,7 +24,8 @@ def get_task(task_id: str, user: str = Depends(get_current_user)) -> TaskOut:
 
 
 @router.get("/tasks/{task_id}/report")
-def get_task_report(task_id: str, user: str = Depends(get_current_user)):
+def get_task_report(task_id: str, download: bool = False,
+                    user: str = Depends(get_current_user)):
     task = registry.get(task_id)
     if task is None:
         raise HTTPException(status_code=404, detail="task not found")
@@ -36,6 +37,11 @@ def get_task_report(task_id: str, user: str = Depends(get_current_user)):
     path = job_store.reports_dir(task.job_id, workspace_root=WORKSPACE_ROOT) / report_name
     if not path.exists():
         raise HTTPException(status_code=404, detail="report file missing")
+    if download:
+        # Attachment with a descriptive filename for local saving.
+        fname = f"{task.kind}_{task.job_id}.html"
+        return FileResponse(path, media_type="text/html",
+                            content_disposition_type="attachment", filename=fname)
     # Serve inline (no `filename=`) so the browser renders the HTML in the iframe
     # / new tab instead of downloading it as an attachment.
     return FileResponse(path, media_type="text/html",

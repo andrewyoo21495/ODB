@@ -4,17 +4,65 @@ import {
   App as AntdApp,
   Button,
   Card,
+  Empty,
+  Space,
   Spin,
   Table,
   Tag,
   Upload,
 } from "antd";
-import { InboxOutlined } from "@ant-design/icons";
+import { DownloadOutlined, InboxOutlined } from "@ant-design/icons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api/client";
 import { useJob } from "../JobContext";
 import type { JobOut } from "../types";
+
+const KIND_LABEL: Record<string, string> = {
+  extract: "데이터 추출",
+  checklist: "체크리스트",
+  copper: "동박율 계산",
+  interposer: "인터포저 영역 계산",
+  compare: "리비전 비교",
+};
+
+// Completed analyses for one job — view / download prior reports without re-running.
+function JobResults({ jobId }: { jobId: string }) {
+  const results = useQuery({
+    queryKey: ["results", jobId],
+    queryFn: () => api.getResults(jobId),
+  });
+  if (results.isLoading) return <Spin size="small" />;
+  const items = results.data ?? [];
+  if (!items.length) return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="완료된 작업 없음" />;
+  return (
+    <Space direction="vertical" style={{ width: "100%" }}>
+      {items.map((r) => (
+        <Space key={r.kind} wrap>
+          <Tag color="green">{KIND_LABEL[r.kind] ?? r.kind}</Tag>
+          <span style={{ color: "#888", fontSize: 12 }}>
+            {new Date(r.completed_at).toLocaleString()}
+          </span>
+          {r.report && (
+            <>
+              <Button size="small" href={api.reportByKindUrl(jobId, r.kind)} target="_blank">
+                결과 보기
+              </Button>
+              <Button
+                size="small"
+                icon={<DownloadOutlined />}
+                href={`${api.reportByKindUrl(jobId, r.kind)}?download=1`}
+                download
+              >
+                다운로드
+              </Button>
+            </>
+          )}
+        </Space>
+      ))}
+    </Space>
+  );
+}
 
 export default function Dashboard() {
   const qc = useQueryClient();
@@ -113,6 +161,10 @@ export default function Dashboard() {
         loading={jobs.isLoading}
         dataSource={jobs.data ?? []}
         columns={columns}
+        expandable={{
+          expandedRowRender: (r: JobOut) => <JobResults jobId={r.job_id} />,
+          rowExpandable: () => true,
+        }}
       />
     </Card>
   );

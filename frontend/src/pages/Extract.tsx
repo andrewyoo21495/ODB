@@ -11,9 +11,15 @@ import {
 } from "antd";
 import { useMutation } from "@tanstack/react-query";
 import { api } from "../api/client";
-import { useJob } from "../JobContext";
-import { useTask } from "../hooks/useTask";
+import { useFeature } from "../hooks/useFeature";
 import ReportView from "../components/ReportView";
+
+type ExtractSummary = {
+  count: number;
+  by_category: Record<string, number>;
+  report: string;
+  json: string;
+};
 
 const CATEGORIES = [
   "IC",
@@ -26,12 +32,9 @@ const CATEGORIES = [
 ];
 
 export default function Extract() {
-  const { jobId } = useJob();
   const { message } = AntdApp.useApp();
   const [categories, setCategories] = useState<string[]>([]);
-  const [taskId, setTaskId] = useState<string | null>(null);
-
-  const task = useTask(taskId);
+  const { jobId, taskId, setTaskId, task, prior } = useFeature("extract");
 
   const run = useMutation({
     mutationFn: () =>
@@ -47,9 +50,8 @@ export default function Extract() {
   const status = task.data?.status;
   const running = run.isPending || (!!taskId && status !== "done" && status !== "error");
   const done = status === "done";
-  const res = task.data?.result as
-    | { count: number; by_category: Record<string, number>; report: string; json: string }
-    | undefined;
+  const res = task.data?.result as ExtractSummary | undefined;
+  const priorRes = prior?.summary as ExtractSummary | undefined;
 
   return (
     <Card title={`JSON Extractor — job ${jobId}`}>
@@ -65,7 +67,7 @@ export default function Extract() {
         />
 
         <Button type="primary" loading={running} onClick={() => run.mutate()}>
-          추출 실행
+          {prior && !done ? "다시 추출" : "추출 실행"}
         </Button>
 
         {running && taskId && (
@@ -87,7 +89,27 @@ export default function Extract() {
             <Button href={api.artifactUrl(taskId as string, res.json)} target="_blank">
               parts.json 다운로드
             </Button>
-            <ReportView src={api.reportUrl(taskId as string)} />
+            <ReportView src={api.reportUrl(taskId as string)} downloadName={`extract_${jobId}.html`} />
+          </>
+        )}
+
+        {!done && !running && priorRes && (
+          <>
+            <Alert
+              type="success"
+              showIcon
+              message={`이전 추출 결과 (${new Date(prior!.completed_at).toLocaleString()})`}
+            />
+            <Space size="large" wrap>
+              <Statistic title="추출된 부품" value={priorRes.count} />
+              {Object.entries(priorRes.by_category).map(([cat, n]) => (
+                <Tag key={cat} color="blue">{`${cat}: ${n}`}</Tag>
+              ))}
+            </Space>
+            <Button href={api.jobArtifactUrl(jobId, priorRes.json)} target="_blank">
+              parts.json 다운로드
+            </Button>
+            <ReportView src={api.reportByKindUrl(jobId, "extract")} downloadName={`extract_${jobId}.html`} />
           </>
         )}
       </Space>

@@ -1,15 +1,14 @@
 import { useEffect, useRef } from "react";
 import type { LayerGeometry, PolyMeta, Ring } from "../types";
 
-const W = 940;
-const H = 640;
 const LABEL_MIN_SCALE = 6; // show refdes labels only when zoomed in past this
 
 export interface Overlay {
   key: string;
   color: string;
   visible: boolean;
-  geom: LayerGeometry;
+  geom?: LayerGeometry;   // undefined while geometry is still loading
+  loading?: boolean;
 }
 
 interface Props {
@@ -34,6 +33,7 @@ function pointInRing(x: number, y: number, ring: Pt[]): boolean {
 
 export default function PcbCanvas({ overlays, showLabels = false, fitToken = 0, onPick }: Props) {
   const ref = useRef<HTMLCanvasElement>(null);
+  const wrapRef = useRef<HTMLDivElement>(null);
   const coordRef = useRef<HTMLSpanElement>(null);
   const view = useRef({ scale: 1, tx: 0, ty: 0 });
   const drag = useRef<{ sx: number; sy: number; tx: number; ty: number; moved: boolean } | null>(null);
@@ -45,11 +45,24 @@ export default function PcbCanvas({ overlays, showLabels = false, fitToken = 0, 
 
   useEffect(() => {
     const cv = ref.current;
-    if (!cv) return;
+    const wrap = wrapRef.current;
+    if (!cv || !wrap) return;
     const ctx = cv.getContext("2d");
     if (!ctx) return;
 
-    const visible = () => ov.current.filter((o) => o.visible && o.geom);
+    // Dynamic canvas size: fill the container width, ~75% of viewport height.
+    let W = wrap.clientWidth || 940;
+    let H = Math.max(420, Math.round(window.innerHeight * 0.75));
+    const applySize = () => {
+      cv.width = W;
+      cv.height = H;
+    };
+    applySize();
+
+    const visible = () =>
+      ov.current.filter(
+        (o): o is Overlay & { geom: LayerGeometry } => o.visible && !!o.geom,
+      );
 
     const unionBounds = (): [number, number, number, number] => {
       const vs = visible();
@@ -95,7 +108,7 @@ export default function PcbCanvas({ overlays, showLabels = false, fitToken = 0, 
           ctx.beginPath();
           ring(poly.exterior, toX, toY);
           for (const h of poly.holes) ring(h, toX, toY);
-          ctx.fill("evenodd");
+          if (poly.fill !== false) ctx.fill("evenodd");
           ctx.stroke();
         }
         if (o.geom.points && o.geom.points.length) {
@@ -179,11 +192,29 @@ export default function PcbCanvas({ overlays, showLabels = false, fitToken = 0, 
 
     fit();
     draw();
+
+    // Keep the canvas filling its container; re-fit on resize.
+    const onResize = () => {
+      const nw = wrap.clientWidth || W;
+      const nh = Math.max(420, Math.round(window.innerHeight * 0.75));
+      if (nw === W && nh === H) return;
+      W = nw;
+      H = nh;
+      applySize();
+      fit();
+      draw();
+    };
+    const ro = new ResizeObserver(onResize);
+    ro.observe(wrap);
+    window.addEventListener("resize", onResize);
+
     cv.addEventListener("wheel", onWheel, { passive: false });
     cv.addEventListener("mousedown", onDown);
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
     return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", onResize);
       cv.removeEventListener("wheel", onWheel);
       cv.removeEventListener("mousedown", onDown);
       window.removeEventListener("mousemove", onMove);
@@ -194,12 +225,10 @@ export default function PcbCanvas({ overlays, showLabels = false, fitToken = 0, 
   }, [overlays, fitToken]);
 
   return (
-    <div style={{ position: "relative", display: "inline-block" }}>
+    <div ref={wrapRef} style={{ position: "relative", width: "100%" }}>
       <canvas
         ref={ref}
-        width={W}
-        height={H}
-        style={{ border: "1px solid #333", cursor: "grab", maxWidth: "100%" }}
+        style={{ border: "1px solid #333", cursor: "grab", display: "block", width: "100%" }}
       />
       <span
         ref={coordRef}

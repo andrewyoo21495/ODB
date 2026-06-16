@@ -30,6 +30,14 @@ export interface TaskOut {
   error: string | null;
 }
 
+export interface ResultOut {
+  kind: string;
+  report: string | null;
+  summary: Record<string, unknown>;
+  params: Record<string, unknown>;
+  completed_at: string;
+}
+
 export interface RuleInfo {
   rule_id: string;
   description: string;
@@ -51,6 +59,7 @@ export interface Ring {
   exterior: [number, number][];
   holes: [number, number][][];
   color?: string;
+  fill?: boolean; // false = stroke only (e.g. component package outlines)
   meta?: PolyMeta;
 }
 

@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import importlib
 import pkgutil
+from typing import Callable
 
 from src.checklist.rule_base import ChecklistRule
 from src.models import RuleResult
+
+ProgressFn = Callable[[float, str], None]
 
 
 # Rule registry
@@ -44,12 +47,15 @@ def discover_rules() -> list[type[ChecklistRule]]:
 
 
 def run_checklist(job_data: dict,
-                  rules: list[ChecklistRule] = None) -> list[RuleResult]:
+                  rules: list[ChecklistRule] = None,
+                  progress: ProgressFn | None = None) -> list[RuleResult]:
     """Run all checklist rules against parsed ODB++ data.
 
     Args:
         job_data: dict of parsed data (components, eda, profile, etc.)
         rules: Specific rules to run. If None, runs all registered rules.
+        progress: optional callback ``(fraction, message)`` invoked after each
+            rule, where ``fraction`` runs 0.0→1.0. Used to drive a UI progress bar.
 
     Returns:
         List of RuleResult objects
@@ -58,7 +64,8 @@ def run_checklist(job_data: dict,
         rules = [cls() for cls in _REGISTERED_RULES]
 
     results = []
-    for rule in rules:
+    total = len(rules) or 1
+    for i, rule in enumerate(rules):
         try:
             result = rule.evaluate(job_data)
             results.append(result)
@@ -70,6 +77,8 @@ def run_checklist(job_data: dict,
                 passed=False,
                 message=f"Rule evaluation error: {e}",
             ))
+        if progress is not None:
+            progress((i + 1) / total, f"{rule.rule_id} ({i + 1}/{total})")
 
     return results
 
