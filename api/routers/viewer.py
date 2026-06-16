@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import hashlib
+
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 
 from api.deps import WORKSPACE_ROOT, get_current_user
 from api.schemas import (
-    ComponentViewerRequest, LayerInfo, NetViewerRequest, TaskOut, ViewerRequest,
+    ComponentInfo, ComponentViewerRequest, LayerInfo, NetViewerRequest,
+    TaskOut, ViewerRequest,
 )
 from api.tasks import registry
 from src.services import job_store, viewer_service
@@ -79,14 +82,31 @@ def run_net_viewer(job_id: str, req: NetViewerRequest, background: BackgroundTas
                    status=task.status, progress=task.progress)
 
 
-def _run_component_viewer(job_id: str, side: str, task_id: str) -> None:
+@router.get("/jobs/{job_id}/components", response_model=list[ComponentInfo])
+def list_components(job_id: str, side: str = "top",
+                    user: str = Depends(get_current_user)) -> list[ComponentInfo]:
+    if not job_store.is_cached(job_id, workspace_root=WORKSPACE_ROOT):
+        raise HTTPException(status_code=404, detail="job not found or not ready")
+    cache_dir, cache_name = job_store.cache_args(job_id, workspace_root=WORKSPACE_ROOT)
+    return [ComponentInfo(**c)
+            for c in viewer_service.list_components(cache_dir, cache_name, side)]
+
+
+def _run_component_viewer(job_id: str, side: str, refdes: list[str] | None,
+                          task_id: str) -> None:
     registry.update(task_id, status="running", message=f"component geometry: {side}")
     try:
         cache_dir, cache_name = job_store.cache_args(job_id, workspace_root=WORKSPACE_ROOT)
         rdir = job_store.reports_dir(job_id, workspace_root=WORKSPACE_ROOT)
-        out_path = rdir / f"geomcomp_{side}.json"
+        # Selection-specific filename so concurrent/different selections don't
+        # clobber each other's geometry file.
+        if refdes:
+            sel = hashlib.md5(",".join(sorted(refdes)).encode()).hexdigest()[:8]
+        else:
+            sel = "all"
+        out_path = rdir / f"geomcomp_{side}_{sel}.json"
         summary = viewer_service.build_component_geometry(
-            cache_dir, cache_name, side, out_path, log=lambda m: None)
+            cache_dir, cache_name, side, out_path, refdes=refdes, log=lambda m: None)
         registry.update(task_id, status="done", progress=1.0, result=summary)
     except Exception as exc:  # noqa: BLE001
         registry.update(task_id, status="error", error=str(exc))
@@ -99,6 +119,6 @@ def run_component_viewer(job_id: str, req: ComponentViewerRequest,
     if not job_store.is_cached(job_id, workspace_root=WORKSPACE_ROOT):
         raise HTTPException(status_code=404, detail="job not found or not ready")
     task = registry.create("viewer", job_id=job_id)
-    background.add_task(_run_component_viewer, job_id, req.side, task.id)
+    background.add_task(_run_component_viewer, job_id, req.side, req.refdes, task.id)
     return TaskOut(task_id=task.id, kind=task.kind, job_id=task.job_id,
                    status=task.status, progress=task.progress)

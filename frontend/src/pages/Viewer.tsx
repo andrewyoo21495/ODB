@@ -6,6 +6,7 @@ import {
   Card,
   Checkbox,
   Descriptions,
+  Segmented,
   Select,
   Space,
   Switch,
@@ -23,7 +24,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 function labelOf(key: string): string {
   if (key.startsWith("L:")) return key.slice(2);
-  if (key.startsWith("C:")) return `Comp ${key.slice(2)}`;
+  if (key.startsWith("C:")) return `부품 ${key.slice(2)}`;
   if (key.startsWith("N:")) {
     const parts = key.split(":");
     return `Net ${parts[2]} @ ${parts[1]}`;
@@ -46,6 +47,9 @@ export default function Viewer() {
   const [showVias, setShowVias] = useState(false);
   const [netLayer, setNetLayer] = useState<string | null>(null);
   const [netName, setNetName] = useState<string | null>(null);
+  // Component selection (legacy view-comp UX): pick side -> list -> select -> show.
+  const [compSide, setCompSide] = useState<"top" | "bottom" | "both">("top");
+  const [compSelected, setCompSelected] = useState<string[]>([]);
 
   const layers = useQuery({
     queryKey: ["layers", jobId],
@@ -56,6 +60,11 @@ export default function Viewer() {
     queryKey: ["nets", jobId, netLayer],
     queryFn: () => api.getNets(jobId as string, netLayer as string),
     enabled: !!jobId && !!netLayer,
+  });
+  const components = useQuery({
+    queryKey: ["components", jobId, compSide],
+    queryFn: () => api.getComponents(jobId as string, compSide),
+    enabled: !!jobId,
   });
 
   async function loadGeom(start: () => Promise<TaskOut>): Promise<LayerGeometry> {
@@ -102,7 +111,7 @@ export default function Viewer() {
   }
 
   const activeLayers = overlays.filter((o) => o.key.startsWith("L:")).map((o) => o.key.slice(2));
-  const activeSides = (["top", "bottom"] as const).filter((s) => overlays.some((o) => o.key === `C:${s}`));
+  const hasComp = overlays.some((o) => o.key.startsWith("C:"));
 
   const onLayersChange = (next: string[]) => {
     activeLayers.filter((n) => !next.includes(n)).forEach((n) => removeOverlay(`L:${n}`));
@@ -113,14 +122,27 @@ export default function Viewer() {
       );
   };
 
-  const onSidesChange = (list: string[]) => {
-    (["top", "bottom"] as const).forEach((s) => {
-      const key = `C:${s}`;
-      const want = list.includes(s);
-      const has = overlays.some((o) => o.key === key);
-      if (want && !has) addOverlay(key, "#8c8c8c", () => api.runViewerComponent(jobId, s));
-      if (!want && has) removeOverlay(key);
-    });
+  // Render the selected components (empty selection = all) on the chosen side(s).
+  // Only one component overlay is kept at a time (legacy single-canvas behavior),
+  // so each "표시" replaces the previous component geometry.
+  const showComponents = async () => {
+    const key = `C:${compSide}`;
+    const refdes = compSelected.length ? compSelected : null;
+    setOverlays((prev) => prev.filter((o) => !o.key.startsWith("C:")));
+    setOverlays((prev) =>
+      prev.some((o) => o.key === key) ? prev : [...prev, { key, color: "#8c8c8c", visible: true, loading: true }],
+    );
+    setLoading((n) => n + 1);
+    try {
+      const geom = await loadGeom(() => api.runViewerComponent(jobId, compSide, refdes));
+      setOverlays((prev) => prev.map((o) => (o.key === key ? { ...o, geom, loading: false } : o)));
+      setFitToken((t) => t + 1);
+    } catch (e) {
+      message.error(String(e));
+      setOverlays((prev) => prev.filter((o) => o.key !== key));
+    } finally {
+      setLoading((n) => n - 1);
+    }
   };
 
   const layerOptions = (layers.data ?? []).map((l) => ({ label: `${l.name} (${l.type})`, value: l.name }));
@@ -148,15 +170,58 @@ export default function Viewer() {
             />
           </div>
           <div>
-            <div style={{ fontSize: 12, color: "#888" }}>부품</div>
-            <Checkbox.Group
-              value={activeSides}
-              onChange={(v) => onSidesChange(v as string[])}
-              options={[
-                { label: "Top", value: "top" },
-                { label: "Bottom", value: "bottom" },
-              ]}
-            />
+            <div style={{ fontSize: 12, color: "#888" }}>부품 (면 → 선택 → 표시)</div>
+            <Space direction="vertical" size={4}>
+              <Segmented
+                size="small"
+                value={compSide}
+                onChange={(v) => {
+                  setCompSide(v as "top" | "bottom" | "both");
+                  setCompSelected([]);
+                }}
+                options={[
+                  { label: "Top", value: "top" },
+                  { label: "Bottom", value: "bottom" },
+                  { label: "Both", value: "both" },
+                ]}
+              />
+              <Space.Compact>
+                <Select
+                  mode="multiple"
+                  style={{ width: 300 }}
+                  placeholder="부품 선택 (비우면 전체)"
+                  loading={components.isLoading}
+                  value={compSelected}
+                  onChange={setCompSelected}
+                  showSearch
+                  optionFilterProp="label"
+                  maxTagCount="responsive"
+                  options={(components.data ?? []).map((c) => ({
+                    label: `${c.refdes} — ${c.part} (${c.category})`,
+                    value: c.refdes,
+                  }))}
+                />
+                <Button type="primary" onClick={showComponents}>
+                  표시
+                </Button>
+              </Space.Compact>
+              <Space size={4} wrap>
+                <Button
+                  size="small"
+                  onClick={() =>
+                    setCompSelected([...new Set((components.data ?? []).map((c) => c.refdes))])
+                  }
+                >
+                  전체 선택
+                </Button>
+                <Button size="small" onClick={() => setCompSelected([])}>
+                  선택 해제
+                </Button>
+                <span style={{ fontSize: 12, color: "#888" }}>
+                  {compSelected.length ? `${compSelected.length}개 선택` : "전체"}
+                </span>
+              </Space>
+            </Space>
           </div>
           <div>
             <div style={{ fontSize: 12, color: "#888" }}>Net 하이라이트</div>
@@ -203,7 +268,7 @@ export default function Viewer() {
           {loading > 0 && <Tag color="processing">로딩 중… ({loading})</Tag>}
         </Space>
 
-        {activeSides.length > 0 && (
+        {hasComp && (
           <Space wrap>
             <span style={{ fontSize: 12, color: "#888" }}>부품 표시:</span>
             <Checkbox checked={showPads} onChange={(e) => setShowPads(e.target.checked)}>

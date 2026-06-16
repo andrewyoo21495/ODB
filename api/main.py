@@ -16,7 +16,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 # Ensure the repo root is importable (so ``src`` resolves) regardless of cwd.
 sys.path.insert(0, str(REPO_ROOT))
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse
@@ -96,6 +96,12 @@ if _DIST.is_dir():
 
     @app.get("/{full_path:path}", include_in_schema=False)
     def _spa_fallback(full_path: str) -> FileResponse:
+        # Never let an unregistered API path fall through to index.html — that
+        # returns HTML with status 200, which the frontend then fails to parse
+        # as JSON, hiding the real cause (e.g. a new router added but the server
+        # not restarted).  Surface it as a clear 404 instead.
+        if full_path.startswith("api/"):
+            raise HTTPException(status_code=404, detail="API route not found")
         # Serve a real static file if it exists; otherwise return index.html
         # so client-side routes (/viewer, /compare, ...) work on refresh.
         candidate = _DIST / full_path

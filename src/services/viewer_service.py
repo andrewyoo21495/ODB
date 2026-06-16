@@ -301,58 +301,101 @@ def _via_rings(layers_data: dict, side: str, user_symbols: dict) -> list[dict]:
     return out
 
 
+def _sides_for(side: str) -> list[str]:
+    """Resolve a viewer side selector into concrete sides."""
+    return ["top", "bottom"] if side == "both" else [side]
+
+
+def list_components(cache_dir: str | Path, cache_name: str,
+                    side: str) -> list[dict]:
+    """Return ``[{refdes, part, category, side}]`` for the chosen side(s).
+
+    Feeds the viewer's component-selection list so the user can pick which
+    components to render (``side`` is ``top`` | ``bottom`` | ``both``)."""
+    from src.checklist.component_classifier import classify_component
+
+    data = data_service.load_job(cache_dir, cache_name, log=lambda m: None)
+    out: list[dict] = []
+    for s in _sides_for(side):
+        comps = data.get("components_top" if s == "top" else "components_bot", [])
+        for c in comps:
+            out.append({
+                "refdes": c.comp_name or "",
+                "part": c.part_name or "",
+                "category": classify_component(c).value,
+                "side": s,
+            })
+    return out
+
+
 def build_component_geometry(cache_dir: str | Path, cache_name: str, side: str,
-                             out_path: Path, *, log: LogFn | None = None) -> dict:
-    """Component pads + package outlines for one side, matching the legacy
-    ``view-comp`` look: pads cyan(top)/pink(bottom) filled, outlines yellow
-    (stroke-only). Each polygon carries ``meta`` (refdes/part/category) for
-    click-identify."""
+                             out_path: Path, *, refdes: list[str] | None = None,
+                             log: LogFn | None = None) -> dict:
+    """Component pads + package outlines for the chosen side(s), matching the
+    legacy ``view-comp`` look: pads cyan(top)/pink(bottom) filled, outlines
+    yellow (stroke-only). Each polygon carries ``meta`` (refdes/part/category)
+    for click-identify.
+
+    Args:
+        side: ``top`` | ``bottom`` | ``both``.
+        refdes: optional whitelist of component refdes to include (``None`` /
+            empty = all components on the side). VIA pads are board-level and
+            always included (gated by the frontend's VIA toggle), as in the
+            legacy viewer's global "Show Via" option.
+    """
     _log = log if log is not None else (lambda m: None)
     from src.checklist.component_classifier import classify_component
 
     data = data_service.load_job(cache_dir, cache_name, log=lambda m: None)
-    comps = data.get("components_top" if side == "top" else "components_bot", [])
     eda = data.get("eda_data")
     user_symbols = data.get("user_symbols", {})
     packages = eda.packages if eda else []
     pkg_lookup = {i: pkg for i, pkg in enumerate(packages)}
-    is_bottom = side == "bottom"
-    pad_color = _PAD_COLOR_BOT if is_bottom else _PAD_COLOR_TOP
+    want = set(refdes) if refdes else None
+    sides = _sides_for(side)
 
     polygons: list[dict] = []
-    n_pads = n_outlines = 0
-    for comp in comps:
-        category = classify_component(comp).value
-        meta = {"refdes": comp.comp_name or "", "part": comp.part_name or "",
-                "category": category}
-        # Package outlines (yellow, stroke-only).
-        pkg = pkg_lookup.get(comp.pkg_ref)
-        if pkg and getattr(pkg, "outlines", None):
-            for outline in pkg.outlines:
-                ring = _outline_ring(outline, comp, is_bottom)
-                if ring:
-                    polygons.append({"exterior": ring, "holes": [],
-                                     "color": _OUTLINE_COLOR, "fill": False,
-                                     "role": "outline", "meta": meta})
-                    n_outlines += 1
-        # Pin pads (cyan/pink, filled).
-        for ring in _pad_rings(comp, is_bottom, user_symbols):
-            ring["color"] = pad_color
-            ring["role"] = "pad"
-            ring["meta"] = meta
-            polygons.append(ring)
-            n_pads += 1
+    total_comps = n_pads = n_outlines = n_vias = 0
+    for s in sides:
+        is_bottom = s == "bottom"
+        pad_color = _PAD_COLOR_BOT if is_bottom else _PAD_COLOR_TOP
+        comps = data.get("components_top" if s == "top" else "components_bot", [])
+        for comp in comps:
+            rd = comp.comp_name or ""
+            if want is not None and rd not in want:
+                continue
+            total_comps += 1
+            category = classify_component(comp).value
+            meta = {"refdes": rd, "part": comp.part_name or "",
+                    "category": category}
+            # Package outlines (yellow, stroke-only).
+            pkg = pkg_lookup.get(comp.pkg_ref)
+            if pkg and getattr(pkg, "outlines", None):
+                for outline in pkg.outlines:
+                    ring = _outline_ring(outline, comp, is_bottom)
+                    if ring:
+                        polygons.append({"exterior": ring, "holes": [],
+                                         "color": _OUTLINE_COLOR, "fill": False,
+                                         "role": "outline", "meta": meta})
+                        n_outlines += 1
+            # Pin pads (cyan/pink, filled).
+            for ring in _pad_rings(comp, is_bottom, user_symbols):
+                ring["color"] = pad_color
+                ring["role"] = "pad"
+                ring["meta"] = meta
+                polygons.append(ring)
+                n_pads += 1
 
-    # VIA pads on the side's outer signal layer (grey, filled).
-    via_rings = _via_rings(data.get("layers_data", {}), side, user_symbols)
-    for ring in via_rings:
-        ring["color"] = _VIA_COLOR
-        ring["role"] = "via"
-        polygons.append(ring)
+        # VIA pads on the side's outer signal layer (grey, filled).
+        for ring in _via_rings(data.get("layers_data", {}), s, user_symbols):
+            ring["color"] = _VIA_COLOR
+            ring["role"] = "via"
+            polygons.append(ring)
+            n_vias += 1
 
     points: list[list[float]] = []
-    _log(f"{side}: {len(comps)} components, {n_outlines} outlines, "
-         f"{n_pads} pads, {len(via_rings)} vias")
+    _log(f"{side}: {total_comps} components, {n_outlines} outlines, "
+         f"{n_pads} pads, {n_vias} vias")
 
     profile_rings, pbounds = _profile_rings_and_bounds(data.get("profile"))
     if pbounds:
@@ -367,7 +410,7 @@ def build_component_geometry(cache_dir: str | Path, cache_name: str, side: str,
     out = {"side": side, "bounds": bounds, "profile": profile_rings,
            "polygons": polygons, "points": points}
     Path(out_path).write_text(json.dumps(out), encoding="utf-8")
-    return {"side": side, "count": len(comps), "n_polys": len(polygons),
+    return {"side": side, "count": total_comps, "n_polys": len(polygons),
             "bounds": bounds, "geometry": Path(out_path).name}
 
 

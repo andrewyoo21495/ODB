@@ -85,12 +85,20 @@ class NetViewerRequest(BaseModel):
 
 
 class ComponentViewerRequest(BaseModel):
-    side: str = "top"   # "top" | "bottom"
+    side: str = "top"                       # "top" | "bottom" | "both"
+    refdes: list[str] | None = None         # None/empty = all components
 
 
 class LayerInfo(BaseModel):
     name: str
     type: str = ""
+
+
+class ComponentInfo(BaseModel):
+    refdes: str
+    part: str = ""
+    category: str = ""
+    side: str = ""
 
 
 class ActivityEntry(BaseModel):

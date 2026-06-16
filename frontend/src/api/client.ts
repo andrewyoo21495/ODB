@@ -1,6 +1,6 @@
 // Thin fetch wrapper over the FastAPI backend (proxied at /api in dev).
 
-import type { ActivityOut, JobOut, JobStatus, LayerGeometry, LayerInfo, ResultOut, RuleInfo, TaskOut } from "../types";
+import type { ActivityOut, ComponentInfo, JobOut, JobStatus, LayerGeometry, LayerInfo, ResultOut, RuleInfo, TaskOut } from "../types";
 
 const BASE = "/api";
 
@@ -68,12 +68,14 @@ export const api = {
   getLayers: (id: string) => jsonGet<LayerInfo[]>(`/jobs/${id}/layers`),
   getNets: (id: string, layer: string) =>
     jsonGet<string[]>(`/jobs/${id}/nets?layer=${encodeURIComponent(layer)}`),
+  getComponents: (id: string, side: string) =>
+    jsonGet<ComponentInfo[]>(`/jobs/${id}/components?side=${encodeURIComponent(side)}`),
   runViewer: (id: string, layer: string) =>
     jsonPost<TaskOut>(`/jobs/${id}/viewer`, { layer }),
   runViewerNet: (id: string, layer: string, net: string) =>
     jsonPost<TaskOut>(`/jobs/${id}/viewer/net`, { layer, net }),
-  runViewerComponent: (id: string, side: string) =>
-    jsonPost<TaskOut>(`/jobs/${id}/viewer/component`, { side }),
+  runViewerComponent: (id: string, side: string, refdes: string[] | null) =>
+    jsonPost<TaskOut>(`/jobs/${id}/viewer/component`, { side, refdes }),
   fetchGeometry: async (taskId: string, name: string): Promise<LayerGeometry> => {
     const r = await fetch(`${BASE}/tasks/${taskId}/artifact/${name}`);
     if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);

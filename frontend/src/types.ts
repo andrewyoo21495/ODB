@@ -51,6 +51,13 @@ export interface LayerInfo {
   type: string;
 }
 
+export interface ComponentInfo {
+  refdes: string;
+  part: string;
+  category: string;
+  side: string;
+}
+
 export interface ActivityEntry {
   ts: string;
   user: string;
