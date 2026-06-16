@@ -413,6 +413,11 @@ def detect_inner_walls(
     This distance-based approach correctly handles concave shapes (U, L, T,
     zigzag, narrow corridors) where pads on recessed edges are still on the
     perimeter.
+
+    *inset_mm* is caller-tunable: a larger value tolerates cases where the
+    declared ``pkg.outlines`` is offset from the actual outer-wall pads (which
+    would otherwise misclassify perimeter pads as inner walls). CKL-02-007
+    passes a wider inset for this reason.
     """
     if not _HAS_SHAPELY:
         return []

@@ -34,6 +34,13 @@ from src.models import RuleResult
 
 MIN_CLEARANCE_MM = 0.3
 
+# Inner-wall detection inset: a shield-can pad whose minimum distance to the
+# component's own outer outline boundary is >= this value is treated as an
+# inner wall. Larger than the helper default (0.4 mm) to tolerate cases where
+# the declared pkg.outlines is slightly offset from the actual outer-wall pads,
+# which otherwise misclassifies perimeter pads as inner walls.
+INNER_WALL_INSET_MM = 1.4
+
 
 def _min_distance_to_inner_walls(
     comp, packages, inner_walls,
@@ -114,6 +121,7 @@ class CKL02007(ChecklistRule):
             for sc in shield_cans:
                 inner_walls = detect_inner_walls(
                     sc, packages, is_bottom=is_bottom,
+                    inset_mm=INNER_WALL_INSET_MM,
                 )
                 outer_outline = get_outermost_outline(
                     sc, packages, is_bottom=is_bottom,
