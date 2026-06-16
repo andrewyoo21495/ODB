@@ -1,0 +1,15 @@
+# Frontend (Vite + React)
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Editor / OS
+.vite/
+.DS_Store

@@ -1,0 +1,89 @@
+import { useState } from "react";
+import {
+  Alert,
+  App as AntdApp,
+  Button,
+  Card,
+  Progress,
+  Select,
+  Space,
+  Statistic,
+} from "antd";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { api } from "../api/client";
+import { useJob } from "../JobContext";
+import { useTask } from "../hooks/useTask";
+import ReportView from "../components/ReportView";
+
+export default function Checklist() {
+  const { jobId } = useJob();
+  const { message } = AntdApp.useApp();
+  const [selected, setSelected] = useState<string[]>([]);
+  const [taskId, setTaskId] = useState<string | null>(null);
+
+  const rules = useQuery({ queryKey: ["rules"], queryFn: api.getRules });
+  const task = useTask(taskId);
+
+  const run = useMutation({
+    mutationFn: () => api.runChecklist(jobId as string, selected.length ? selected : null),
+    onSuccess: (t) => setTaskId(t.task_id),
+    onError: (e) => message.error(String(e)),
+  });
+
+  if (!jobId) {
+    return <Alert type="info" showIcon message="대시보드에서 Job을 먼저 선택하세요." />;
+  }
+
+  const status = task.data?.status;
+  const running = run.isPending || (!!taskId && status !== "done" && status !== "error");
+  const done = status === "done";
+  const res = task.data?.result as
+    | { passed: number; failed: number; total: number }
+    | undefined;
+
+  return (
+    <Card title={`체크리스트 — job ${jobId}`}>
+      <Space direction="vertical" style={{ width: "100%" }} size="middle">
+        <Select
+          mode="multiple"
+          allowClear
+          style={{ width: "100%" }}
+          placeholder="룰 선택 (비우면 전체 실행)"
+          loading={rules.isLoading}
+          value={selected}
+          onChange={setSelected}
+          options={(rules.data ?? []).map((r) => ({
+            label: `${r.rule_id} — ${r.description}`,
+            value: r.rule_id,
+          }))}
+        />
+
+        <Button type="primary" loading={running} onClick={() => run.mutate()}>
+          실행
+        </Button>
+
+        {running && taskId && (
+          <Progress
+            percent={Math.round((task.data?.progress ?? 0) * 100)}
+            status="active"
+          />
+        )}
+
+        {status === "error" && (
+          <Alert type="error" showIcon message={task.data?.error ?? "실행 오류"} />
+        )}
+
+        {done && res && (
+          <>
+            <Space size="large">
+              <Statistic title="Pass" value={res.passed} valueStyle={{ color: "#3f8600" }} />
+              <Statistic title="Fail" value={res.failed} valueStyle={{ color: "#cf1322" }} />
+              <Statistic title="Total" value={res.total} />
+            </Space>
+            <ReportView src={api.reportUrl(taskId as string)} />
+          </>
+        )}
+      </Space>
+    </Card>
+  );
+}

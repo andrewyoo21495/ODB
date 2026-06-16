@@ -1,0 +1,61 @@
+// Thin fetch wrapper over the FastAPI backend (proxied at /api in dev).
+
+import type { JobOut, JobStatus, LayerGeometry, LayerInfo, RuleInfo, TaskOut } from "../types";
+
+const BASE = "/api";
+
+async function jsonGet<T>(url: string): Promise<T> {
+  const r = await fetch(BASE + url);
+  if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+  return r.json() as Promise<T>;
+}
+
+async function jsonPost<T>(url: string, body?: unknown): Promise<T> {
+  const r = await fetch(BASE + url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+  if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+  return r.json() as Promise<T>;
+}
+
+export const api = {
+  uploadJob: async (file: File): Promise<JobStatus> => {
+    const fd = new FormData();
+    fd.append("file", file);
+    const r = await fetch(BASE + "/jobs", { method: "POST", body: fd });
+    if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+    return r.json() as Promise<JobStatus>;
+  },
+  listJobs: () => jsonGet<JobOut[]>("/jobs"),
+  jobStatus: (id: string) => jsonGet<JobStatus>(`/jobs/${id}/status`),
+  getRules: () => jsonGet<RuleInfo[]>("/rules"),
+  runChecklist: (id: string, ruleIds: string[] | null) =>
+    jsonPost<TaskOut>(`/jobs/${id}/checklist`, { rule_ids: ruleIds }),
+  runCopper: (id: string, body: { method: string; n_rows: number; n_cols: number }) =>
+    jsonPost<TaskOut>(`/jobs/${id}/copper`, body),
+  runExtract: (id: string, categories: string[] | null) =>
+    jsonPost<TaskOut>(`/jobs/${id}/extract`, { categories }),
+  runInterposer: (id: string) => jsonPost<TaskOut>(`/jobs/${id}/interposer`),
+  runCompare: (oldJobId: string, newJobId: string) =>
+    jsonPost<TaskOut>(`/compare`, { old_job_id: oldJobId, new_job_id: newJobId }),
+  getLayers: (id: string) => jsonGet<LayerInfo[]>(`/jobs/${id}/layers`),
+  getNets: (id: string, layer: string) =>
+    jsonGet<string[]>(`/jobs/${id}/nets?layer=${encodeURIComponent(layer)}`),
+  runViewer: (id: string, layer: string) =>
+    jsonPost<TaskOut>(`/jobs/${id}/viewer`, { layer }),
+  runViewerNet: (id: string, layer: string, net: string) =>
+    jsonPost<TaskOut>(`/jobs/${id}/viewer/net`, { layer, net }),
+  runViewerComponent: (id: string, side: string) =>
+    jsonPost<TaskOut>(`/jobs/${id}/viewer/component`, { side }),
+  fetchGeometry: async (taskId: string, name: string): Promise<LayerGeometry> => {
+    const r = await fetch(`${BASE}/tasks/${taskId}/artifact/${name}`);
+    if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+    return r.json() as Promise<LayerGeometry>;
+  },
+  artifactUrl: (taskId: string, name: string) =>
+    `${BASE}/tasks/${taskId}/artifact/${name}`,
+  getTask: (id: string) => jsonGet<TaskOut>(`/tasks/${id}`),
+  reportUrl: (taskId: string) => `${BASE}/tasks/${taskId}/report`,
+};
