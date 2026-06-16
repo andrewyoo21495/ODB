@@ -11,8 +11,6 @@ no GUI).
 
 from __future__ import annotations
 
-import base64
-import html
 import json
 from pathlib import Path
 from typing import Callable
@@ -23,12 +21,17 @@ matplotlib.use("Agg")  # must precede any pyplot import in this process
 
 import matplotlib.pyplot as plt
 
-from src.checklist.component_classifier import classify_component
+from src.checklist.component_classifier import ComponentCategory, classify_component
+from src.extract_html_reporter import generate_extract_html_report
 from src.services import data_service
 
 LogFn = Callable[[str], None]
 
 _HIGHLIGHT = "#1677ff"
+
+# "Unknown" is never a selectable/extractable category — only the categories
+# component_classifier confidently identifies are exported (see hub Extract tab).
+_UNKNOWN = ComponentCategory.UNKNOWN.value
 
 
 def _part_dict(comp, category: str, side: str) -> dict:
@@ -44,6 +47,7 @@ def _part_dict(comp, category: str, side: str) -> dict:
         "mirror": comp.mirror,
         "device_type": props.get("DEVICE_TYPE", ""),
         "type": props.get("TYPE", ""),
+        "properties": dict(props),
     }
 
 
@@ -78,49 +82,6 @@ def _render_side(profile, comps, packages, user_symbols, side: str,
         plt.close(fig)
 
 
-def _img_data_uri(path: Path) -> str:
-    b64 = base64.b64encode(path.read_bytes()).decode("ascii")
-    return f"data:image/png;base64,{b64}"
-
-
-def _write_html(html_path: Path, odb_filename: str, parts: list[dict],
-                by_category: dict[str, int], top_png: Path, bot_png: Path) -> None:
-    cat_summary = ", ".join(f"{k}: {v}" for k, v in sorted(by_category.items()))
-    rows = "\n".join(
-        "<tr>" + "".join(
-            f"<td>{html.escape(str(p[c]))}</td>"
-            for c in ("refdes", "part_name", "side", "category",
-                      "x", "y", "rotation", "device_type")
-        ) + "</tr>"
-        for p in parts
-    )
-    doc = f"""<!doctype html><html lang="ko"><head><meta charset="utf-8">
-<title>Extract — {html.escape(odb_filename)}</title>
-<style>
- body {{ font-family: system-ui, sans-serif; margin: 24px; color:#222; }}
- h1 {{ font-size: 1.3rem; }} .muted {{ color:#666; }}
- .imgs {{ display:flex; gap:16px; flex-wrap:wrap; margin:16px 0; }}
- .imgs figure {{ margin:0; }} .imgs img {{ max-width:480px; border:1px solid #eee; }}
- table {{ border-collapse: collapse; width:100%; font-size:0.85rem; }}
- th,td {{ border:1px solid #e5e5e5; padding:4px 8px; text-align:left; }}
- th {{ background:#fafafa; }}
-</style></head><body>
-<h1>Extract — {html.escape(odb_filename)}</h1>
-<p class="muted">총 {len(parts)} parts &nbsp;|&nbsp; {html.escape(cat_summary)}</p>
-<div class="imgs">
- <figure><figcaption>TOP</figcaption><img src="{_img_data_uri(top_png)}"></figure>
- <figure><figcaption>BOTTOM</figcaption><img src="{_img_data_uri(bot_png)}"></figure>
-</div>
-<table><thead><tr>
- <th>RefDes</th><th>Part</th><th>Side</th><th>Category</th>
- <th>X</th><th>Y</th><th>Rot</th><th>Device Type</th>
-</tr></thead><tbody>
-{rows}
-</tbody></table>
-</body></html>"""
-    html_path.write_text(doc, encoding="utf-8")
-
-
 def run_extract(cache_dir: str | Path, cache_name: str, *, out_dir: Path,
                 odb_filename: str, categories: list[str] | None = None,
                 html_name: str = "extract.html", json_name: str = "parts.json",
@@ -137,12 +98,17 @@ def run_extract(cache_dir: str | Path, cache_name: str, *, out_dir: Path,
     packages = eda.packages if eda else None
     user_symbols = data.get("user_symbols", {})
 
-    selected = set(categories) if categories else None
+    # Drop "Unknown" from any explicit selection; when nothing is selected
+    # ("전체"), keep every confidently-classified category but still exclude
+    # Unknown (it is never an extractable category).
+    selected = {c for c in categories if c != _UNKNOWN} if categories else None
 
     def _filter(comps):
         kept = []
         for comp in comps:
             cat = classify_component(comp).value
+            if cat == _UNKNOWN:
+                continue
             if selected is None or cat in selected:
                 kept.append((comp, cat))
         return kept
@@ -173,7 +139,14 @@ def run_extract(cache_dir: str | Path, cache_name: str, *, out_dir: Path,
     _render_side(profile, [c for c, _ in top], packages, user_symbols, "T", top_png, "TOP")
     _render_side(profile, [c for c, _ in bot], packages, user_symbols, "B", bot_png, "BOTTOM")
 
-    _write_html(out_dir / html_name, odb_filename, parts, by_category, top_png, bot_png)
+    generate_extract_html_report(
+        out_dir / html_name,
+        odb_filename=odb_filename,
+        parts=parts,
+        by_category=by_category,
+        top_png=top_png,
+        bot_png=bot_png,
+    )
 
     return {
         "count": len(parts),

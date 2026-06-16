@@ -51,6 +51,26 @@ export interface LayerInfo {
   type: string;
 }
 
+export interface ActivityEntry {
+  ts: string;
+  user: string;
+  ip: string;
+  method: string;
+  path: string;
+}
+
+export interface ActivityUser {
+  user: string;
+  count: number;
+  ips: string[];
+  last_seen: string;
+}
+
+export interface ActivityOut {
+  recent: ActivityEntry[];
+  users: ActivityUser[];
+}
+
 export interface PolyMeta {
   refdes: string;
   part: string;

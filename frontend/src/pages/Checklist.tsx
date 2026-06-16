@@ -11,12 +11,14 @@ import {
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { api } from "../api/client";
 import { useFeature } from "../hooks/useFeature";
+import { useJobName } from "../hooks/useJobName";
 import ReportView from "../components/ReportView";
 
 export default function Checklist() {
   const { message } = AntdApp.useApp();
   const [selected, setSelected] = useState<string[]>([]);
   const { jobId, taskId, setTaskId, task, prior } = useFeature("checklist");
+  const jobName = useJobName(jobId);
 
   const rules = useQuery({ queryKey: ["rules"], queryFn: api.getRules });
 
@@ -35,7 +37,7 @@ export default function Checklist() {
   const done = status === "done";
 
   return (
-    <Card title={`체크리스트 — job ${jobId}`}>
+    <Card title={`체크리스트 — ${jobName || jobId}`}>
       <Space direction="vertical" style={{ width: "100%" }} size="middle">
         <Space.Compact style={{ width: "100%" }}>
           <Button style={{ cursor: "default" }} disabled>

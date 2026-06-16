@@ -2,6 +2,7 @@ import { Alert, App as AntdApp, Button, Card, Col, Row, Space, Statistic } from 
 import { useMutation } from "@tanstack/react-query";
 import { api } from "../api/client";
 import { useFeature } from "../hooks/useFeature";
+import { useJobName } from "../hooks/useJobName";
 import ReportView from "../components/ReportView";
 
 interface SideResult {
@@ -29,6 +30,7 @@ function SideStats({ title, side }: { title: string; side: SideResult }) {
 export default function Interposer() {
   const { message } = AntdApp.useApp();
   const { jobId, taskId, setTaskId, task, prior } = useFeature("interposer");
+  const jobName = useJobName(jobId);
 
   const run = useMutation({
     mutationFn: () => api.runInterposer(jobId as string),
@@ -47,7 +49,7 @@ export default function Interposer() {
   const priorRes = prior?.summary as InterposerSummary | undefined;
 
   return (
-    <Card title={`Interposer Analyzer — job ${jobId}`}>
+    <Card title={`인터포저 영역 계산 — ${jobName || jobId}`}>
       <Space direction="vertical" style={{ width: "100%" }} size="middle">
         <Button type="primary" loading={running} onClick={() => run.mutate()}>
           {prior && !done ? "다시 분석" : "분석 실행"}

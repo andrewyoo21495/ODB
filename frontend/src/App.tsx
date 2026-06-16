@@ -8,6 +8,7 @@ import {
   EyeOutlined,
   DiffOutlined,
   UserOutlined,
+  TeamOutlined,
 } from "@ant-design/icons";
 import { Link, Route, Routes, useLocation } from "react-router-dom";
 import { useUser } from "./UserContext";
@@ -18,6 +19,7 @@ import Extract from "./pages/Extract";
 import Interposer from "./pages/Interposer";
 import Compare from "./pages/Compare";
 import Viewer from "./pages/Viewer";
+import Activity from "./pages/Activity";
 
 const { Header, Sider, Content } = Layout;
 
@@ -28,6 +30,7 @@ function selectedKey(pathname: string): string {
   if (pathname.startsWith("/interposer")) return "interposer";
   if (pathname.startsWith("/compare")) return "compare";
   if (pathname.startsWith("/viewer")) return "viewer";
+  if (pathname.startsWith("/activity")) return "activity";
   return "dashboard";
 }
 
@@ -76,6 +79,7 @@ export default function App() {
               { key: "interposer", icon: <BorderOuterOutlined />, label: <Link to="/interposer">인터포저 영역 계산</Link> },
               { key: "viewer", icon: <EyeOutlined />, label: <Link to="/viewer">ODB 뷰어</Link> },
               { key: "compare", icon: <DiffOutlined />, label: <Link to="/compare">리비전 비교</Link> },
+              { key: "activity", icon: <TeamOutlined />, label: <Link to="/activity">사용자 현황</Link> },
             ]}
           />
         </Sider>
@@ -88,6 +92,7 @@ export default function App() {
             <Route path="/interposer" element={<Interposer />} />
             <Route path="/viewer" element={<Viewer />} />
             <Route path="/compare" element={<Compare />} />
+            <Route path="/activity" element={<Activity />} />
           </Routes>
         </Content>
       </Layout>

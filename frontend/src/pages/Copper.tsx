@@ -12,6 +12,7 @@ import {
 import { useMutation } from "@tanstack/react-query";
 import { api } from "../api/client";
 import { useFeature } from "../hooks/useFeature";
+import { useJobName } from "../hooks/useJobName";
 import ReportView from "../components/ReportView";
 
 type CopperSummary = { layers: number; avg_ratio: number; report: string };
@@ -23,6 +24,7 @@ export default function Copper() {
   const [rows, setRows] = useState(5);
   const [cols, setCols] = useState(5);
   const { jobId, taskId, setTaskId, task, prior } = useFeature("copper");
+  const jobName = useJobName(jobId);
 
   const run = useMutation({
     mutationFn: () =>
@@ -42,7 +44,7 @@ export default function Copper() {
   const priorRes = prior?.summary as CopperSummary | undefined;
 
   return (
-    <Card title={`Copper Calculator — job ${jobId}`}>
+    <Card title={`동박율 계산 — ${jobName || jobId}`}>
       <Space direction="vertical" style={{ width: "100%" }} size="middle">
         <Space wrap>
           <span>grid:</span>

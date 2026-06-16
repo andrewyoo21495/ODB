@@ -289,6 +289,19 @@ def get_result(job_id: str, kind: str, *,
     return None
 
 
+def delete_job(job_id: str, *,
+               workspace_root: str | Path = DEFAULT_WORKSPACE_ROOT) -> bool:
+    """Delete a job's entire workspace directory (source, cache, reports).
+
+    Returns True if a directory was removed, False if it did not exist.
+    """
+    jdir = job_dir(job_id, workspace_root=workspace_root)
+    if not jdir.exists():
+        return False
+    shutil.rmtree(jdir)
+    return True
+
+
 def list_jobs(*, workspace_root: str | Path = DEFAULT_WORKSPACE_ROOT) -> list[dict]:
     """List metadata for all jobs in the workspace (for the dashboard)."""
     root = Path(workspace_root)

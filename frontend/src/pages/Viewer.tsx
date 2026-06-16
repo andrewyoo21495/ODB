@@ -14,6 +14,7 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../api/client";
 import { useJob } from "../JobContext";
+import { useJobName } from "../hooks/useJobName";
 import PcbCanvas, { type Overlay } from "../components/PcbCanvas";
 import type { LayerGeometry, PolyMeta, TaskOut } from "../types";
 
@@ -32,6 +33,7 @@ function labelOf(key: string): string {
 
 export default function Viewer() {
   const { jobId } = useJob();
+  const jobName = useJobName(jobId);
   const { message } = AntdApp.useApp();
   const [overlays, setOverlays] = useState<Overlay[]>([]);
   const [loading, setLoading] = useState(0);
@@ -127,7 +129,7 @@ export default function Viewer() {
     .map((l) => ({ label: l.name, value: l.name }));
 
   return (
-    <Card title={`ODB Viewer — job ${jobId}`}>
+    <Card title={`ODB 뷰어 — ${jobName || jobId}`}>
       <Space direction="vertical" style={{ width: "100%" }} size="middle">
         <Space wrap align="start">
           <div>

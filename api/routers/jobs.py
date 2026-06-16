@@ -82,6 +82,15 @@ def get_job(job_id: str, user: str = Depends(get_current_user)) -> JobOut:
     return JobOut(**meta)
 
 
+@router.delete("/jobs/{job_id}")
+def delete_job(job_id: str, user: str = Depends(get_current_user)) -> dict:
+    """Delete a job and all its data (source, cache, reports)."""
+    removed = job_store.delete_job(job_id, workspace_root=WORKSPACE_ROOT)
+    if not removed:
+        raise HTTPException(status_code=404, detail="job not found")
+    return {"deleted": job_id}
+
+
 @router.get("/jobs/{job_id}/results", response_model=list[ResultOut])
 def job_results(job_id: str, user: str = Depends(get_current_user)) -> list[ResultOut]:
     """Completed analyses recorded for this job (checklist/copper/extract/…).

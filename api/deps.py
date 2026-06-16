@@ -18,6 +18,14 @@ REFERENCES_DIR = REPO_ROOT / "references"
 _USER_RE = re.compile(r"[^0-9A-Za-z가-힣 _.\-]")
 
 
+def sanitize_user(raw: str | None) -> str:
+    """Sanitise a self-declared user name; blank/invalid -> ``anonymous``."""
+    name = (raw or "").strip()
+    if not name:
+        return "anonymous"
+    return _USER_RE.sub("", name)[:40] or "anonymous"
+
+
 def get_current_user(x_user: str | None = Header(default=None)) -> str:
     """Return the current user identity from the ``X-User`` request header.
 
@@ -27,7 +35,4 @@ def get_current_user(x_user: str | None = Header(default=None)) -> str:
     or an API-key check later without touching the routers.  The value is
     sanitised and length-capped; missing/blank falls back to ``anonymous``.
     """
-    name = (x_user or "").strip()
-    if not name:
-        return "anonymous"
-    return _USER_RE.sub("", name)[:40] or "anonymous"
+    return sanitize_user(x_user)

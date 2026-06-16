@@ -1,6 +1,6 @@
 // Thin fetch wrapper over the FastAPI backend (proxied at /api in dev).
 
-import type { JobOut, JobStatus, LayerGeometry, LayerInfo, ResultOut, RuleInfo, TaskOut } from "../types";
+import type { ActivityOut, JobOut, JobStatus, LayerGeometry, LayerInfo, ResultOut, RuleInfo, TaskOut } from "../types";
 
 const BASE = "/api";
 
@@ -42,6 +42,12 @@ export const api = {
     return r.json() as Promise<JobStatus>;
   },
   listJobs: () => jsonGet<JobOut[]>("/jobs"),
+  getJob: (id: string) => jsonGet<JobOut>(`/jobs/${id}`),
+  deleteJob: async (id: string): Promise<void> => {
+    const r = await fetch(`${BASE}/jobs/${id}`, { method: "DELETE", headers: userHeaders() });
+    if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+  },
+  getActivity: (limit = 200) => jsonGet<ActivityOut>(`/activity?limit=${limit}`),
   jobStatus: (id: string) => jsonGet<JobStatus>(`/jobs/${id}/status`),
   getResults: (id: string) => jsonGet<ResultOut[]>(`/jobs/${id}/results`),
   getLatestTask: (id: string, kind: string) =>

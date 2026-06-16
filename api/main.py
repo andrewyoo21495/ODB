@@ -16,13 +16,16 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 # Ensure the repo root is importable (so ``src`` resolves) regardless of cwd.
 sys.path.insert(0, str(REPO_ROOT))
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from api import activity
+from api.deps import WORKSPACE_ROOT, sanitize_user
 from api.routers import (
+    activity as activity_router,
     checklist, compare, copper, extract, interposer, jobs, meta, tasks, viewer,
 )
 
@@ -30,6 +33,27 @@ app = FastAPI(title="ODB++ 자동화 허브 API", version="0.1.0")
 
 # Compress large JSON/HTML responses (viewer geometry can be several MB).
 app.add_middleware(GZipMiddleware, minimum_size=1024)
+
+
+@app.middleware("http")
+async def _access_log(request: Request, call_next):
+    """Record who (X-User) accessed what (path) from where (IP).
+
+    Unauthenticated deployment has no real identity, so this access log is the
+    only visibility into usage.  Skips CORS preflight, health, and the activity
+    endpoint itself to avoid noise/recursion."""
+    path = request.url.path
+    if (request.method != "OPTIONS" and path.startswith("/api")
+            and path != "/api/health" and not path.startswith("/api/activity")):
+        xff = request.headers.get("x-forwarded-for")
+        ip = (xff.split(",")[0].strip() if xff
+              else (request.client.host if request.client else ""))
+        activity.record(
+            WORKSPACE_ROOT,
+            user=sanitize_user(request.headers.get("x-user")),
+            ip=ip, method=request.method, path=path,
+        )
+    return await call_next(request)
 
 # CORS open for local dev (Vite dev server on another port).  Tighten for prod.
 app.add_middleware(
@@ -48,6 +72,7 @@ app.include_router(compare.router, prefix="/api")
 app.include_router(viewer.router, prefix="/api")
 app.include_router(tasks.router, prefix="/api")
 app.include_router(meta.router, prefix="/api")
+app.include_router(activity_router.router, prefix="/api")
 
 
 @app.get("/api/health", tags=["meta"])

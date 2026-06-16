@@ -1,17 +1,10 @@
 import { useState } from "react";
-import {
-  Alert,
-  App as AntdApp,
-  Button,
-  Card,
-  Select,
-  Space,
-  Statistic,
-  Tag,
-} from "antd";
+import { Alert, App as AntdApp, Button, Card, Select, Space } from "antd";
+import { DownloadOutlined } from "@ant-design/icons";
 import { useMutation } from "@tanstack/react-query";
 import { api } from "../api/client";
 import { useFeature } from "../hooks/useFeature";
+import { useJobName } from "../hooks/useJobName";
 import ReportView from "../components/ReportView";
 
 type ExtractSummary = {
@@ -21,6 +14,8 @@ type ExtractSummary = {
   json: string;
 };
 
+// Only the categories component_classifier confidently identifies — "Unknown"
+// is intentionally excluded (it is never an extractable category).
 const CATEGORIES = [
   "IC",
   "Capacitor",
@@ -28,13 +23,13 @@ const CATEGORIES = [
   "Connector",
   "SIM_Socket",
   "INP",
-  "Unknown",
 ];
 
 export default function Extract() {
   const { message } = AntdApp.useApp();
   const [categories, setCategories] = useState<string[]>([]);
   const { jobId, taskId, setTaskId, task, prior } = useFeature("extract");
+  const jobName = useJobName(jobId);
 
   const run = useMutation({
     mutationFn: () =>
@@ -54,21 +49,25 @@ export default function Extract() {
   const priorRes = prior?.summary as ExtractSummary | undefined;
 
   return (
-    <Card title={`JSON Extractor — job ${jobId}`}>
+    <Card title={`데이터 추출 — ${jobName || jobId}`}>
       <Space direction="vertical" style={{ width: "100%" }} size="middle">
-        <Select
-          mode="multiple"
-          allowClear
-          style={{ width: "100%" }}
-          placeholder="카테고리 선택 (비우면 전체)"
-          value={categories}
-          onChange={setCategories}
-          options={CATEGORIES.map((c) => ({ label: c, value: c }))}
-        />
-
-        <Button type="primary" loading={running} onClick={() => run.mutate()}>
-          {prior && !done ? "다시 추출" : "추출 실행"}
-        </Button>
+        <Space.Compact style={{ width: "100%" }}>
+          <Button style={{ cursor: "default" }} disabled>
+            카테고리 선택:
+          </Button>
+          <Select
+            mode="multiple"
+            allowClear
+            style={{ flex: 1 }}
+            placeholder="추출할 부품 카테고리 선택. 비우면 전체 추출"
+            value={categories}
+            onChange={setCategories}
+            options={CATEGORIES.map((c) => ({ label: c, value: c }))}
+          />
+          <Button type="primary" loading={running} onClick={() => run.mutate()}>
+            {prior && !done ? "다시 추출" : "추출 실행"}
+          </Button>
+        </Space.Compact>
 
         {running && taskId && (
           <Alert type="info" showIcon message="부품 필터링 & 이미지 렌더링 중…" />
@@ -80,13 +79,11 @@ export default function Extract() {
 
         {done && res && (
           <>
-            <Space size="large" wrap>
-              <Statistic title="추출된 부품" value={res.count} />
-              {Object.entries(res.by_category).map(([cat, n]) => (
-                <Tag key={cat} color="blue">{`${cat}: ${n}`}</Tag>
-              ))}
-            </Space>
-            <Button href={api.artifactUrl(taskId as string, res.json)} target="_blank">
+            <Button
+              icon={<DownloadOutlined />}
+              href={api.artifactUrl(taskId as string, res.json)}
+              target="_blank"
+            >
               parts.json 다운로드
             </Button>
             <ReportView src={api.reportUrl(taskId as string)} downloadName={`extract_${jobId}.html`} />
@@ -100,13 +97,11 @@ export default function Extract() {
               showIcon
               message={`이전 추출 결과 (${new Date(prior!.completed_at).toLocaleString()})`}
             />
-            <Space size="large" wrap>
-              <Statistic title="추출된 부품" value={priorRes.count} />
-              {Object.entries(priorRes.by_category).map(([cat, n]) => (
-                <Tag key={cat} color="blue">{`${cat}: ${n}`}</Tag>
-              ))}
-            </Space>
-            <Button href={api.jobArtifactUrl(jobId, priorRes.json)} target="_blank">
+            <Button
+              icon={<DownloadOutlined />}
+              href={api.jobArtifactUrl(jobId, priorRes.json)}
+              target="_blank"
+            >
               parts.json 다운로드
             </Button>
             <ReportView src={api.reportByKindUrl(jobId, "extract")} downloadName={`extract_${jobId}.html`} />

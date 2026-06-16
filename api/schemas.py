@@ -91,3 +91,23 @@ class ComponentViewerRequest(BaseModel):
 class LayerInfo(BaseModel):
     name: str
     type: str = ""
+
+
+class ActivityEntry(BaseModel):
+    ts: str
+    user: str = ""
+    ip: str = ""
+    method: str = ""
+    path: str = ""
+
+
+class ActivityUser(BaseModel):
+    user: str
+    count: int = 0
+    ips: list[str] = []
+    last_seen: str = ""
+
+
+class ActivityOut(BaseModel):
+    recent: list[ActivityEntry] = []
+    users: list[ActivityUser] = []

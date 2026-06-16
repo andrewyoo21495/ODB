@@ -5,6 +5,7 @@ import {
   Button,
   Card,
   Empty,
+  Popconfirm,
   Progress,
   Segmented,
   Space,
@@ -13,7 +14,7 @@ import {
   Tag,
   Upload,
 } from "antd";
-import { DownloadOutlined, InboxOutlined } from "@ant-design/icons";
+import { DeleteOutlined, DownloadOutlined, InboxOutlined } from "@ant-design/icons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api/client";
@@ -70,7 +71,7 @@ function JobResults({ jobId }: { jobId: string }) {
 export default function Dashboard() {
   const qc = useQueryClient();
   const nav = useNavigate();
-  const { setJobId } = useJob();
+  const { jobId: currentJobId, setJobId } = useJob();
   const { user } = useUser();
   const { message } = AntdApp.useApp();
   const [pendingId, setPendingId] = useState<string | null>(null);
@@ -109,6 +110,16 @@ export default function Dashboard() {
     onError: (e) => message.error(String(e)),
   });
 
+  const remove = useMutation({
+    mutationFn: (id: string) => api.deleteJob(id),
+    onSuccess: (_d, id) => {
+      message.success("삭제되었습니다");
+      if (currentJobId === id) setJobId(null);
+      qc.invalidateQueries({ queryKey: ["jobs"] });
+    },
+    onError: (e) => message.error(String(e)),
+  });
+
   const columns = [
     { title: "파일", dataIndex: "original_filename" },
     { title: "Job", dataIndex: "job_name" },
@@ -124,15 +135,27 @@ export default function Dashboard() {
       title: "",
       key: "action",
       render: (_: unknown, r: JobOut) => (
-        <Button
-          type="link"
-          onClick={() => {
-            setJobId(r.job_id);
-            nav("/checklist");
-          }}
-        >
-          열기 →
-        </Button>
+        <Space>
+          <Button
+            type="link"
+            onClick={() => {
+              setJobId(r.job_id);
+              nav("/checklist");
+            }}
+          >
+            열기 →
+          </Button>
+          <Popconfirm
+            title="이 데이터를 삭제할까요?"
+            description="소스/캐시/리포트가 모두 삭제됩니다."
+            okText="삭제"
+            okButtonProps={{ danger: true, loading: remove.isPending }}
+            cancelText="취소"
+            onConfirm={() => remove.mutate(r.job_id)}
+          >
+            <Button type="text" danger icon={<DeleteOutlined />} />
+          </Popconfirm>
+        </Space>
       ),
     },
   ];
