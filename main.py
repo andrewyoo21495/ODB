@@ -15,22 +15,16 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import math
-import statistics
 import sys
-import time
 from pathlib import Path
 
 # Ensure src is importable
 sys.path.insert(0, str(Path(__file__).parent))
 
 from src import odb_loader
-from src.cache_manager import (
-    cache_job, cache_layer, is_cache_valid, load_cache,
-    reconstruct_profile, reconstruct_eda_data, reconstruct_components,
-    reconstruct_layer_features, reconstruct_matrix_layers,
-    reconstruct_font, reconstruct_user_symbols,
-)
+# load_cache and reconstruct_matrix_layers are still used by cmd_copper_calculate;
+# the rest of the cache reconstruction now lives in src.services.data_service.
+from src.cache_manager import load_cache, reconstruct_matrix_layers
 from src.unit_converter import (
     INCH_TO_MM as _INCH_TO_MM,
     scale_components as _scale_components,
@@ -39,83 +33,16 @@ from src.unit_converter import (
     scale_layer_features as _scale_layer_features,
     scale_user_symbols as _scale_user_symbols,
 )
+# Cache-path data logic now lives in the interface-independent data service.
+# _select_step and _calibrate_eda_to_components are imported here because the
+# live-parse path below (_parse_for_view / _parse_for_comp_view) still uses them.
+from src.services import data_service
+from src.services.data_service import _select_step, _calibrate_eda_to_components
 
 
-def _calibrate_eda_to_components(components_top: list, components_bot: list,
-                                   eda_data) -> None:
-    """Detect and correct any residual EDA package scale mismatch.
-
-    After initial unit normalisation both EDA pin centers (package-local space)
-    and toeprint positions (board space) should share the same unit.  This
-    function verifies that assumption by comparing, per component, the maximum
-    distance of a toeprint from the component centroid against the maximum
-    distance of an EDA pin center from the package origin.  Rotation and mirror
-    do not affect distance, so no transform is needed.
-
-    If a consistent ×25.4 or ÷25.4 ratio is found, the EDA data is rescaled in
-    place so that component geometry renders at the correct physical size.
-    """
-    if not eda_data or not eda_data.packages:
-        return
-
-    pkg_lookup = {i: pkg for i, pkg in enumerate(eda_data.packages)}
-    ratios: list[float] = []
-
-    for comp in (components_top + components_bot):
-        pkg = pkg_lookup.get(comp.pkg_ref)
-        if not pkg or len(pkg.pins) < 2 or len(comp.toeprints) < 2:
-            continue
-
-        # Largest toeprint distance from component centroid (board coordinates)
-        max_tp = max(
-            math.sqrt((tp.x - comp.x) ** 2 + (tp.y - comp.y) ** 2)
-            for tp in comp.toeprints
-        )
-        # Largest EDA pin distance from package origin (package-local coordinates)
-        max_pin = max(
-            math.sqrt(p.center.x ** 2 + p.center.y ** 2)
-            for p in pkg.pins
-        )
-
-        if max_pin > 1e-9 and max_tp > 1e-9:
-            ratios.append(max_tp / max_pin)
-
-        if len(ratios) >= 30:
-            break
-
-    if not ratios:
-        return
-
-    ratio = statistics.median(ratios)
-
-    if abs(ratio - 1.0) < 0.15:
-        return  # Already in sync
-
-    if 20.0 <= ratio <= 30.0:          # ≈ 25.4 → EDA is too small
-        factor = 25.4
-        direction = "×25.4"
-    elif 0.030 <= ratio <= 0.060:      # ≈ 1/25.4 → EDA is too large
-        factor = 1.0 / 25.4
-        direction = "÷25.4"
-    else:
-        print(f"  Warning: EDA/component scale ratio {ratio:.4f} is unexpected – skipping calibration")
-        return
-
-    _scale_eda_data(eda_data, factor)
-    print(f"  Units: EDA package geometry rescaled {direction} to match component coordinates (ratio={ratio:.3f})")
-
-
-def _select_step(job):
-    """Return (step_name, step_paths) for the relevant step.
-
-    For array-type data, selects the step named 'array'.
-    For unit-type data, selects the first (and only) step.
-    """
-    if job.data_type == "array" and "array" in job.steps:
-        name = "array"
-    else:
-        name = list(job.steps.keys())[0]
-    return name, job.steps[name]
+# _select_step and _calibrate_eda_to_components moved to
+# src.services.data_service (imported above); they are shared with the
+# cache-build path and the live-parse path below.
 
 
 def cmd_info(args):
@@ -172,337 +99,14 @@ def cmd_info(args):
     job.cleanup()
 
 
-def _parse_attrlist_value(attrlist_path: Path, key: str) -> float | None:
-    """Read a numeric value for *key* (e.g. '.copper_weight') from a layer attrlist file."""
-    prefix = key if key.endswith("=") else key + "="
-    try:
-        with open(attrlist_path, "r", encoding="utf-8", errors="replace") as f:
-            for line in f:
-                line = line.strip()
-                if line.startswith(prefix):
-                    return float(line.split("=", 1)[1].strip())
-    except Exception:
-        pass
-    return None
-
-
-def _resolve_pin_geometries(data: dict):
-    """Resolve FID cross-references and store pad geometry in Toeprint.geom.
-
-    Called during cache build after all unit normalisation is complete.
-    This resolves each component pin's pad shape once so the viewer can
-    render directly without re-resolving FID references at runtime.
-    """
-    from src.models import PinGeometry
-    from src.visualizer.fid_lookup import (
-        build_fid_map, resolve_fid_features, _find_top_bottom_signal_layers,
-    )
-
-    eda = data["eda_data"]
-
-    # Build temporary layers_data dict for FID resolution
-    matrix_layers = data.get("matrix_layers", [])
-    layer_lookup = {ml.name: ml for ml in matrix_layers}
-    layers_data = {}
-    for key in data:
-        if key.startswith("layer_features:"):
-            layer_name = key[len("layer_features:"):]
-            ml = layer_lookup.get(layer_name)
-            if ml:
-                layers_data[layer_name] = (data[key], ml)
-
-    if not layers_data:
-        return
-
-    fid_map = build_fid_map(eda)
-    if not fid_map:
-        return
-
-    resolved = resolve_fid_features(fid_map, eda.layer_names, layers_data)
-    if not resolved:
-        return
-
-    # Identify top/bottom signal layers so we can prefer the correct outer
-    # layer pad when a toeprint has FID references to multiple layers
-    # (e.g. through-hole pads appear on sigt, inner layers, and sigb).
-    top_sig, bot_sig = _find_top_bottom_signal_layers(layers_data)
-
-    # Collect user-defined symbol names for the is_user_symbol flag
-    user_sym_names: set[str] = set()
-    symbols = data.get("symbols")
-    if symbols:
-        if isinstance(symbols, dict):
-            user_sym_names = set(symbols.keys())
-
-    # Populate Toeprint.geom for each component
-    populated = 0
-    for side_key, side_char in (("components_top", "T"), ("components_bot", "B")):
-        preferred_layer = top_sig if side_char == "T" else bot_sig
-        comps = data.get(side_key, [])
-        for comp in comps:
-            for tp in comp.toeprints:
-                # Try both pin_num directly and as 0-based index
-                for pnum in (tp.pin_num, tp.pin_num - 1, tp.pin_num + 1):
-                    key = (side_char, comp.comp_index, pnum)
-                    pad_features = resolved.get(key)
-                    if not pad_features:
-                        continue
-                    # Prefer the pad from the correct outer signal layer
-                    # (sigt for top, sigb for bottom).  A toeprint can have
-                    # FID references to multiple layers (outer + inner copper),
-                    # so we must pick the outermost one, not just the first.
-                    rpf = None
-                    if preferred_layer:
-                        rpf = next(
-                            (f for f in pad_features
-                             if f.layer_name == preferred_layer),
-                            None,
-                        )
-                    if rpf is None:
-                        rpf = pad_features[0]  # fallback: first available
-                    tp.geom = PinGeometry(
-                        symbol_name=rpf.symbol.name,
-                        x=rpf.pad.x,
-                        y=rpf.pad.y,
-                        rotation=rpf.pad.rotation,
-                        mirror=rpf.pad.mirror,
-                        units=rpf.units,
-                        resize_factor=rpf.pad.resize_factor,
-                        unit_override=rpf.symbol.unit_override,
-                        is_user_symbol=rpf.symbol.name in user_sym_names,
-                    )
-                    populated += 1
-                    break  # stop trying alternative pin numbers
-
-    print(f"  FID: resolved pad geometry for {populated} toeprints")
+# _parse_attrlist_value and _resolve_pin_geometries moved to
+# src.services.data_service (used only by the cache-build path).
 
 
 def cmd_cache(args):
-    """Parse ODB++ data and cache to JSON files."""
-    print(f"Loading ODB++ from: {args.odb_path}")
-    t0 = time.time()
-
-    job = odb_loader.load(args.odb_path)
+    """Parse ODB++ data and cache to JSON files (delegates to data_service)."""
     cache_dir = Path(args.cache_dir) if args.cache_dir else Path("cache")
-
-    # Use the input file name (without extension) as the cache folder name
-    cache_name = Path(args.odb_path).stem
-
-    print(f"Job: {job.job_name}")
-    print(f"Cache directory: {cache_dir / cache_name}")
-
-    data = {}
-    data["data_type"] = job.data_type
-    print(f"Data type: {job.data_type}")
-
-    # Parse misc/info
-    if job.misc_info_path:
-        from src.parsers.misc_parser import parse_info
-        info = parse_info(job.misc_info_path)
-        data["job_info"] = info
-        print(f"  Parsed: misc/info")
-
-    # Parse matrix
-    layer_type_map: dict[str, str] = {}
-    if job.matrix_path:
-        from src.parsers.matrix_parser import parse_matrix
-        steps, layers = parse_matrix(job.matrix_path)
-        data["matrix_steps"] = steps
-        data["matrix_layers"] = layers
-        layer_type_map = {ml.name: ml.type for ml in layers}
-        print(f"  Parsed: matrix ({len(steps)} steps, {len(layers)} layers)")
-
-    # Parse font
-    if job.font_path:
-        from src.parsers.font_parser import parse_font
-        font = parse_font(job.font_path)
-        data["font"] = font
-        print(f"  Parsed: fonts/standard ({len(font.characters)} characters)")
-
-    # Parse the relevant step (unit: first step; array: step named "array")
-    step_name, step_paths = _select_step(job)
-    print(f"\n  Step: {step_name}")
-
-    # Step header
-    if step_paths.stephdr:
-        from src.parsers.stephdr_parser import parse_stephdr
-        header = parse_stephdr(step_paths.stephdr)
-        data["step_header"] = header
-        print(f"    Parsed: stephdr (units={header.units})")
-
-    # Profile
-    if step_paths.profile:
-        from src.parsers.profile_parser import parse_profile
-        profile = parse_profile(step_paths.profile)
-        data["profile"] = profile
-        print(f"    Parsed: profile")
-
-    # EDA data (unit only; array has no eda/ folder)
-    if step_paths.eda_data:
-        from src.parsers.eda_parser import parse_eda_data
-        eda = parse_eda_data(step_paths.eda_data)
-        data["eda_data"] = eda
-        print(f"    Parsed: eda/data ({len(eda.nets)} nets, {len(eda.packages)} packages)")
-
-    # Netlist (unit only; array has no netlists/ folder)
-    if step_paths.netlist_cadnet:
-        from src.parsers.netlist_parser import parse_netlist
-        netlist = parse_netlist(step_paths.netlist_cadnet)
-        data["netlist"] = netlist
-        print(f"    Parsed: netlist ({len(netlist.net_names)} nets)")
-
-    # Components and layer features
-    from src.parsers.component_parser import parse_components
-    from src.parsers.feature_parser import parse_features
-
-    copper_data: dict[str, float] = {}
-
-    for layer_name, layer_paths in step_paths.layers.items():
-        # Components (unit only; array has no comp_+_* layers)
-        if layer_paths.components:
-            components, comp_units = parse_components(layer_paths.components)
-            key = "components_top" if "top" in layer_name else "components_bot"
-            data[key] = components
-            # Store component units so they survive caching
-            data[f"{key}_units"] = comp_units
-            print(f"    Parsed: {layer_name}/components ({len(components)} components, units={comp_units})")
-
-        # Features
-        if layer_paths.features:
-            try:
-                features = parse_features(layer_paths.features)
-                data[f"layer_features:{layer_name}"] = features
-                print(f"    Parsed: {layer_name}/features ({len(features.features)} features)")
-            except Exception as e:
-                print(f"    Warning: Failed to parse {layer_name}/features: {e}")
-
-        # Thickness (Signal and Dielectric layers only)
-        layer_type = layer_type_map.get(layer_name, "")
-        if layer_paths.attrlist:
-            if layer_type == "SIGNAL":
-                cw = _parse_attrlist_value(layer_paths.attrlist, ".copper_weight")
-                if cw is not None:
-                    copper_data[layer_name] = cw / 1000.0
-            elif layer_type == "DIELECTRIC":
-                dt = _parse_attrlist_value(layer_paths.attrlist, ".layer_dielectric")
-                if dt is not None:
-                    copper_data[layer_name] = dt
-
-    if copper_data:
-        data["copper_data"] = copper_data
-        print(f"    Extracted copper weight for {len(copper_data)} layers")
-
-    # Parse user-defined symbols
-    if job.symbols:
-        from src.parsers.symbol_parser import parse_all_symbols
-        symbols = parse_all_symbols(job.symbols)
-        data["symbols"] = symbols
-        print(f"\n  Parsed: {len(symbols)} user-defined symbols")
-
-    # Parse stackup if available
-    if job.stackup_path:
-        from src.parsers.stackup_parser import parse_stackup
-        try:
-            stackup = parse_stackup(job.stackup_path)
-            data["stackup"] = stackup
-            print(f"  Parsed: stackup.xml")
-        except Exception as e:
-            print(f"  Warning: Failed to parse stackup.xml: {e}")
-
-    # ------------------------------------------------------------------
-    # Unit normalisation – convert all inch-based data to MM before
-    # caching.  After this block every coordinate (components, EDA,
-    # profile, layer features) is in millimetres.
-    # ------------------------------------------------------------------
-
-    # Normalise component placement coordinates (inches -> mm)
-    for key in ("components_top", "components_bot"):
-        comps = data.get(key)
-        units_key = f"{key}_units"
-        comp_units = data.get(units_key, "INCH")
-        if comps and comp_units == "INCH":
-            _scale_components(comps, _INCH_TO_MM)
-            data[units_key] = "MM"
-            print(f"  Units: scaled {key} INCH -> MM (x25.4)")
-
-    # Negate rotation angles for both layers so the cache stores negative
-    # ODB++ CW-positive angles (e.g. 90° → -90°).
-    for key in ("components_top", "components_bot"):
-        comps = data.get(key)
-        if comps:
-            for comp in comps:
-                comp.rotation = -comp.rotation
-    print(f"  Angles: negated component rotations for both layers")
-
-    # Normalise EDA package geometry (inches -> mm)
-    eda = data.get("eda_data")
-    if eda and hasattr(eda, "units") and eda.units == "INCH":
-        _scale_eda_data(eda, _INCH_TO_MM)
-        print(f"  Units: scaled EDA package data INCH -> MM (x25.4)")
-        eda.units = "MM"
-
-    # Cross-check: detect and correct any residual scale mismatch
-    # between EDA pin centres and component toeprint positions.
-    if eda:
-        _calibrate_eda_to_components(
-            data.get("components_top", []),
-            data.get("components_bot", []),
-            eda,
-        )
-
-    # Normalise profile coordinates (inches -> mm)
-    profile = data.get("profile")
-    if profile and profile.units == "INCH":
-        _scale_profile(profile, _INCH_TO_MM)
-        profile.units = "MM"
-        print(f"  Units: scaled profile INCH -> MM (x25.4)")
-
-    # Normalise layer feature coordinates (inches -> mm).
-    # features.units is kept as the original file unit (INCH/MM) so that
-    # the symbol renderer can correctly interpret symbol dimension encoding
-    # (mils for INCH files, microns for MM files).
-    for key in list(data.keys()):
-        if key.startswith("layer_features:"):
-            feats = data[key]
-            if feats.units == "INCH":
-                _scale_layer_features(feats, _INCH_TO_MM)
-                print(f"  Units: scaled {key} INCH -> MM (x25.4)")
-
-    # Normalise user-defined symbol coordinates (inches -> mm).
-    if data.get("symbols"):
-        _scale_user_symbols(data["symbols"], _INCH_TO_MM)
-        print(f"  Units: scaled user-defined symbol coordinates INCH -> MM (x25.4)")
-
-    # ------------------------------------------------------------------
-    # Resolve FID cross-references and populate Toeprint.geom so that
-    # the viewer can render pin pads without re-resolving at runtime.
-    # ------------------------------------------------------------------
-    eda = data.get("eda_data")
-    if eda and eda.layer_names:
-        _resolve_pin_geometries(data)
-
-    # Report identified top/bottom signal layers
-    eda = data.get("eda_data")
-    matrix_layers_list = data.get("matrix_layers", [])
-    matrix_layers_map = {ml.name: ml for ml in matrix_layers_list} if matrix_layers_list else None
-    if eda and eda.layer_names:
-        from src.visualizer.fid_lookup import identify_signal_layers
-        sig_map = identify_signal_layers(eda.layer_names, matrix_layers_map)
-        sigt_name = sig_map.get("sigt", "N/A")
-        sigb_name = sig_map.get("sigb", "N/A")
-        print(f"\n  Signal layers identified:")
-        print(f"    Top  (sigt): {sigt_name}")
-        print(f"    Bot  (sigb): {sigb_name}")
-
-    # Write cache
-    print(f"\nWriting cache...")
-    cache_job(cache_name, data, cache_dir)
-
-    elapsed = time.time() - t0
-    print(f"\nDone! Cached in {elapsed:.1f}s")
-    print(f"Cache location: {cache_dir / cache_name}")
-
-    job.cleanup()
+    data_service.build_cache(args.odb_path, cache_dir)
 
 
 def _parse_for_view(odb_path: str, layer_names: list[str] = None) -> dict:
@@ -648,82 +252,17 @@ def _parse_for_view(odb_path: str, layer_names: list[str] = None) -> dict:
     }
 
 
-def _ensure_cache(odb_path: str, cache_dir: Path) -> str:
-    """Ensure a JSON cache exists for odb_path; build it automatically if missing.
+# _ensure_cache / _load_from_cache now delegate to the data service.  They are
+# kept as thin wrappers so the existing call sites in this module stay unchanged.
 
-    Returns the cache_name (stem of the ODB path).
-    """
-    import argparse
-    cache_name = Path(odb_path).stem
-    cache_path = cache_dir / cache_name
-    cache_files = list(cache_path.glob("*.json")) if cache_path.exists() else []
-    if not cache_files:
-        print(f"No cache found at {cache_path}. Building cache first...")
-        cmd_cache(argparse.Namespace(odb_path=odb_path, cache_dir=str(cache_dir)))
-    return cache_name
+def _ensure_cache(odb_path: str, cache_dir: Path) -> str:
+    """Ensure a JSON cache exists for odb_path; build it if missing. Returns cache_name."""
+    return data_service.ensure_cache(odb_path, cache_dir)
 
 
 def _load_from_cache(cache_dir: Path, cache_name: str) -> dict:
     """Load and reconstruct all job data from the JSON cache into dataclass objects."""
-    from src.cache_manager import load_cache
-    from src.models import JobInfo
-
-    print(f"Loading from cache: {cache_dir / cache_name}")
-    raw = load_cache(cache_dir, cache_name)
-    if not raw:
-        raise RuntimeError(f"Cache is empty or missing: {cache_dir / cache_name}")
-
-    result: dict = {
-        "job": None,
-        "data_type": raw.get("data_type", "unit"),
-        "components_top": [],
-        "components_bot": [],
-        "layers_data": {},
-        "user_symbols": {},
-    }
-
-    if "profile" in raw:
-        result["profile"] = reconstruct_profile(raw["profile"])
-    if "eda_data" in raw:
-        result["eda_data"] = reconstruct_eda_data(raw["eda_data"])
-    if "components_top" in raw:
-        result["components_top"] = reconstruct_components(raw["components_top"])
-    if "components_bot" in raw:
-        result["components_bot"] = reconstruct_components(raw["components_bot"])
-
-    # Reconstruct layer features keyed by layer name
-    matrix_layers = reconstruct_matrix_layers(raw.get("matrix_layers", []))
-    layer_lookup = {ml.name: ml for ml in matrix_layers}
-    for key, value in raw.items():
-        if key.startswith("layer_features:"):
-            layer_name = key[len("layer_features:"):]
-            ml = layer_lookup.get(layer_name)
-            if ml:
-                result["layers_data"][layer_name] = (
-                    reconstruct_layer_features(value), ml
-                )
-
-    if "font" in raw:
-        result["font"] = reconstruct_font(raw["font"])
-    if "symbols" in raw:
-        result["user_symbols"] = reconstruct_user_symbols(raw["symbols"])
-
-    if "job_info" in raw:
-        ji = raw["job_info"]
-        result["job_info"] = JobInfo(
-            job_name=ji.get("job_name", ""),
-            odb_version_major=ji.get("odb_version_major", 0),
-            odb_version_minor=ji.get("odb_version_minor", 0),
-            odb_source=ji.get("odb_source", ""),
-            creation_date=ji.get("creation_date", ""),
-            save_date=ji.get("save_date", ""),
-            save_app=ji.get("save_app", ""),
-            save_user=ji.get("save_user", ""),
-            units=ji.get("units", "INCH"),
-            max_uid=ji.get("max_uid", 0),
-        )
-
-    return result
+    return data_service.load_job(cache_dir, cache_name)
 
 
 def cmd_view(args):
@@ -888,60 +427,17 @@ def cmd_view_net(args):
 
 
 def cmd_check(args):
-    """Run the automated checklist."""
-    # Import rules to trigger registration
-    import src.checklist.rules.ckl_01_001  # noqa: F401
-    import src.checklist.rules.ckl_01_002  # noqa: F401
-    import src.checklist.rules.ckl_01_003  # noqa: F401
-    import src.checklist.rules.ckl_01_004  # noqa: F401
-    import src.checklist.rules.ckl_01_005  # noqa: F401
-    import src.checklist.rules.ckl_01_006  # noqa: F401
-    import src.checklist.rules.ckl_01_007  # noqa: F401
-    import src.checklist.rules.ckl_01_008  # noqa: F401
-    import src.checklist.rules.ckl_01_009  # noqa: F401
-    import src.checklist.rules.ckl_01_010  # noqa: F401
-    import src.checklist.rules.ckl_02_001  # noqa: F401
-    import src.checklist.rules.ckl_02_002  # noqa: F401
-    import src.checklist.rules.ckl_02_003  # noqa: F401
-    import src.checklist.rules.ckl_02_004  # noqa: F401
-    import src.checklist.rules.ckl_02_005  # noqa: F401
-    import src.checklist.rules.ckl_02_006  # noqa: F401
-    import src.checklist.rules.ckl_02_007  # noqa: F401
-    import src.checklist.rules.ckl_02_008  # noqa: F401
-    import src.checklist.rules.ckl_02_009  # noqa: F401
-    import src.checklist.rules.ckl_02_010  # noqa: F401
-    import src.checklist.rules.ckl_02_011  # noqa: F401
-    import src.checklist.rules.ckl_02_012  # noqa: F401
-    import src.checklist.rules.ckl_03_001  # noqa: F401
-    import src.checklist.rules.ckl_03_002  # noqa: F401
-    import src.checklist.rules.ckl_03_003  # noqa: F401
-    import src.checklist.rules.ckl_03_004  # noqa: F401
-    import src.checklist.rules.ckl_03_011  # noqa: F401
-    import src.checklist.rules.ckl_03_005  # noqa: F401
-    import src.checklist.rules.ckl_03_012  # noqa: F401
-    import src.checklist.rules.ckl_03_013  # noqa: F401
-    import src.checklist.rules.ckl_03_015  # noqa: F401
-    import src.checklist.rules.ckl_03_016  # noqa: F401
-    import src.checklist.rules.ckl_03_006  # noqa: F401
-    import src.checklist.rules.ckl_03_007  # noqa: F401
-    import src.checklist.rules.ckl_03_008  # noqa: F401
-    import src.checklist.rules.ckl_03_009  # noqa: F401
-    import src.checklist.rules.ckl_03_014  # noqa: F401
-
-    from src.checklist.engine import load_rules, run_checklist
-    from src.checklist.reporter import generate_report
+    """Run the automated checklist (delegates to checklist_service)."""
+    from src.services import checklist_service
 
     cache_dir = Path(getattr(args, "cache_dir", None) or "cache")
     cache_name = _ensure_cache(args.odb_path, cache_dir)
     job_data = _load_from_cache(cache_dir, cache_name)
 
-    # Load rules
+    # Discover + run rules (rules are auto-discovered; no manual import list).
     rule_ids = args.rules if args.rules else None
-    rules = load_rules(rule_ids)
-    print(f"\nRunning {len(rules)} checklist rule(s)...")
-
-    # Run checklist
-    results = run_checklist(job_data, rules)
+    results = checklist_service.evaluate(job_data, rule_ids)
+    print(f"\nRunning {len(results)} checklist rule(s)...")
 
     # Print results
     print(f"\n{'='*60}")
@@ -964,43 +460,26 @@ def cmd_check(args):
 
     print(f"\nSummary: {passed} passed, {failed} failed out of {len(results)} rules")
 
-    # Generate report(s)
-    from src.checklist.html_reporter import generate_html_report
-    from src.checklist.reporter import _cleanup_images
-
-    formats = set(args.format)
+    # Generate HTML report (Excel reporting retired)
     odb_filename = Path(args.odb_path).name
     job_info = job_data.get("job_info")
     job_name = job_info.job_name if job_info else cache_name
     references_dir = Path(__file__).parent / "references"
 
     if args.output:
-        user_path = Path(args.output)
-        excel_path = user_path.with_suffix(".xlsx")
-        html_path = user_path.with_suffix(".html")
+        html_path = Path(args.output).with_suffix(".html")
     else:
-        default_stem = f"output/[CKL_report]{odb_filename}"
-        excel_path = Path(f"{default_stem}.xlsx")
-        html_path = Path(f"{default_stem}.html")
+        html_path = Path(f"output/[CKL_report]{odb_filename}.html")
 
-    report_kwargs = dict(
+    checklist_service.write_report(
+        results,
+        html_path=html_path,
+        odb_filename=odb_filename,
         job_name=job_name,
         components_top=job_data.get("components_top", []),
         components_bot=job_data.get("components_bot", []),
         references_dir=references_dir,
     )
-
-    # HTML first (needs image files on disk for base64 encoding)
-    if "html" in formats:
-        generate_html_report(results, html_path, odb_filename=odb_filename,
-                             **report_kwargs)
-
-    # Excel (cleans up temp images internally)
-    if "excel" in formats:
-        generate_report(results, excel_path, **report_kwargs)
-    else:
-        # No Excel pass — clean up temp images explicitly
-        _cleanup_images(results)
 
 
 def cmd_copper_ratio(args):
@@ -1097,13 +576,8 @@ def cmd_copper_calculate(args):
 
 
 def cmd_compare(args):
-    """Compare two ODB++ revisions and generate a diff report."""
-    # Import comparators to trigger registration
-    import src.comparator.comparators.component_diff   # noqa: F401
-    import src.comparator.comparators.checklist_diff    # noqa: F401
-
-    from src.comparator.engine import run_comparison
-    from src.comparator.reporter import generate_comparison_report
+    """Compare two ODB++ revisions and generate a diff report (delegates to compare_service)."""
+    from src.services import compare_service
 
     cache_dir = Path(getattr(args, "cache_dir", None) or "cache")
 
@@ -1118,9 +592,9 @@ def cmd_compare(args):
     print(f"Loading new revision: {new_cache_name}")
     new_data = _load_from_cache(cache_dir, new_cache_name)
 
-    # Run all comparators
+    # Run all comparators (auto-discovered; no manual import list).
     print(f"\nRunning revision comparison...")
-    results = run_comparison(old_data, new_data)
+    results = compare_service.compare(old_data, new_data)
 
     # Print console summary
     print(f"\n{'='*60}")
@@ -1129,20 +603,19 @@ def cmd_compare(args):
     for r in results:
         print(f"  [{r.comparator_id}] {r.title}: {r.summary}")
 
-    # Generate report
+    # Generate HTML report (Excel reporting retired)
     old_name = Path(args.odb_path_old).stem
     new_name = Path(args.odb_path_new).stem
-    default_output = Path(f"output/[CMP_report]{old_name}_vs_{new_name}.xlsx")
-    output_path = Path(args.output) if args.output else default_output
-
-    # Use file names (not step names) for revision identification
-    old_filename = Path(args.odb_path_old).name
-    new_filename = Path(args.odb_path_new).name
-    generate_comparison_report(
-        results, output_path,
-        old_job_name=old_filename,
-        new_job_name=new_filename,
+    if args.output:
+        html_path = Path(args.output).with_suffix(".html")
+    else:
+        html_path = Path(f"output/[CMP_report]{old_name}_vs_{new_name}.html")
+    compare_service.write_html_report(
+        results, html_path,
+        old_job_name=Path(args.odb_path_old).name,
+        new_job_name=Path(args.odb_path_new).name,
     )
+    print(f"\nHTML report saved to: {html_path}")
 
 
 def main():
@@ -1182,10 +655,7 @@ def main():
     p_check = subparsers.add_parser("check", help="Run design checklist")
     p_check.add_argument("odb_path", help="Path to ODB++ archive or directory")
     p_check.add_argument("--rules", nargs="*", help="Rule IDs to run (default: all)")
-    p_check.add_argument("--output", help="Output report path")
-    p_check.add_argument("--format", nargs="+", default=["excel"],
-                         choices=["excel", "html"],
-                         help="Output format(s): excel, html, or both (default: excel)")
+    p_check.add_argument("--output", help="Output HTML report path")
     p_check.add_argument("--cache-dir", default="cache", help="Cache directory")
 
     # copper command
@@ -1206,7 +676,7 @@ def main():
     p_compare = subparsers.add_parser("compare", help="Compare two ODB++ revisions")
     p_compare.add_argument("odb_path_old", help="Path to old revision ODB++ archive")
     p_compare.add_argument("odb_path_new", help="Path to new revision ODB++ archive")
-    p_compare.add_argument("--output", help="Output Excel path")
+    p_compare.add_argument("--output", help="Output report path (reserved; HTML report pending)")
     p_compare.add_argument("--cache-dir", default="cache", help="Cache directory")
 
     args = parser.parse_args()

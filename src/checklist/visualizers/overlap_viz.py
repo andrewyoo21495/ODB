@@ -210,7 +210,7 @@ def render_overlap_image(
             geoms = list(wall.geoms) if hasattr(wall, "geoms") else [wall]
             for g in geoms:
                 lbl = "Inner wall pad" if first else None
-                if hasattr(g, "exterior"):
+                if g.geom_type == "Polygon":
                     xs, ys = g.exterior.xy
                     ax.fill(xs, ys, color="#FF6600", alpha=0.65, zorder=5,
                             label=lbl)

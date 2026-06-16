@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import importlib
+import pkgutil
+
 from src.comparator.base import ComparatorBase, ComparisonResult
 
 
 # Comparator registry
 _REGISTERED_COMPARATORS: list[type[ComparatorBase]] = []
+_COMPARATORS_DISCOVERED = False
 
 
 def register_comparator(cls: type[ComparatorBase]) -> type[ComparatorBase]:
@@ -18,6 +22,20 @@ def register_comparator(cls: type[ComparatorBase]) -> type[ComparatorBase]:
 def get_registered_comparators() -> list[type[ComparatorBase]]:
     """Get all registered comparator classes."""
     return list(_REGISTERED_COMPARATORS)
+
+
+def discover_comparators() -> list[type[ComparatorBase]]:
+    """Import every module in ``src.comparator.comparators`` so that their
+    ``@register_comparator`` decorators run.  Idempotent.  Returns the
+    registered comparator classes.
+    """
+    global _COMPARATORS_DISCOVERED
+    if not _COMPARATORS_DISCOVERED:
+        import src.comparator.comparators as pkg
+        for name in sorted(m.name for m in pkgutil.iter_modules(pkg.__path__)):
+            importlib.import_module(f"{pkg.__name__}.{name}")
+        _COMPARATORS_DISCOVERED = True
+    return get_registered_comparators()
 
 
 def run_comparison(old_data: dict, new_data: dict,

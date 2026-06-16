@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import importlib
+import pkgutil
+
 from src.checklist.rule_base import ChecklistRule
 from src.models import RuleResult
 
 
 # Rule registry
 _REGISTERED_RULES: list[type[ChecklistRule]] = []
+_RULES_DISCOVERED = False
 
 
 def register_rule(rule_cls: type[ChecklistRule]) -> type[ChecklistRule]:
@@ -19,6 +23,24 @@ def register_rule(rule_cls: type[ChecklistRule]) -> type[ChecklistRule]:
 def get_registered_rules() -> list[type[ChecklistRule]]:
     """Get all registered rule classes."""
     return list(_REGISTERED_RULES)
+
+
+def discover_rules() -> list[type[ChecklistRule]]:
+    """Import every ``ckl_*`` module in ``src.checklist.rules`` so that their
+    ``@register_rule`` decorators run.
+
+    Replaces the previous manual import list in ``main.py``: adding a new rule
+    file no longer requires touching any import statement.  Idempotent — repeat
+    calls are cheap no-ops.  Returns the registered rule classes.
+    """
+    global _RULES_DISCOVERED
+    if not _RULES_DISCOVERED:
+        import src.checklist.rules as rules_pkg
+        for name in sorted(m.name for m in pkgutil.iter_modules(rules_pkg.__path__)):
+            if name.startswith("ckl_"):
+                importlib.import_module(f"{rules_pkg.__name__}.{name}")
+        _RULES_DISCOVERED = True
+    return get_registered_rules()
 
 
 def run_checklist(job_data: dict,

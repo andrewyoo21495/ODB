@@ -13,47 +13,13 @@ from src.comparator.engine import register_comparator
 
 
 def _import_all_rules():
-    """Import all checklist rule modules to trigger @register_rule.
+    """Register all checklist rules via the engine's auto-discovery.
 
-    This mirrors the import block in cmd_check() in main.py.
+    (Previously a manual 37-line import block; now delegates to
+    ``discover_rules`` so new rule files are picked up automatically.)
     """
-    import src.checklist.rules.ckl_01_001  # noqa: F401
-    import src.checklist.rules.ckl_01_002  # noqa: F401
-    import src.checklist.rules.ckl_01_003  # noqa: F401
-    import src.checklist.rules.ckl_01_004  # noqa: F401
-    import src.checklist.rules.ckl_01_005  # noqa: F401
-    import src.checklist.rules.ckl_01_006  # noqa: F401
-    import src.checklist.rules.ckl_01_007  # noqa: F401
-    import src.checklist.rules.ckl_01_008  # noqa: F401
-    import src.checklist.rules.ckl_01_009  # noqa: F401
-    import src.checklist.rules.ckl_01_010  # noqa: F401
-    import src.checklist.rules.ckl_02_001  # noqa: F401
-    import src.checklist.rules.ckl_02_002  # noqa: F401
-    import src.checklist.rules.ckl_02_003  # noqa: F401
-    import src.checklist.rules.ckl_02_004  # noqa: F401
-    import src.checklist.rules.ckl_02_005  # noqa: F401
-    import src.checklist.rules.ckl_02_006  # noqa: F401
-    import src.checklist.rules.ckl_02_007  # noqa: F401
-    import src.checklist.rules.ckl_02_008  # noqa: F401
-    import src.checklist.rules.ckl_02_009  # noqa: F401
-    import src.checklist.rules.ckl_02_010  # noqa: F401
-    import src.checklist.rules.ckl_02_011  # noqa: F401
-    import src.checklist.rules.ckl_02_012  # noqa: F401
-    import src.checklist.rules.ckl_03_001  # noqa: F401
-    import src.checklist.rules.ckl_03_002  # noqa: F401
-    import src.checklist.rules.ckl_03_003  # noqa: F401
-    import src.checklist.rules.ckl_03_004  # noqa: F401
-    import src.checklist.rules.ckl_03_011  # noqa: F401
-    import src.checklist.rules.ckl_03_005  # noqa: F401
-    import src.checklist.rules.ckl_03_012  # noqa: F401
-    import src.checklist.rules.ckl_03_013  # noqa: F401
-    import src.checklist.rules.ckl_03_015  # noqa: F401
-    import src.checklist.rules.ckl_03_016  # noqa: F401
-    import src.checklist.rules.ckl_03_006  # noqa: F401
-    import src.checklist.rules.ckl_03_007  # noqa: F401
-    import src.checklist.rules.ckl_03_008  # noqa: F401
-    import src.checklist.rules.ckl_03_009  # noqa: F401
-    import src.checklist.rules.ckl_03_014  # noqa: F401
+    from src.checklist.engine import discover_rules
+    discover_rules()
 
 
 def _rule_sort_key(rule_id: str) -> tuple:

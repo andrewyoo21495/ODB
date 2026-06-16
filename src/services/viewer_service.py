@@ -1,0 +1,287 @@
+"""Viewer service: serialize layer geometry to JSON for the interactive viewer.
+
+The web viewer is client-rendered (HTML5 Canvas): the backend computes a
+layer's copper geometry once (reusing :mod:`copper_vector`), serializes it to
+coordinate rings, and the frontend handles pan/zoom locally.
+
+No matplotlib needed here — geometry comes from shapely polygons.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Callable
+
+from src.services import data_service
+
+LogFn = Callable[[str], None]
+
+_UNSAFE = '/\\:[]*?'
+
+
+def safe_name(layer_name: str) -> str:
+    out = layer_name
+    for ch in _UNSAFE:
+        out = out.replace(ch, "_")
+    return out
+
+
+# Geometry simplification tolerance (mm).  ~2µm — negligible at board scale but
+# trims vertex counts to shrink the JSON payload.  Set 0 to disable.
+SIMPLIFY_TOL = 0.002
+
+
+def _simplify(geom):
+    if geom is None or geom.is_empty or SIMPLIFY_TOL <= 0:
+        return geom
+    try:
+        return geom.simplify(SIMPLIFY_TOL, preserve_topology=True)
+    except Exception:
+        return geom
+
+
+def list_layers(cache_dir: str | Path, cache_name: str) -> list[dict]:
+    """Return ``[{name, type}]`` for layers that have features (dropdown source).
+
+    Reads the raw cache directly (no full feature reconstruction) for speed.
+    """
+    from src.cache_manager import load_cache, reconstruct_matrix_layers
+
+    raw = load_cache(Path(cache_dir), cache_name)
+    mls = {ml.name: ml for ml in reconstruct_matrix_layers(raw.get("matrix_layers", []))}
+    names = [k[len("layer_features:"):] for k in raw if k.startswith("layer_features:")]
+    names.sort(key=lambda n: mls[n].row if n in mls else 999)
+    return [{"name": n, "type": (mls[n].type if n in mls else "")} for n in names]
+
+
+def _ring(coords) -> list[list[float]]:
+    return [[round(float(x), 4), round(float(y), 4)] for x, y in coords]
+
+
+def _poly_to_obj(poly) -> dict:
+    return {
+        "exterior": _ring(poly.exterior.coords),
+        "holes": [_ring(r.coords) for r in poly.interiors],
+    }
+
+
+def _geom_to_polys(geom) -> list[dict]:
+    if geom is None or geom.is_empty:
+        return []
+    gt = geom.geom_type
+    if gt == "Polygon":
+        return [_poly_to_obj(geom)]
+    if gt == "MultiPolygon":
+        return [_poly_to_obj(p) for p in geom.geoms]
+    if gt == "GeometryCollection":
+        # May mix polygons with stray lines/points (from difference ops);
+        # keep only the polygonal parts.
+        out: list[dict] = []
+        for g in geom.geoms:
+            out.extend(_geom_to_polys(g))
+        return out
+    return []  # LineString / Point / etc. — not renderable as fill
+
+
+_CATEGORY_COLOR = {
+    "IC": "#1677ff",
+    "Capacitor": "#52c41a",
+    "Inductor": "#fa8c16",
+    "Connector": "#722ed1",
+    "SIM_Socket": "#13c2c2",
+    "INP": "#eb2f96",
+    "Unknown": "#8c8c8c",
+}
+
+
+def _profile_rings_and_bounds(profile):
+    """Return (profile_rings, profile_bounds | None)."""
+    from src.visualizer import copper_vector
+    ppoly = copper_vector._profile_to_poly(profile) if profile else None
+    rings = _geom_to_polys(ppoly)
+    bounds = list(ppoly.bounds) if (ppoly is not None and not ppoly.is_empty) else None
+    return rings, bounds
+
+
+def list_nets(cache_dir: str | Path, cache_name: str, layer_name: str) -> list[str]:
+    """Net names that have features on the given (signal) layer."""
+    from src.visualizer import net_filter
+    data = data_service.load_job(cache_dir, cache_name, log=lambda m: None)
+    layers_data = data.get("layers_data", {})
+    eda = data.get("eda_data")
+    if not eda or layer_name not in layers_data:
+        return []
+    index = net_filter.build_net_feature_index(eda, layers_data)
+    return net_filter.get_nets_for_layer(layer_name, index)
+
+
+def build_net_geometry(cache_dir: str | Path, cache_name: str, layer_name: str,
+                       net_name: str, out_path: Path, *,
+                       log: LogFn | None = None) -> dict:
+    """Geometry of a single net's features on one layer (filtered copper)."""
+    _log = log if log is not None else (lambda m: None)
+    from src.visualizer import copper_vector, net_filter
+
+    data = data_service.load_job(cache_dir, cache_name, log=lambda m: None)
+    layers_data = data.get("layers_data", {})
+    if layer_name not in layers_data:
+        raise KeyError(f"layer not found: {layer_name}")
+    features, ml = layers_data[layer_name]
+    user_symbols = data.get("user_symbols", {})
+
+    index = net_filter.build_net_feature_index(data.get("eda_data"), layers_data)
+    allowed = index.get(net_name, {}).get(layer_name, set())
+    _log(f"net {net_name} on {layer_name}: {len(allowed)} features")
+    filtered = net_filter.filter_layer_features(features, allowed)
+    geom = _simplify(copper_vector._build_copper_geometry(filtered, user_symbols))
+    polygons = _geom_to_polys(geom)
+
+    profile_rings, pbounds = _profile_rings_and_bounds(data.get("profile"))
+    bounds = (list(geom.bounds) if geom is not None and not geom.is_empty
+              else (pbounds or [0.0, 0.0, 1.0, 1.0]))
+
+    out = {"layer": layer_name, "type": ml.type, "net": net_name, "bounds": bounds,
+           "profile": profile_rings, "polygons": polygons}
+    Path(out_path).write_text(json.dumps(out), encoding="utf-8")
+    return {"layer": layer_name, "net": net_name, "bounds": bounds,
+            "n_polys": len(polygons), "geometry": Path(out_path).name}
+
+
+def _outline_ring(outline, comp, is_bottom: bool):
+    """Vertices of a package outline in board coordinates, or None."""
+    import numpy as np
+    from src.visualizer.component_overlay import transform_pts
+
+    p = outline.params or {}
+    t = outline.type
+    if t in ("CR", "CT"):
+        xc, yc, r = p.get("xc", 0.0), p.get("yc", 0.0), p.get("radius", 0.0)
+        if r <= 0:
+            return None
+        ang = np.linspace(0, 2 * np.pi, 48, endpoint=False)
+        pts = np.column_stack([xc + r * np.cos(ang), yc + r * np.sin(ang)])
+    elif t == "RC":
+        llx, lly = p.get("llx", 0.0), p.get("lly", 0.0)
+        w, h = p.get("width", 0.0), p.get("height", 0.0)
+        if w <= 0 or h <= 0:
+            return None
+        pts = np.array([[llx, lly], [llx + w, lly], [llx + w, lly + h], [llx, lly + h]])
+    elif t == "SQ":
+        xc, yc, hs = p.get("xc", 0.0), p.get("yc", 0.0), p.get("half_side", 0.0)
+        if hs <= 0:
+            return None
+        pts = np.array([[xc - hs, yc - hs], [xc + hs, yc - hs],
+                        [xc + hs, yc + hs], [xc - hs, yc + hs]])
+    elif t == "CONTOUR" and outline.contour is not None:
+        from src.visualizer.symbol_renderer import contour_to_vertices
+        verts = contour_to_vertices(outline.contour)
+        if len(verts) < 3:
+            return None
+        pts = np.asarray(verts)
+    else:
+        return None
+
+    board = transform_pts(pts, comp, is_bottom=is_bottom)
+    return [[round(float(x), 4), round(float(y), 4)] for x, y in board]
+
+
+def build_component_geometry(cache_dir: str | Path, cache_name: str, side: str,
+                             out_path: Path, *, log: LogFn | None = None) -> dict:
+    """Component bodies (package outlines, colored by category) + pin points
+    for one side, flattened into the common geometry shape."""
+    _log = log if log is not None else (lambda m: None)
+    from src.checklist.component_classifier import classify_component
+
+    data = data_service.load_job(cache_dir, cache_name, log=lambda m: None)
+    comps = data.get("components_top" if side == "top" else "components_bot", [])
+    eda = data.get("eda_data")
+    packages = eda.packages if eda else []
+    pkg_lookup = {i: pkg for i, pkg in enumerate(packages)}
+    is_bottom = side == "bottom"
+
+    polygons: list[dict] = []
+    points: list[list[float]] = []
+    for comp in comps:
+        category = classify_component(comp).value
+        color = _CATEGORY_COLOR.get(category, "#8c8c8c")
+        meta = {"refdes": comp.comp_name or "", "part": comp.part_name or "",
+                "category": category}
+        pkg = pkg_lookup.get(comp.pkg_ref)
+        if pkg and getattr(pkg, "outlines", None):
+            for outline in pkg.outlines:
+                ring = _outline_ring(outline, comp, is_bottom)
+                if ring:
+                    polygons.append({"exterior": ring, "holes": [],
+                                     "color": color, "meta": meta})
+        for tp in comp.toeprints:
+            points.append([round(float(tp.x), 4), round(float(tp.y), 4)])
+
+    _log(f"{side}: {len(comps)} components, {len(polygons)} outlines, {len(points)} pins")
+
+    profile_rings, pbounds = _profile_rings_and_bounds(data.get("profile"))
+    if pbounds:
+        bounds = pbounds
+    elif points:
+        xs = [p[0] for p in points]
+        ys = [p[1] for p in points]
+        bounds = [min(xs), min(ys), max(xs), max(ys)]
+    else:
+        bounds = [0.0, 0.0, 1.0, 1.0]
+
+    out = {"side": side, "bounds": bounds, "profile": profile_rings,
+           "polygons": polygons, "points": points}
+    Path(out_path).write_text(json.dumps(out), encoding="utf-8")
+    return {"side": side, "count": len(comps), "n_polys": len(polygons),
+            "bounds": bounds, "geometry": Path(out_path).name}
+
+
+def build_layer_geometry(cache_dir: str | Path, cache_name: str, layer_name: str,
+                         out_path: Path, *, log: LogFn | None = None) -> dict:
+    """Compute one layer's copper geometry, write it as JSON, return a summary.
+
+    JSON shape: ``{layer, type, bounds:[minx,miny,maxx,maxy], profile:[ring..],
+    polygons:[{exterior, holes}..]}``.
+    """
+    _log = log if log is not None else (lambda m: None)
+    from src.visualizer import copper_vector
+
+    data = data_service.load_job(cache_dir, cache_name, log=lambda m: None)
+    layers_data = data.get("layers_data", {})
+    if layer_name not in layers_data:
+        raise KeyError(f"layer not found: {layer_name}")
+
+    features, ml = layers_data[layer_name]
+    user_symbols = data.get("user_symbols", {})
+
+    _log(f"building geometry for {layer_name} ({len(features.features)} features)")
+    geom = _simplify(copper_vector._build_copper_geometry(features, user_symbols))
+    polygons = _geom_to_polys(geom)
+
+    profile = data.get("profile")
+    ppoly = copper_vector._profile_to_poly(profile) if profile else None
+    profile_rings = _geom_to_polys(ppoly)
+
+    if geom is not None and not geom.is_empty:
+        bounds = list(geom.bounds)
+    elif ppoly is not None and not ppoly.is_empty:
+        bounds = list(ppoly.bounds)
+    else:
+        bounds = [0.0, 0.0, 1.0, 1.0]
+
+    out = {
+        "layer": layer_name,
+        "type": ml.type,
+        "bounds": bounds,
+        "profile": profile_rings,
+        "polygons": polygons,
+    }
+    Path(out_path).write_text(json.dumps(out), encoding="utf-8")
+
+    return {
+        "layer": layer_name,
+        "type": ml.type,
+        "bounds": bounds,
+        "n_polys": len(polygons),
+        "geometry": Path(out_path).name,
+    }
