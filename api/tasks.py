@@ -23,6 +23,9 @@ class Task:
     message: str = ""
     result: dict[str, Any] = field(default_factory=dict)
     error: str | None = None
+    # Free-form context (e.g. filename + user metadata for an in-progress upload),
+    # so the dashboard can render an "uploading" row without a persisted meta yet.
+    info: dict[str, Any] = field(default_factory=dict)
 
 
 class TaskRegistry:
@@ -32,8 +35,10 @@ class TaskRegistry:
         self._tasks: dict[str, Task] = {}
         self._lock = threading.Lock()
 
-    def create(self, kind: str, job_id: str | None = None) -> Task:
-        task = Task(id=uuid.uuid4().hex[:16], kind=kind, job_id=job_id)
+    def create(self, kind: str, job_id: str | None = None,
+               info: dict[str, Any] | None = None) -> Task:
+        task = Task(id=uuid.uuid4().hex[:16], kind=kind, job_id=job_id,
+                    info=info or {})
         with self._lock:
             self._tasks[task.id] = task
         return task
@@ -56,6 +61,16 @@ class TaskRegistry:
             matches = [t for t in self._tasks.values()
                        if t.job_id == job_id and t.kind == kind]
         return matches[-1] if matches else None
+
+    def active(self, kind: str) -> list[Task]:
+        """Tasks of *kind* still in progress (queued or running).
+
+        Backs the dashboard's "in-progress uploads" list — survives page
+        navigation/refresh (server-side) but not a restart (in-memory), so a
+        crashed build never leaves a stuck row."""
+        with self._lock:
+            return [t for t in self._tasks.values()
+                    if t.kind == kind and t.status in ("queued", "running")]
 
 
 # Process-wide singleton.

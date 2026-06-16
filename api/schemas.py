@@ -14,11 +14,44 @@ class JobOut(BaseModel):
     job_id: str
     original_filename: str = ""
     job_name: str = ""
+    project: str = ""          # 과제 (user-entered)
+    board_type: str = ""       # 타입 (user-entered: Main/Secondary/Sub/...)
+    revision: str = ""         # 리비전 (user-entered)
     units: str = ""
     odb_version: str = ""
     data_type: str = ""
     uploaded_by: str = ""
     uploaded_at: str = ""
+
+
+class JobMetaUpdate(BaseModel):
+    """User-editable job metadata. Omitted (None) fields are left unchanged;
+    an empty string clears the field."""
+    project: str | None = None
+    board_type: str | None = None
+    revision: str | None = None
+
+
+class MetaOptions(BaseModel):
+    """Previously-used values per field, for input-history autocomplete."""
+    projects: list[str] = []
+    board_types: list[str] = []
+    revisions: list[str] = []
+
+
+class ActiveJob(BaseModel):
+    """An upload whose cache is still building (in-progress dashboard row).
+
+    Served from the in-memory task registry so it survives page navigation but
+    not a server restart (a crashed build never leaves a stuck row)."""
+    job_id: str
+    original_filename: str = ""
+    project: str = ""
+    board_type: str = ""
+    revision: str = ""
+    uploaded_by: str = ""
+    progress: float = 0.0
+    message: str = ""
 
 
 class JobStatus(BaseModel):

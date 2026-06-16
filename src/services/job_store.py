@@ -49,6 +49,12 @@ _LOCK_DIR = ".lock"
 # is single-process; tasks run in a threadpool).
 _RESULTS_LOCK = threading.Lock()
 
+# Serialises read-modify-write of meta.json (user-editable fields).
+_META_LOCK = threading.Lock()
+
+# User-entered metadata fields (not derived from parsing) — editable via the UI.
+EDITABLE_META = ("project", "board_type", "revision")
+
 _JOB_ID_LEN = 16
 
 
@@ -134,12 +140,18 @@ def _build_lock(jdir: Path, *, timeout: float = 600.0, poll: float = 0.2):
 
 def _write_meta(jdir: Path, *, job_id: str, original_filename: str,
                 source_sha256: str, data: dict | None,
-                uploaded_by: str = "anonymous") -> dict:
+                uploaded_by: str = "anonymous",
+                meta_fields: dict | None = None) -> dict:
     job_info = data.get("job_info") if data else None
+    mf = meta_fields or {}
     meta = {
         "job_id": job_id,
         "original_filename": original_filename,
         "job_name": getattr(job_info, "job_name", "") if job_info else "",
+        # User-entered metadata (manually editable, used for filtering).
+        "project": str(mf.get("project", "") or ""),
+        "board_type": str(mf.get("board_type", "") or ""),
+        "revision": str(mf.get("revision", "") or ""),
         "units": getattr(job_info, "units", "") if job_info else "",
         "odb_version": (
             f"{job_info.odb_version_major}.{job_info.odb_version_minor}"
@@ -161,6 +173,7 @@ def _write_meta(jdir: Path, *, job_id: str, original_filename: str,
 # --------------------------------------------------------------------------- #
 def create_job(source: str | Path, *, original_filename: str | None = None,
                uploaded_by: str = "anonymous",
+               meta_fields: dict | None = None,
                workspace_root: str | Path = DEFAULT_WORKSPACE_ROOT,
                log: LogFn | None = None,
                progress: data_service.ProgressFn | None = None) -> str:
@@ -169,6 +182,9 @@ def create_job(source: str | Path, *, original_filename: str | None = None,
     Args:
         source: path to the ODB++ ``.tgz`` archive.
         original_filename: name to remember for display (defaults to source name).
+        meta_fields: optional user-entered metadata (``project``/``board_type``/
+            ``revision``) to seed or refresh.  Empty values are ignored so a
+            re-upload without input never clobbers existing values.
         workspace_root: workspace root directory.
         log: optional progress callback forwarded to the cache builder.
         progress: optional ``(fraction, message)`` callback for a UI progress bar.
@@ -189,6 +205,7 @@ def create_job(source: str | Path, *, original_filename: str | None = None,
     if not stored_source.exists():
         shutil.copy2(source, stored_source)
 
+    newly_written = False
     if not _cache_present(job_id, workspace_root=workspace_root):
         with _build_lock(jdir):
             # Re-check inside the lock in case another worker just built it.
@@ -201,14 +218,24 @@ def create_job(source: str | Path, *, original_filename: str | None = None,
                 _write_meta(jdir, job_id=job_id,
                             original_filename=original_filename or source.name,
                             source_sha256=source_sha256, data=data,
-                            uploaded_by=uploaded_by)
+                            uploaded_by=uploaded_by, meta_fields=meta_fields)
+                newly_written = True
 
     # Ensure meta exists even for a pre-existing cache without one.
     if not (jdir / _META_FILE).exists():
         _write_meta(jdir, job_id=job_id,
                     original_filename=original_filename or source.name,
                     source_sha256=source_sha256, data=None,
-                    uploaded_by=uploaded_by)
+                    uploaded_by=uploaded_by, meta_fields=meta_fields)
+        newly_written = True
+
+    # Re-upload of an already-ingested archive: refresh user metadata in place
+    # (only non-empty fields, so a blank re-upload preserves prior values).
+    if meta_fields and not newly_written:
+        provided = {k: v for k in EDITABLE_META
+                    if (v := str(meta_fields.get(k, "") or "").strip())}
+        if provided:
+            update_meta(job_id, provided, workspace_root=workspace_root)
 
     return job_id
 
@@ -228,6 +255,40 @@ def get_meta(job_id: str, *, workspace_root: str | Path = DEFAULT_WORKSPACE_ROOT
     if not p.exists():
         raise FileNotFoundError(f"No meta.json for job_id={job_id}")
     return json.loads(p.read_text(encoding="utf-8"))
+
+
+def update_meta(job_id: str, fields: dict, *,
+                workspace_root: str | Path = DEFAULT_WORKSPACE_ROOT) -> dict:
+    """Update a job's user-editable metadata fields (project/board_type/revision).
+
+    Only keys in :data:`EDITABLE_META` are applied; others are ignored.  Empty
+    strings are allowed (they clear a field).  Returns the updated meta dict."""
+    p = job_dir(job_id, workspace_root=workspace_root) / _META_FILE
+    if not p.exists():
+        raise FileNotFoundError(f"No meta.json for job_id={job_id}")
+    with _META_LOCK:
+        meta = json.loads(p.read_text(encoding="utf-8"))
+        for key in EDITABLE_META:
+            if key in fields:
+                meta[key] = str(fields[key] or "")
+        p.write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
+    return meta
+
+
+def meta_options(*, workspace_root: str | Path = DEFAULT_WORKSPACE_ROOT) -> dict:
+    """Distinct existing values for each editable field (for input history).
+
+    Powers the dashboard's "pick from previously-used values" autocomplete."""
+    jobs = list_jobs(workspace_root=workspace_root)
+
+    def distinct(key: str) -> list[str]:
+        return sorted({(j.get(key) or "").strip() for j in jobs} - {""})
+
+    return {
+        "projects": distinct("project"),
+        "board_types": distinct("board_type"),
+        "revisions": distinct("revision"),
+    }
 
 
 # --------------------------------------------------------------------------- #

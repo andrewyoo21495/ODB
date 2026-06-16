@@ -1,6 +1,6 @@
 // Thin fetch wrapper over the FastAPI backend (proxied at /api in dev).
 
-import type { ActivityOut, ComponentInfo, JobOut, JobStatus, LayerGeometry, LayerInfo, ResultOut, RuleInfo, TaskOut } from "../types";
+import type { ActiveJob, ActivityOut, ComponentInfo, JobMeta, JobOut, JobStatus, LayerGeometry, LayerInfo, MetaOptions, ResultOut, RuleInfo, TaskOut } from "../types";
 
 const BASE = "/api";
 
@@ -33,16 +33,33 @@ async function jsonPost<T>(url: string, body?: unknown): Promise<T> {
   return r.json() as Promise<T>;
 }
 
+async function jsonPatch<T>(url: string, body: unknown): Promise<T> {
+  const r = await fetch(BASE + url, {
+    method: "PATCH",
+    headers: userHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+  return r.json() as Promise<T>;
+}
+
 export const api = {
-  uploadJob: async (file: File): Promise<JobStatus> => {
+  uploadJob: async (file: File, meta?: Partial<JobMeta>): Promise<JobStatus> => {
     const fd = new FormData();
     fd.append("file", file);
+    if (meta?.project) fd.append("project", meta.project);
+    if (meta?.board_type) fd.append("board_type", meta.board_type);
+    if (meta?.revision) fd.append("revision", meta.revision);
     const r = await fetch(BASE + "/jobs", { method: "POST", body: fd, headers: userHeaders() });
     if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
     return r.json() as Promise<JobStatus>;
   },
   listJobs: () => jsonGet<JobOut[]>("/jobs"),
+  getActiveJobs: () => jsonGet<ActiveJob[]>("/jobs/active"),
   getJob: (id: string) => jsonGet<JobOut>(`/jobs/${id}`),
+  getMetaOptions: () => jsonGet<MetaOptions>("/jobs/meta/options"),
+  updateJobMeta: (id: string, fields: JobMeta) =>
+    jsonPatch<JobOut>(`/jobs/${id}/meta`, fields),
   deleteJob: async (id: string): Promise<void> => {
     const r = await fetch(`${BASE}/jobs/${id}`, { method: "DELETE", headers: userHeaders() });
     if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);

@@ -5,11 +5,40 @@ export interface JobOut {
   job_id: string;
   original_filename: string;
   job_name: string;
+  project: string; // 과제 (user-entered)
+  board_type: string; // 타입 (user-entered)
+  revision: string; // 리비전 (user-entered)
   units: string;
   odb_version: string;
   data_type: string;
   uploaded_by: string;
   uploaded_at: string;
+}
+
+// User-entered job metadata (과제/타입/리비전).
+export interface JobMeta {
+  project: string;
+  board_type: string;
+  revision: string;
+}
+
+// Previously-used values per field, for input-history autocomplete.
+export interface MetaOptions {
+  projects: string[];
+  board_types: string[];
+  revisions: string[];
+}
+
+// An upload whose cache is still building (server-tracked, survives navigation).
+export interface ActiveJob {
+  job_id: string;
+  original_filename: string;
+  project: string;
+  board_type: string;
+  revision: string;
+  uploaded_by: string;
+  progress: number;
+  message: string;
 }
 
 export interface JobStatus {
