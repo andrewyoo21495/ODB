@@ -16,13 +16,19 @@ from src.services import job_store
 router = APIRouter(tags=["jobs"])
 
 
-def _build_job(temp_path: str, original_filename: str, task_id: str) -> None:
+def _build_job(temp_path: str, original_filename: str, task_id: str,
+               uploaded_by: str) -> None:
     """Background worker: ingest the uploaded archive into the workspace."""
     registry.update(task_id, status="running", message="parsing & caching")
     try:
+        def on_progress(frac: float, msg: str) -> None:
+            registry.update(task_id, progress=frac, message=msg)
+
         job_id = job_store.create_job(
             temp_path, original_filename=original_filename,
+            uploaded_by=uploaded_by,
             workspace_root=WORKSPACE_ROOT, log=lambda m: None,
+            progress=on_progress,
         )
         registry.update(task_id, status="done", progress=1.0,
                         job_id=job_id, result={"job_id": job_id})
@@ -52,12 +58,13 @@ async def upload_job(file: UploadFile, background: BackgroundTasks,
     if job_store.is_cached(job_id, workspace_root=WORKSPACE_ROOT):
         # Already ingested — ensure source/meta exist, then drop the temp file.
         job_store.create_job(tmp.name, original_filename=file.filename or "",
+                             uploaded_by=user,
                              workspace_root=WORKSPACE_ROOT, log=lambda m: None)
         Path(tmp.name).unlink(missing_ok=True)
         return JobStatus(job_id=job_id, status="ready", progress=1.0)
 
     task = registry.create("cache", job_id=job_id)
-    background.add_task(_build_job, tmp.name, file.filename or "", task.id)
+    background.add_task(_build_job, tmp.name, file.filename or "", task.id, user)
     return JobStatus(job_id=job_id, status="caching", message="build started")
 
 

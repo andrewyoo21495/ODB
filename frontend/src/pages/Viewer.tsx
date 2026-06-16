@@ -38,6 +38,10 @@ export default function Viewer() {
   const [fitToken, setFitToken] = useState(0);
   const [showLabels, setShowLabels] = useState(false);
   const [picked, setPicked] = useState<PolyMeta | null>(null);
+  // Component-view role toggles (match legacy view-comp: pins+outline on, via off).
+  const [showPads, setShowPads] = useState(true);
+  const [showOutlines, setShowOutlines] = useState(true);
+  const [showVias, setShowVias] = useState(false);
   const [netLayer, setNetLayer] = useState<string | null>(null);
   const [netName, setNetName] = useState<string | null>(null);
 
@@ -197,6 +201,21 @@ export default function Viewer() {
           {loading > 0 && <Tag color="processing">로딩 중… ({loading})</Tag>}
         </Space>
 
+        {activeSides.length > 0 && (
+          <Space wrap>
+            <span style={{ fontSize: 12, color: "#888" }}>부품 표시:</span>
+            <Checkbox checked={showPads} onChange={(e) => setShowPads(e.target.checked)}>
+              패드(핀)
+            </Checkbox>
+            <Checkbox checked={showOutlines} onChange={(e) => setShowOutlines(e.target.checked)}>
+              외곽선
+            </Checkbox>
+            <Checkbox checked={showVias} onChange={(e) => setShowVias(e.target.checked)}>
+              VIA
+            </Checkbox>
+          </Space>
+        )}
+
         {/* Active overlays */}
         {overlays.length > 0 && (
           <Space wrap>
@@ -217,7 +236,15 @@ export default function Viewer() {
         {overlays.length === 0 ? (
           <Alert type="info" showIcon message="레이어/부품/넷을 추가하면 캔버스에 표시됩니다." />
         ) : (
-          <PcbCanvas overlays={overlays} showLabels={showLabels} fitToken={fitToken} onPick={setPicked} />
+          <PcbCanvas
+            overlays={overlays}
+            showLabels={showLabels}
+            fitToken={fitToken}
+            onPick={setPicked}
+            showPads={showPads}
+            showOutlines={showOutlines}
+            showVias={showVias}
+          />
         )}
 
         {picked && (

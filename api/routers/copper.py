@@ -14,7 +14,8 @@ router = APIRouter(tags=["copper"])
 _REPORT_NAME = "copper.html"
 
 
-def _run_copper(job_id: str, method: str, n_rows: int, n_cols: int, task_id: str) -> None:
+def _run_copper(job_id: str, method: str, n_rows: int, n_cols: int, task_id: str,
+                user: str = "anonymous") -> None:
     registry.update(task_id, status="running", message="calculating copper ratios")
     try:
         cache_dir, cache_name = job_store.cache_args(job_id, workspace_root=WORKSPACE_ROOT)
@@ -36,7 +37,7 @@ def _run_copper(job_id: str, method: str, n_rows: int, n_cols: int, task_id: str
         job_store.record_result(job_id, "copper", report=summary.get("report"),
                                 summary=summary,
                                 params={"method": method, "n_rows": n_rows, "n_cols": n_cols},
-                                workspace_root=WORKSPACE_ROOT)
+                                created_by=user, workspace_root=WORKSPACE_ROOT)
         registry.update(task_id, status="done", progress=1.0, result=summary)
     except Exception as exc:  # noqa: BLE001
         registry.update(task_id, status="error", error=str(exc))
@@ -48,6 +49,6 @@ def run_copper(job_id: str, req: CopperRequest, background: BackgroundTasks,
     if not job_store.is_cached(job_id, workspace_root=WORKSPACE_ROOT):
         raise HTTPException(status_code=404, detail="job not found or not ready")
     task = registry.create("copper", job_id=job_id)
-    background.add_task(_run_copper, job_id, req.method, req.n_rows, req.n_cols, task.id)
+    background.add_task(_run_copper, job_id, req.method, req.n_rows, req.n_cols, task.id, user)
     return TaskOut(task_id=task.id, kind=task.kind, job_id=task.job_id,
                    status=task.status, progress=task.progress)

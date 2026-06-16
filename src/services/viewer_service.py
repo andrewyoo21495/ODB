@@ -193,10 +193,11 @@ def _outline_ring(outline, comp, is_bottom: bool):
 
 
 # Component-view colors mirror the legacy ``view-comp`` viewer (on a dark
-# canvas): pads cyan (top) / pink (bottom), package outlines yellow.
+# canvas): pads cyan (top) / pink (bottom), package outlines yellow, vias grey.
 _PAD_COLOR_TOP = "#2BFFF4"
 _PAD_COLOR_BOT = "#FC5BA1"
 _OUTLINE_COLOR = "#FFFF00"
+_VIA_COLOR = "#9e9e9e"
 
 
 def _patch_to_ring(patch) -> dict | None:
@@ -230,32 +231,73 @@ def _patch_to_ring(patch) -> dict | None:
     return {"exterior": _round(rings[0]), "holes": [_round(r) for r in rings[1:]]}
 
 
+def _symbol_rings(symbol_name: str, x: float, y: float, rotation: float,
+                  mirror: bool, units: str, unit_override, resize,
+                  is_user: bool, user_symbols: dict) -> list[dict]:
+    """Build polygon rings for one symbol instance via the matplotlib patch
+    path (shared by pad and via rendering)."""
+    from src.visualizer.symbol_renderer import symbol_to_patch, user_symbol_to_patches
+
+    if is_user and symbol_name in user_symbols:
+        patches = user_symbol_to_patches(
+            user_symbols[symbol_name], x, y, rotation, mirror, "#000", 1.0,
+        )
+    else:
+        patch = symbol_to_patch(
+            symbol_name, x, y, rotation, mirror, units, unit_override,
+            "#000", 1.0, resize,
+        )
+        patches = [patch] if patch is not None else []
+    rings: list[dict] = []
+    for p in patches:
+        ring = _patch_to_ring(p)
+        if ring:
+            rings.append(ring)
+    return rings
+
+
 def _pad_rings(comp, is_bottom: bool, user_symbols: dict) -> list[dict]:
     """Pin-pad rings for one component, resolved from ``Toeprint.geom`` exactly
     as the legacy ``draw_components`` does (same rotation handling)."""
-    from src.visualizer.symbol_renderer import symbol_to_patch, user_symbol_to_patches
-
     out: list[dict] = []
     for tp in comp.toeprints:
         geom = tp.geom
         if geom is None:
             continue
         pad_rot = -geom.rotation if is_bottom else geom.rotation
-        if geom.is_user_symbol and geom.symbol_name in user_symbols:
-            patches = user_symbol_to_patches(
-                user_symbols[geom.symbol_name], geom.x, geom.y,
-                pad_rot, geom.mirror, "#000", 1.0,
-            )
-        else:
-            patch = symbol_to_patch(
-                geom.symbol_name, geom.x, geom.y, pad_rot, geom.mirror,
-                geom.units, geom.unit_override, "#000", 1.0, geom.resize_factor,
-            )
-            patches = [patch] if patch is not None else []
-        for p in patches:
-            ring = _patch_to_ring(p)
-            if ring:
-                out.append(ring)
+        out.extend(_symbol_rings(
+            geom.symbol_name, geom.x, geom.y, pad_rot, geom.mirror,
+            geom.units, geom.unit_override, geom.resize_factor,
+            geom.is_user_symbol, user_symbols,
+        ))
+    return out
+
+
+def _via_rings(layers_data: dict, side: str, user_symbols: dict) -> list[dict]:
+    """VIA pad rings on the side's outer signal layer (matches view-comp's
+    'Show Via'). Returns [] if no vias / no signal layers."""
+    from src.visualizer.fid_lookup import (
+        _find_top_bottom_signal_layers, collect_via_pads_by_attribute,
+    )
+
+    vias = collect_via_pads_by_attribute(layers_data)
+    if not vias:
+        return []
+    top_name, bot_name = _find_top_bottom_signal_layers(layers_data)
+    want = top_name if side == "top" else bot_name
+    if want is None:
+        return []
+
+    out: list[dict] = []
+    for rpf in vias:
+        if rpf.layer_name != want:
+            continue
+        pad = rpf.pad
+        is_user = rpf.symbol.name in user_symbols
+        out.extend(_symbol_rings(
+            rpf.symbol.name, pad.x, pad.y, pad.rotation, pad.mirror,
+            rpf.units, rpf.symbol.unit_override, None, is_user, user_symbols,
+        ))
     return out
 
 
@@ -291,17 +333,26 @@ def build_component_geometry(cache_dir: str | Path, cache_name: str, side: str,
                 if ring:
                     polygons.append({"exterior": ring, "holes": [],
                                      "color": _OUTLINE_COLOR, "fill": False,
-                                     "meta": meta})
+                                     "role": "outline", "meta": meta})
                     n_outlines += 1
         # Pin pads (cyan/pink, filled).
         for ring in _pad_rings(comp, is_bottom, user_symbols):
             ring["color"] = pad_color
+            ring["role"] = "pad"
             ring["meta"] = meta
             polygons.append(ring)
             n_pads += 1
 
+    # VIA pads on the side's outer signal layer (grey, filled).
+    via_rings = _via_rings(data.get("layers_data", {}), side, user_symbols)
+    for ring in via_rings:
+        ring["color"] = _VIA_COLOR
+        ring["role"] = "via"
+        polygons.append(ring)
+
     points: list[list[float]] = []
-    _log(f"{side}: {len(comps)} components, {n_outlines} outlines, {n_pads} pads")
+    _log(f"{side}: {len(comps)} components, {n_outlines} outlines, "
+         f"{n_pads} pads, {len(via_rings)} vias")
 
     profile_rings, pbounds = _profile_rings_and_bounds(data.get("profile"))
     if pbounds:

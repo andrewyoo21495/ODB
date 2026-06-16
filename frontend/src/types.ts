@@ -8,6 +8,7 @@ export interface JobOut {
   units: string;
   odb_version: string;
   data_type: string;
+  uploaded_by: string;
   uploaded_at: string;
 }
 
@@ -35,6 +36,7 @@ export interface ResultOut {
   report: string | null;
   summary: Record<string, unknown>;
   params: Record<string, unknown>;
+  created_by: string;
   completed_at: string;
 }
 
@@ -60,6 +62,7 @@ export interface Ring {
   holes: [number, number][][];
   color?: string;
   fill?: boolean; // false = stroke only (e.g. component package outlines)
+  role?: "pad" | "outline" | "via"; // component-view layers (for toggles)
   meta?: PolyMeta;
 }
 

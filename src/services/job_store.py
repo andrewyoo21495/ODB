@@ -133,7 +133,8 @@ def _build_lock(jdir: Path, *, timeout: float = 600.0, poll: float = 0.2):
 
 
 def _write_meta(jdir: Path, *, job_id: str, original_filename: str,
-                source_sha256: str, data: dict | None) -> dict:
+                source_sha256: str, data: dict | None,
+                uploaded_by: str = "anonymous") -> dict:
     job_info = data.get("job_info") if data else None
     meta = {
         "job_id": job_id,
@@ -146,6 +147,7 @@ def _write_meta(jdir: Path, *, job_id: str, original_filename: str,
         ),
         "data_type": data.get("data_type", "") if data else "",
         "source_sha256": source_sha256,
+        "uploaded_by": uploaded_by,
         "uploaded_at": datetime.now(timezone.utc).isoformat(),
     }
     (jdir / _META_FILE).write_text(
@@ -158,8 +160,10 @@ def _write_meta(jdir: Path, *, job_id: str, original_filename: str,
 # Public API
 # --------------------------------------------------------------------------- #
 def create_job(source: str | Path, *, original_filename: str | None = None,
+               uploaded_by: str = "anonymous",
                workspace_root: str | Path = DEFAULT_WORKSPACE_ROOT,
-               log: LogFn | None = None) -> str:
+               log: LogFn | None = None,
+               progress: data_service.ProgressFn | None = None) -> str:
     """Register an ODB++ archive as a job and ensure its cache is built.
 
     Args:
@@ -167,6 +171,7 @@ def create_job(source: str | Path, *, original_filename: str | None = None,
         original_filename: name to remember for display (defaults to source name).
         workspace_root: workspace root directory.
         log: optional progress callback forwarded to the cache builder.
+        progress: optional ``(fraction, message)`` callback for a UI progress bar.
 
     Returns:
         The content-addressed ``job_id``.  Idempotent: an archive whose content
@@ -191,16 +196,19 @@ def create_job(source: str | Path, *, original_filename: str | None = None,
                 data = data_service.build_cache(
                     stored_source, jdir, cache_name=_CACHE_NAME,
                     log=log if log is not None else print,
+                    progress=progress,
                 )
                 _write_meta(jdir, job_id=job_id,
                             original_filename=original_filename or source.name,
-                            source_sha256=source_sha256, data=data)
+                            source_sha256=source_sha256, data=data,
+                            uploaded_by=uploaded_by)
 
     # Ensure meta exists even for a pre-existing cache without one.
     if not (jdir / _META_FILE).exists():
         _write_meta(jdir, job_id=job_id,
                     original_filename=original_filename or source.name,
-                    source_sha256=source_sha256, data=None)
+                    source_sha256=source_sha256, data=None,
+                    uploaded_by=uploaded_by)
 
     return job_id
 
@@ -232,6 +240,7 @@ def _results_path(job_id: str, *, workspace_root: str | Path) -> Path:
 
 def record_result(job_id: str, kind: str, *, report: str | None = None,
                   summary: dict | None = None, params: dict | None = None,
+                  created_by: str = "anonymous",
                   workspace_root: str | Path = DEFAULT_WORKSPACE_ROOT) -> dict:
     """Persist (or overwrite) the latest completed result for a (job, kind).
 
@@ -242,6 +251,7 @@ def record_result(job_id: str, kind: str, *, report: str | None = None,
         "report": report,
         "summary": summary or {},
         "params": params or {},
+        "created_by": created_by,
         "completed_at": datetime.now(timezone.utc).isoformat(),
     }
     path = _results_path(job_id, workspace_root=workspace_root)

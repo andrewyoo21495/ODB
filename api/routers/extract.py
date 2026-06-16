@@ -12,7 +12,8 @@ from src.services import extract_service, job_store
 router = APIRouter(tags=["extract"])
 
 
-def _run_extract(job_id: str, categories: list[str] | None, task_id: str) -> None:
+def _run_extract(job_id: str, categories: list[str] | None, task_id: str,
+                 user: str = "anonymous") -> None:
     registry.update(task_id, status="running", message="extracting parts")
     try:
         cache_dir, cache_name = job_store.cache_args(job_id, workspace_root=WORKSPACE_ROOT)
@@ -27,7 +28,7 @@ def _run_extract(job_id: str, categories: list[str] | None, task_id: str) -> Non
         )
         job_store.record_result(job_id, "extract", report=summary.get("report"),
                                 summary=summary, params={"categories": categories},
-                                workspace_root=WORKSPACE_ROOT)
+                                created_by=user, workspace_root=WORKSPACE_ROOT)
         registry.update(task_id, status="done", progress=1.0, result=summary)
     except Exception as exc:  # noqa: BLE001
         registry.update(task_id, status="error", error=str(exc))
@@ -39,6 +40,6 @@ def run_extract(job_id: str, req: ExtractRequest, background: BackgroundTasks,
     if not job_store.is_cached(job_id, workspace_root=WORKSPACE_ROOT):
         raise HTTPException(status_code=404, detail="job not found or not ready")
     task = registry.create("extract", job_id=job_id)
-    background.add_task(_run_extract, job_id, req.categories, task.id)
+    background.add_task(_run_extract, job_id, req.categories, task.id, user)
     return TaskOut(task_id=task.id, kind=task.kind, job_id=task.job_id,
                    status=task.status, progress=task.progress)

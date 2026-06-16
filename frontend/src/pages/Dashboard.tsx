@@ -5,6 +5,8 @@ import {
   Button,
   Card,
   Empty,
+  Progress,
+  Segmented,
   Space,
   Spin,
   Table,
@@ -16,6 +18,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api/client";
 import { useJob } from "../JobContext";
+import { useUser } from "../UserContext";
 import type { JobOut } from "../types";
 
 const KIND_LABEL: Record<string, string> = {
@@ -68,13 +71,15 @@ export default function Dashboard() {
   const qc = useQueryClient();
   const nav = useNavigate();
   const { setJobId } = useJob();
+  const { user } = useUser();
   const { message } = AntdApp.useApp();
   const [pendingId, setPendingId] = useState<string | null>(null);
+  const [scope, setScope] = useState<"mine" | "all">("all");
 
   const jobs = useQuery({ queryKey: ["jobs"], queryFn: api.listJobs });
 
   // Poll a freshly-uploaded job until its cache is built, then refresh the list.
-  useQuery({
+  const pending = useQuery({
     queryKey: ["jobStatus", pendingId],
     queryFn: async () => {
       const s = await api.jobStatus(pendingId as string);
@@ -88,7 +93,7 @@ export default function Dashboard() {
       return s;
     },
     enabled: !!pendingId,
-    refetchInterval: 1500,
+    refetchInterval: 1000,
   });
 
   const upload = useMutation({
@@ -109,6 +114,11 @@ export default function Dashboard() {
     { title: "Job", dataIndex: "job_name" },
     { title: "단위", dataIndex: "units", render: (u: string) => <Tag>{u}</Tag> },
     { title: "ODB", dataIndex: "odb_version" },
+    {
+      title: "업로더",
+      dataIndex: "uploaded_by",
+      render: (u: string) => <Tag color={u && u === user ? "blue" : "default"}>{u || "anonymous"}</Tag>,
+    },
     { title: "업로드", dataIndex: "uploaded_at" },
     {
       title: "",
@@ -145,21 +155,42 @@ export default function Dashboard() {
       </Upload.Dragger>
 
       {pendingId && (
-        <Alert
-          style={{ marginTop: 16 }}
-          type="info"
-          showIcon
-          icon={<Spin size="small" />}
-          message={`캐시 빌드 중… (job ${pendingId})`}
-        />
+        <div style={{ marginTop: 16 }}>
+          <Alert
+            type="info"
+            showIcon
+            icon={<Spin size="small" />}
+            message={`캐시 빌드 중… (job ${pendingId})`}
+            description={pending.data?.message || undefined}
+          />
+          <Progress
+            percent={Math.round((pending.data?.progress ?? 0) * 100)}
+            status="active"
+            style={{ marginTop: 8 }}
+          />
+        </div>
       )}
 
+      <div style={{ marginTop: 16, display: "flex", justifyContent: "flex-end" }}>
+        <Segmented
+          value={scope}
+          onChange={(v) => setScope(v as "mine" | "all")}
+          options={[
+            { label: "내 작업", value: "mine" },
+            { label: "전체", value: "all" },
+          ]}
+          disabled={!user}
+        />
+      </div>
+
       <Table
-        style={{ marginTop: 16 }}
+        style={{ marginTop: 8 }}
         rowKey="job_id"
         size="small"
         loading={jobs.isLoading}
-        dataSource={jobs.data ?? []}
+        dataSource={(jobs.data ?? []).filter(
+          (j) => scope === "all" || !user || j.uploaded_by === user,
+        )}
         columns={columns}
         expandable={{
           expandedRowRender: (r: JobOut) => <JobResults jobId={r.job_id} />,

@@ -14,7 +14,8 @@ router = APIRouter(tags=["checklist"])
 _REPORT_NAME = "checklist.html"
 
 
-def _run_checklist(job_id: str, rule_ids: list[str] | None, task_id: str) -> None:
+def _run_checklist(job_id: str, rule_ids: list[str] | None, task_id: str,
+                   user: str = "anonymous") -> None:
     registry.update(task_id, status="running", message="running rules")
     try:
         data = job_store.load_job_data(job_id, workspace_root=WORKSPACE_ROOT,
@@ -49,7 +50,7 @@ def _run_checklist(job_id: str, rule_ids: list[str] | None, task_id: str) -> Non
         }
         job_store.record_result(job_id, "checklist", report=_REPORT_NAME,
                                 summary=summary, params={"rule_ids": rule_ids},
-                                workspace_root=WORKSPACE_ROOT)
+                                created_by=user, workspace_root=WORKSPACE_ROOT)
         registry.update(task_id, status="done", progress=1.0, result=summary)
     except Exception as exc:  # noqa: BLE001
         registry.update(task_id, status="error", error=str(exc))
@@ -61,6 +62,6 @@ def run_checklist(job_id: str, req: ChecklistRequest, background: BackgroundTask
     if not job_store.is_cached(job_id, workspace_root=WORKSPACE_ROOT):
         raise HTTPException(status_code=404, detail="job not found or not ready")
     task = registry.create("checklist", job_id=job_id)
-    background.add_task(_run_checklist, job_id, req.rule_ids, task.id)
+    background.add_task(_run_checklist, job_id, req.rule_ids, task.id, user)
     return TaskOut(task_id=task.id, kind=task.kind, job_id=task.job_id,
                    status=task.status, progress=task.progress)

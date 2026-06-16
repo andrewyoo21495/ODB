@@ -16,6 +16,10 @@ interface Props {
   showLabels?: boolean;
   fitToken?: number; // bump to re-fit the view
   onPick?: (meta: PolyMeta | null) => void;
+  // Component-view role toggles (apply only to rings carrying a `role`).
+  showPads?: boolean;
+  showOutlines?: boolean;
+  showVias?: boolean;
 }
 
 type Pt = [number, number];
@@ -31,17 +35,31 @@ function pointInRing(x: number, y: number, ring: Pt[]): boolean {
   return inside;
 }
 
-export default function PcbCanvas({ overlays, showLabels = false, fitToken = 0, onPick }: Props) {
+export default function PcbCanvas({
+  overlays,
+  showLabels = false,
+  fitToken = 0,
+  onPick,
+  showPads = true,
+  showOutlines = true,
+  showVias = true,
+}: Props) {
   const ref = useRef<HTMLCanvasElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const coordRef = useRef<HTMLSpanElement>(null);
   const view = useRef({ scale: 1, tx: 0, ty: 0 });
   const drag = useRef<{ sx: number; sy: number; tx: number; ty: number; moved: boolean } | null>(null);
+  const drawRef = useRef<() => void>(() => {});
   // Latest props for use inside stable event handlers.
   const ov = useRef(overlays);
   ov.current = overlays;
   const labels = useRef(showLabels);
   labels.current = showLabels;
+  // Role visibility (component view). Refs so redraw uses latest without re-fit.
+  const roles = useRef({ pad: showPads, outline: showOutlines, via: showVias });
+  roles.current = { pad: showPads, outline: showOutlines, via: showVias };
+  const roleHidden = (poly: Ring) =>
+    !!poly.role && !roles.current[poly.role];
 
   useEffect(() => {
     const cv = ref.current;
@@ -102,6 +120,7 @@ export default function PcbCanvas({ overlays, showLabels = false, fitToken = 0, 
       for (const o of vs) {
         ctx.lineWidth = 0.6;
         for (const poly of o.geom.polygons as Ring[]) {
+          if (roleHidden(poly)) continue;
           const c = poly.color ?? o.color;
           ctx.fillStyle = c + "88";
           ctx.strokeStyle = c;
@@ -130,7 +149,7 @@ export default function PcbCanvas({ overlays, showLabels = false, fitToken = 0, 
         ctx.textAlign = "center";
         for (const o of vs) {
           for (const poly of o.geom.polygons as Ring[]) {
-            if (!poly.meta) continue;
+            if (!poly.meta || roleHidden(poly)) continue;
             const ex = poly.exterior;
             let cx = 0, cy = 0;
             for (const [x, y] of ex) { cx += x; cy += y; }
@@ -181,7 +200,7 @@ export default function PcbCanvas({ overlays, showLabels = false, fitToken = 0, 
       const wx = (mx - tx) / scale, wy = (H - my - ty) / scale;
       for (const o of visible()) {
         for (const poly of o.geom.polygons as Ring[]) {
-          if (poly.meta && pointInRing(wx, wy, poly.exterior)) {
+          if (poly.meta && !roleHidden(poly) && pointInRing(wx, wy, poly.exterior)) {
             onPick(poly.meta);
             return;
           }
@@ -190,6 +209,7 @@ export default function PcbCanvas({ overlays, showLabels = false, fitToken = 0, 
       onPick(null);
     };
 
+    drawRef.current = draw; // expose for role-toggle redraws (no re-fit)
     fit();
     draw();
 
@@ -223,6 +243,11 @@ export default function PcbCanvas({ overlays, showLabels = false, fitToken = 0, 
     // Re-fit/redraw when the visible scene or fit request changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [overlays, fitToken]);
+
+  // Toggling component-role visibility redraws without re-fitting (keeps zoom).
+  useEffect(() => {
+    drawRef.current();
+  }, [showPads, showOutlines, showVias]);
 
   return (
     <div ref={wrapRef} style={{ position: "relative", width: "100%" }}>

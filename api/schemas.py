@@ -17,6 +17,7 @@ class JobOut(BaseModel):
     units: str = ""
     odb_version: str = ""
     data_type: str = ""
+    uploaded_by: str = ""
     uploaded_at: str = ""
 
 
@@ -45,6 +46,7 @@ class ResultOut(BaseModel):
     report: str | None = None
     summary: dict = {}
     params: dict = {}
+    created_by: str = ""
     completed_at: str = ""
 
 

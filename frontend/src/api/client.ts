@@ -4,8 +4,21 @@ import type { JobOut, JobStatus, LayerGeometry, LayerInfo, ResultOut, RuleInfo, 
 
 const BASE = "/api";
 
+// Self-declared display name (no auth) sent on every request so the backend can
+// tag job/result ownership and the UI can filter "my jobs".
+const USER_KEY = "odbhub.user";
+export const getUser = () => localStorage.getItem(USER_KEY) || "";
+export const setUser = (name: string) => {
+  if (name) localStorage.setItem(USER_KEY, name);
+  else localStorage.removeItem(USER_KEY);
+};
+function userHeaders(extra?: Record<string, string>): Record<string, string> {
+  const u = getUser();
+  return { ...(u ? { "X-User": u } : {}), ...(extra ?? {}) };
+}
+
 async function jsonGet<T>(url: string): Promise<T> {
-  const r = await fetch(BASE + url);
+  const r = await fetch(BASE + url, { headers: userHeaders() });
   if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
   return r.json() as Promise<T>;
 }
@@ -13,7 +26,7 @@ async function jsonGet<T>(url: string): Promise<T> {
 async function jsonPost<T>(url: string, body?: unknown): Promise<T> {
   const r = await fetch(BASE + url, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: userHeaders({ "Content-Type": "application/json" }),
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
   if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
@@ -24,7 +37,7 @@ export const api = {
   uploadJob: async (file: File): Promise<JobStatus> => {
     const fd = new FormData();
     fd.append("file", file);
-    const r = await fetch(BASE + "/jobs", { method: "POST", body: fd });
+    const r = await fetch(BASE + "/jobs", { method: "POST", body: fd, headers: userHeaders() });
     if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
     return r.json() as Promise<JobStatus>;
   },

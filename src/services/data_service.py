@@ -42,6 +42,7 @@ from src.unit_converter import (
 )
 
 LogFn = Callable[[str], None]
+ProgressFn = Callable[[float, str], None]
 
 
 def _select_step(job):
@@ -229,7 +230,8 @@ def _resolve_pin_geometries(data: dict, log: LogFn | None = None):
 
 
 def build_cache(odb_path: str | Path, cache_dir: str | Path, *,
-                cache_name: str | None = None, log: LogFn | None = None) -> dict:
+                cache_name: str | None = None, log: LogFn | None = None,
+                progress: ProgressFn | None = None) -> dict:
     """Parse an ODB++ archive and cache it to JSON files.
 
     Args:
@@ -237,15 +239,19 @@ def build_cache(odb_path: str | Path, cache_dir: str | Path, *,
         cache_dir: root cache directory (``cache/`` by default in the CLI).
         cache_name: cache folder name; defaults to the archive file stem.
         log: optional progress callback; defaults to ``print``.
+        progress: optional ``(fraction, message)`` callback (0.0→1.0) for a UI
+            progress bar; the per-layer parse loop is the bulk of the work.
 
     Returns:
         The in-memory ``data`` dict that was serialised (useful for callers
         that want to use the freshly-parsed data without reloading).
     """
     _log = log if log is not None else print
+    _progress = progress if progress is not None else (lambda f, m: None)
 
     odb_path = str(odb_path)
     _log(f"Loading ODB++ from: {odb_path}")
+    _progress(0.03, "loading archive")
     t0 = time.time()
 
     job = odb_loader.load(odb_path)
@@ -324,7 +330,11 @@ def build_cache(odb_path: str | Path, cache_dir: str | Path, *,
 
     copper_data: dict[str, float] = {}
 
-    for layer_name, layer_paths in step_paths.layers.items():
+    # The layer parse loop is the bulk of the work → drive 0.1–0.9 of the bar.
+    n_layers = len(step_paths.layers) or 1
+    for layer_idx, (layer_name, layer_paths) in enumerate(step_paths.layers.items()):
+        _progress(round(0.1 + 0.8 * (layer_idx / n_layers), 3),
+                  f"parsing {layer_name} ({layer_idx + 1}/{n_layers})")
         # Components (unit only; array has no comp_+_* layers)
         if layer_paths.components:
             components, comp_units = parse_components(layer_paths.components)
@@ -464,6 +474,7 @@ def build_cache(odb_path: str | Path, cache_dir: str | Path, *,
 
     # Write cache
     _log(f"\nWriting cache...")
+    _progress(0.92, "writing cache")
     cache_job(cache_name, data, cache_dir)
 
     elapsed = time.time() - t0

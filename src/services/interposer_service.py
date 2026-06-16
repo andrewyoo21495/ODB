@@ -15,8 +15,6 @@ Headless matplotlib (Agg) is forced at import (server threads, no GUI).
 
 from __future__ import annotations
 
-import base64
-import html
 import math
 from pathlib import Path
 from typing import Callable
@@ -81,6 +79,25 @@ def _pcb_area(profile) -> float:
     return float(poly.area) if poly is not None else 0.0
 
 
+def _fill_counted_areas(ax, comps, packages, is_bottom: bool) -> None:
+    """Shade the region that is actually summed into the interposer area — the
+    largest package outline per interposer (matches ``_component_area``)."""
+    from src.visualizer.component_overlay import _outline_to_patch
+
+    pkg_lookup = {i: pkg for i, pkg in enumerate(packages)} if packages else {}
+    for comp in comps:
+        pkg = pkg_lookup.get(comp.pkg_ref)
+        if not (pkg and getattr(pkg, "outlines", None)):
+            continue
+        largest = max(pkg.outlines, key=_outline_area, default=None)
+        if largest is None or _outline_area(largest) <= 0:
+            continue
+        patch = _outline_to_patch(largest, comp, _HIGHLIGHT, 0.4,
+                                  filled=True, is_bottom=is_bottom)
+        if patch is not None:
+            ax.add_patch(patch)
+
+
 def _render_side(profile, comps, packages, user_symbols, side: str,
                  out_path: Path, title: str) -> None:
     from src.visualizer import copper_vector
@@ -91,9 +108,11 @@ def _render_side(profile, comps, packages, user_symbols, side: str,
     try:
         if profile and profile.surface:
             _draw_profile(ax, profile, fill=False, outline_color="#888888")
+        # Shade the counted area first so component outlines/labels stay on top.
+        _fill_counted_areas(ax, comps, packages, is_bottom=(side == "B"))
         draw_components(
             ax, comps, packages,
-            color=_HIGHLIGHT, alpha=0.55,
+            color=_HIGHLIGHT, alpha=0.9,
             show_labels=True, font_size=5,
             show_pads=False, show_pkg_outlines=True,
             user_symbols=user_symbols or {}, comp_side=side,
@@ -109,49 +128,6 @@ def _render_side(profile, comps, packages, user_symbols, side: str,
         fig.savefig(out_path, dpi=120, bbox_inches="tight")
     finally:
         plt.close(fig)
-
-
-def _img_data_uri(path: Path) -> str:
-    b64 = base64.b64encode(path.read_bytes()).decode("ascii")
-    return f"data:image/png;base64,{b64}"
-
-
-def _side_section(label: str, side: dict) -> str:
-    rows = "\n".join(
-        f"<tr><td>{html.escape(it['refdes'] or '')}</td>"
-        f"<td>{it['area_mm2']:.4f}</td></tr>"
-        for it in side["items"]
-    ) or '<tr><td colspan="2" class="muted">(none)</td></tr>'
-    return f"""
-<section>
- <h2>{label}</h2>
- <p>PCB 면적: <b>{side['pcb_area']:.3f} mm²</b> &nbsp;|&nbsp;
-    Interposer 면적: <b>{side['interposer_area']:.3f} mm²</b> &nbsp;|&nbsp;
-    비율: <b>{side['ratio'] * 100:.2f}%</b> &nbsp;|&nbsp;
-    개수: <b>{side['count']}</b></p>
- <img src="{_img_data_uri(side['_png'])}">
- <table><thead><tr><th>RefDes</th><th>Area (mm²)</th></tr></thead>
- <tbody>{rows}</tbody></table>
-</section>"""
-
-
-def _write_html(html_path: Path, odb_filename: str, sides: dict) -> None:
-    doc = f"""<!doctype html><html lang="ko"><head><meta charset="utf-8">
-<title>Interposer — {html.escape(odb_filename)}</title>
-<style>
- body {{ font-family: system-ui, sans-serif; margin:24px; color:#222; }}
- h1 {{ font-size:1.3rem; }} h2 {{ font-size:1.05rem; margin-top:24px; }}
- .muted {{ color:#888; }}
- img {{ max-width:520px; border:1px solid #eee; display:block; margin:8px 0; }}
- table {{ border-collapse:collapse; font-size:0.85rem; min-width:280px; }}
- th,td {{ border:1px solid #e5e5e5; padding:4px 8px; text-align:left; }}
- th {{ background:#fafafa; }}
-</style></head><body>
-<h1>Interposer Analyzer — {html.escape(odb_filename)}</h1>
-{_side_section("TOP", sides["top"])}
-{_side_section("BOTTOM", sides["bottom"])}
-</body></html>"""
-    html_path.write_text(doc, encoding="utf-8")
 
 
 def run_interposer(cache_dir: str | Path, cache_name: str, *, out_dir: Path,
@@ -201,7 +177,8 @@ def run_interposer(cache_dir: str | Path, cache_name: str, *, out_dir: Path,
             "_png": png,
         }
 
-    _write_html(out_dir / html_name, odb_filename, sides)
+    from src.interposer_html_reporter import generate_interposer_html_report
+    generate_interposer_html_report(out_dir / html_name, odb_filename=odb_filename, sides=sides)
 
     # Strip the internal PNG path from the returned summary.
     result = {"report": html_name}
