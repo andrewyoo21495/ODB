@@ -1,6 +1,7 @@
 # Frontend (Vite + React)
 node_modules/
-dist/
+# dist/ is intentionally TRACKED so PCs that cannot run `npm build`
+# (no Node / no npm-registry access) can deploy via `git pull`.
 dist-ssr/
 *.local
 
