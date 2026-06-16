@@ -215,3 +215,5 @@ cache/*
 output/*
 references/*
 tests/*
+workspace/*
+.playwright-mcp/
