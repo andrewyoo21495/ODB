@@ -34,11 +34,15 @@ def _run_copper(job_id: str, method: str, n_rows: int, n_cols: int, task_id: str
             log=lambda m: None,
             progress=on_progress,
         )
-        job_store.record_result(job_id, "copper", report=summary.get("report"),
-                                summary=summary,
+        # run_report's summary carries heavy internal keys (e.g. "_layer_results"
+        # with numpy arrays and Path objects) for in-process consumers only.
+        # Strip them before persisting/returning so JSON serialization succeeds.
+        clean = {k: v for k, v in summary.items() if not k.startswith("_")}
+        job_store.record_result(job_id, "copper", report=clean.get("report"),
+                                summary=clean,
                                 params={"method": method, "n_rows": n_rows, "n_cols": n_cols},
                                 created_by=user, workspace_root=WORKSPACE_ROOT)
-        registry.update(task_id, status="done", progress=1.0, result=summary)
+        registry.update(task_id, status="done", progress=1.0, result=clean)
     except Exception as exc:  # noqa: BLE001
         registry.update(task_id, status="error", error=str(exc))
 
