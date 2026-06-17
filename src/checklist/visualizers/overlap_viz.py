@@ -97,6 +97,7 @@ def render_overlap_image(
     user_symbols: dict | None = None,
     inner_walls: list | None = None,
     outer_outline=None,
+    inset_line=None,
     interposer_outer_outline=None,
     interposer_inner_outline=None,
 ) -> Path:
@@ -127,6 +128,9 @@ def render_overlap_image(
     inner_walls : list[LineString] | None
         Optional inner wall line geometries (e.g. from detect_inner_walls).
         Drawn in fluorescent yellow-green to make them stand out.
+    inset_line : LineString | MultiLineString | None
+        Optional inner-wall inset line (outer outline eroded inward). Drawn
+        as a solid red line for debugging inner-wall detection.
 
     Returns
     -------
@@ -181,6 +185,24 @@ def render_overlap_image(
                     zorder=6,
                     label="Container frame" if _first_outer else None)
             _first_outer = False
+
+    # --- draw inner-wall inset line (red, debugging) --------------------------
+    # The inset line is the outer outline eroded inward by the inner-wall
+    # inset distance; SC pads that cross it are flagged as inner walls.
+    _has_inset_line = (inset_line is not None and not inset_line.is_empty)
+    if _has_inset_line:
+        _first_inset = True
+        inset_geoms = (list(inset_line.geoms)
+                       if hasattr(inset_line, "geoms") else [inset_line])
+        for g in inset_geoms:
+            if hasattr(g, "exterior"):
+                xs, ys = g.exterior.xy
+            else:
+                xs, ys = g.xy
+            ax.plot(xs, ys, color="red", linewidth=1.5, linestyle="-",
+                    zorder=6,
+                    label="Inner-wall inset line" if _first_inset else None)
+            _first_inset = False
 
     # --- draw interposer outer / inner border outlines (dashed) ---------------
     _has_inp_outer = (interposer_outer_outline is not None
@@ -333,6 +355,11 @@ def render_overlap_image(
         legend_elements.append(
             plt.Line2D([0], [0], color="#444444", linewidth=1.2,
                        linestyle="--", label="Container frame")
+        )
+    if _has_inset_line:
+        legend_elements.append(
+            plt.Line2D([0], [0], color="red", linewidth=1.5,
+                       label="Inner-wall inset line")
         )
     if _has_inp_outer:
         legend_elements.append(

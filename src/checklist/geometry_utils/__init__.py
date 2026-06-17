@@ -105,6 +105,7 @@ from .shield_can import (
     get_orientation_relative_to_outline_edge,
     get_outermost_outline,
     detect_inner_walls,
+    get_inner_wall_inset_line,
     find_nearest_inner_wall,
     is_near_inner_wall,
     detect_fill_cuts,

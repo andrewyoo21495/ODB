@@ -18,6 +18,7 @@ from typing import Sequence
 
 from src.models import ArcSegment, Component, Package, Pin
 from src.visualizer.component_overlay import transform_point
+from .clearance import build_inset_boundary
 from .orientation import get_major_axis_angle
 from .overlap import _get_pad_union
 from .polygon import (
@@ -389,35 +390,72 @@ def get_outermost_outline(
     return None
 
 
+def get_inner_wall_inset_line(
+    shield_can: Component,
+    packages: list[Package],
+    *,
+    is_bottom: bool = False,
+    inset_mm: float = 1.4,
+):
+    """Return the inset line used to detect a shield can's inner walls.
+
+    The inset line is the boundary of the outermost component outline
+    eroded inward by *inset_mm* (``outer.buffer(-inset_mm).boundary``),
+    mirroring the inset-boundary concept used by CKL-03-015 for PCB
+    outline clearance.
+
+    Returns a Shapely LineString / MultiLineString (the inset ring), or
+    ``None`` when the outline is missing or the erosion collapses the
+    polygon to nothing (shield can smaller than 2*inset_mm).
+    """
+    if not _HAS_SHAPELY:
+        return None
+
+    outer = get_outermost_outline(
+        shield_can, packages, is_bottom=is_bottom,
+    )
+    if outer is None or outer.is_empty or not hasattr(outer, "exterior"):
+        return None
+
+    inset_poly = build_inset_boundary(outer, inset_mm)
+    if inset_poly is None or inset_poly.is_empty:
+        return None
+
+    line = inset_poly.boundary
+    if line is None or line.is_empty:
+        return None
+    return line
+
+
 def detect_inner_walls(
     shield_can: Component,
     packages: list[Package],
     *,
     is_bottom: bool = False,
-    inset_mm: float = 0.4,
+    inset_mm: float = 1.4,
 ):
     """Detect inner-wall pads of a shield can.
 
     Returns a list of Shapely Polygon objects for each detected inner-wall pad.
 
-    Inner wall = SC pad that does NOT lie along the outer component outline.
+    Inner wall = SC pad that runs inward, subdividing the interior, rather
+    than hugging the outer component outline.
 
-    Strategy:
+    Strategy (inset-line crossing — mirrors CKL-03-015's clearance check):
     1. Obtain the outer component outline via ``get_outermost_outline`` —
        the filled ``unary_union`` of all ``pkg.outlines``, consistent with
        the CONTAINER FRAME shown in visualizations.
-    2. Measure each pad's minimum distance to the outline boundary.
-    3. Pads within *inset_mm* of the boundary are perimeter (outer-wall) pads.
-       Pads farther away are **inner walls**.
+    2. Erode it inward by *inset_mm* and take the boundary as the **inset
+       line** (see :func:`get_inner_wall_inset_line`).
+    3. Any pad that **intersects the inset line** reaches deep enough into
+       the interior to be an inner wall.
 
-    This distance-based approach correctly handles concave shapes (U, L, T,
-    zigzag, narrow corridors) where pads on recessed edges are still on the
-    perimeter.
+    Unlike a distance-to-outer-boundary test, this correctly catches inner
+    walls that connect to the outer wall (their minimum distance to the
+    outer boundary is ~0, but they still cross the inset line as they run
+    inward).
 
-    *inset_mm* is caller-tunable: a larger value tolerates cases where the
-    declared ``pkg.outlines`` is offset from the actual outer-wall pads (which
-    would otherwise misclassify perimeter pads as inner walls). CKL-02-007
-    passes a wider inset for this reason.
+    *inset_mm* is caller-tunable.
     """
     if not _HAS_SHAPELY:
         return []
@@ -442,22 +480,17 @@ def detect_inner_walls(
     if len(pad_geoms) < 4:
         return []
 
-    # Use get_outermost_outline() for the outer boundary — same filled
-    # unary_union geometry used as the CONTAINER FRAME.
-    # No fallback to convex hull — inner wall detection requires the
-    # actual component outline from ODB data.
-    outer = get_outermost_outline(
-        shield_can, packages, is_bottom=is_bottom,
+    # Inset line = outer outline eroded inward by inset_mm. Pads crossing it
+    # run deep into the interior → inner walls.
+    inset_line = get_inner_wall_inset_line(
+        shield_can, packages, is_bottom=is_bottom, inset_mm=inset_mm,
     )
-    if outer is None or outer.is_empty or not hasattr(outer, "exterior"):
+    if inset_line is None or inset_line.is_empty:
         return []
 
-    # Pads whose minimum distance to the outer outline boundary is
-    # >= inset_mm are inner walls; everything closer sits on the perimeter.
-    boundary = outer.boundary
     inner_walls = []
     for pad_geom in pad_geoms:
-        if pad_geom.distance(boundary) >= inset_mm:
+        if pad_geom.intersects(inset_line):
             inner_walls.append(pad_geom)
 
     return inner_walls

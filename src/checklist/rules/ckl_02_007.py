@@ -26,6 +26,7 @@ from src.checklist.geometry_utils import (
     _resolve_container_interior,
     get_outermost_outline,
     detect_inner_walls,
+    get_inner_wall_inset_line,
     _get_pad_union,
 )
 from src.checklist.rule_base import ChecklistRule
@@ -126,6 +127,10 @@ class CKL02007(ChecklistRule):
                 outer_outline = get_outermost_outline(
                     sc, packages, is_bottom=is_bottom,
                 )
+                inset_line = get_inner_wall_inset_line(
+                    sc, packages, is_bottom=is_bottom,
+                    inset_mm=INNER_WALL_INSET_MM,
+                )
 
                 # Check clearance for targets inside this SC (only if inner walls exist).
                 fail_items: list[dict] = []
@@ -182,6 +187,7 @@ class CKL02007(ChecklistRule):
                     overlap_is_bottom=is_bottom,
                     inner_walls=inner_walls,
                     outer_outline=outer_outline,
+                    inset_line=inset_line,
                 )
                 images.append({
                     "path": img_path,
