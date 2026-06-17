@@ -185,6 +185,7 @@ class CKL02007(ChecklistRule):
                     overlap_label="Cap/Ind",
                     primary_is_bottom=is_bottom,
                     overlap_is_bottom=is_bottom,
+                    user_symbols=user_symbols,
                     inner_walls=inner_walls,
                     outer_outline=outer_outline,
                     inset_line=inset_line,
