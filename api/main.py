@@ -90,9 +90,20 @@ _DIST = REPO_ROOT / "frontend" / "dist"
 if _DIST.is_dir():
     app.mount("/assets", StaticFiles(directory=_DIST / "assets"), name="assets")
 
+    # The SPA shell must NEVER be cached: it's the only file with a stable URL
+    # and it points at content-hashed JS/CSS.  If the browser serves a stale
+    # index.html it loads an old bundle after every deploy (the cause of the
+    # "no password prompt / 401" report).  Hashed assets under /assets stay
+    # cacheable (their URL changes when content changes).
+    def _index_response() -> FileResponse:
+        return FileResponse(
+            _DIST / "index.html",
+            headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+        )
+
     @app.get("/", include_in_schema=False)
     def _spa_index() -> FileResponse:
-        return FileResponse(_DIST / "index.html")
+        return _index_response()
 
     @app.get("/{full_path:path}", include_in_schema=False)
     def _spa_fallback(full_path: str) -> FileResponse:
@@ -107,4 +118,4 @@ if _DIST.is_dir():
         candidate = _DIST / full_path
         if candidate.is_file():
             return FileResponse(candidate)
-        return FileResponse(_DIST / "index.html")
+        return _index_response()
