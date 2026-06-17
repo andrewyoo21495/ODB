@@ -142,7 +142,7 @@ def run_report(cache_dir: str | Path, cache_name: str, *, html_path: Path,
         "layers": len(layer_results), 
         "avg_ratio": avg_ratio, 
         "report": html_path.name,
-        "_layer_results:": layer_results,  #internal use for JSON export
+        "_layer_results": layer_results,  #internal use for JSON export
     }
 
 def batch_run_reports(cache_dir: str | Path, cache_names: list[str], output_dir: Path,
