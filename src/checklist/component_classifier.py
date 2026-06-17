@@ -216,6 +216,17 @@ def find_washers(components: Sequence[Component]) -> list[Component]:
     return result
 
 
+def find_sus(components: Sequence[Component]) -> list[Component]:
+    """Return SUS reinforcement (보강판) components.
+
+    A component is treated as SUS when its ``comp_name`` starts with
+    ``SUS`` (case-insensitive).  Unlike :func:`find_washers`, this does
+    not consider ``part_name`` prefixes — membership is determined purely
+    by the reference designator.
+    """
+    return [c for c in components if (c.comp_name or "").upper().startswith("SUS")]
+
+
 def find_shield_cans(components: Sequence[Component]) -> list[Component]:
     """Return Shield Can components: comp_name starts with 'SC'."""
     return [c for c in components if (c.comp_name or "").upper().startswith("SC")]

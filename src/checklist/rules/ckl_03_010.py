@@ -12,7 +12,7 @@ import tempfile
 from collections import defaultdict
 from pathlib import Path
 
-from src.checklist.component_classifier import find_washers
+from src.checklist.component_classifier import find_sus
 from src.checklist.engine import register_rule
 from src.checklist.geometry_utils import (
     build_toeprint_lookup,
@@ -105,7 +105,7 @@ class CKL03010(ChecklistRule):
         ]:
             via_positions = via_bot if is_bottom else via_top
             sig_name = bot_sig_name if is_bottom else top_sig_name
-            washers = find_washers(comps)
+            washers = find_sus(comps)
 
             for comp in washers:
                 if comp.pkg_ref < 0 or comp.pkg_ref >= len(packages):

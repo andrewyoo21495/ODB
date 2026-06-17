@@ -72,35 +72,25 @@ def _gen_01_002(fail_rows: list[dict]) -> list[str]:
 
 
 def _gen_01_003(fail_rows: list[dict]) -> list[str]:
-    """CKL-01-003: group by comp, split edge vs vertical."""
-    grouped: dict[str, dict] = defaultdict(lambda: {"edge": [], "vertical": []})
+    """CKL-01-003: QUALCOMM PMIC containment — group opposite ICs by PMIC.
+
+    FAIL rows carry the PMIC reference (``comp``) and the partially
+    overlapping opposite-side IC (``overlapping_cmp``).  Opposite ICs are
+    grouped per PMIC into a single bullet.
+    """
+    grouped: dict[str, list[str]] = defaultdict(list)
     for r in fail_rows:
         comp = r.get("comp", "")
-        ind = r.get("overlapping_cmp", "")
-        if not comp or not ind:
-            continue
-        if r.get("edge") == "TRUE":
-            if ind not in [x for x in grouped[comp]["edge"]]:
-                grouped[comp]["edge"].append(ind)
-        elif r.get("hori/verti") == "Vertical":
-            if ind not in [x for x in grouped[comp]["vertical"]]:
-                grouped[comp]["vertical"].append(ind)
-
-    # Remove items already in edge from vertical
-    for comp in grouped:
-        edge_set = set(grouped[comp]["edge"])
-        grouped[comp]["vertical"] = [
-            x for x in grouped[comp]["vertical"] if x not in edge_set
-        ]
+        opp = r.get("overlapping_cmp", "")
+        if comp and opp and opp not in grouped[comp]:
+            grouped[comp].append(opp)
 
     bullets: list[str] = []
-    for comp, cases in grouped.items():
-        for ind in cases["edge"]:
-            bullets.append(
-                f"{ind}는 {comp}의 배면 outline edge 에 위치하므로 이격할 것."
-            )
-        for ind in cases["vertical"]:
-            bullets.append(f"{ind}는 {comp}와 수평배치 할 것.")
+    for comp, opps in grouped.items():
+        opp_str = ", ".join(opps)
+        bullets.append(
+            f"{opp_str}는 {comp}(PMIC) 외곽선 내에 완전히 포함되도록 배치할 것."
+        )
     return bullets
 
 
@@ -112,11 +102,16 @@ def _gen_cap_edge_vertical(
     prefix: str = "",
     edge_msg_suffix: str = "의 배면 edge 에 위치하므로 이격할 것.",
     vertical_msg_suffix: str = "와 배면 수평배치 할 것.",
+    group: bool = False,
 ) -> list[str]:
     """Shared logic for CKL-02-002, 02-003, 02-006 style rules.
 
     Groups by comp, splits into edge=TRUE vs hori/verti=Vertical cases.
     Items already flagged as edge are excluded from the vertical case.
+
+    When *group* is True, all caps sharing the same comp **and** the same
+    classification (edge / vertical) are joined into a single bullet;
+    otherwise one bullet is emitted per cap.
     """
     grouped: dict[str, dict] = defaultdict(lambda: {"edge": [], "vertical": []})
     for r in fail_rows:
@@ -140,10 +135,18 @@ def _gen_cap_edge_vertical(
 
     bullets: list[str] = []
     for comp, cases in grouped.items():
-        for cap in cases["edge"]:
-            bullets.append(f"{prefix}{cap}는 {comp}{edge_msg_suffix}")
-        for cap in cases["vertical"]:
-            bullets.append(f"{prefix}{cap}는 {comp}{vertical_msg_suffix}")
+        if group:
+            if cases["edge"]:
+                cap_str = ", ".join(cases["edge"])
+                bullets.append(f"{prefix}{cap_str}는 {comp}{edge_msg_suffix}")
+            if cases["vertical"]:
+                cap_str = ", ".join(cases["vertical"])
+                bullets.append(f"{prefix}{cap_str}는 {comp}{vertical_msg_suffix}")
+        else:
+            for cap in cases["edge"]:
+                bullets.append(f"{prefix}{cap}는 {comp}{edge_msg_suffix}")
+            for cap in cases["vertical"]:
+                bullets.append(f"{prefix}{cap}는 {comp}{vertical_msg_suffix}")
     return bullets
 
 
@@ -184,8 +187,11 @@ def _gen_02_005(fail_rows: list[dict]) -> list[str]:
 
 
 def _gen_02_006(fail_rows: list[dict]) -> list[str]:
-    """CKL-02-006: general cap vs connector/shield, recommended prefix."""
-    return _gen_cap_edge_vertical(fail_rows, prefix="(권장) ")
+    """CKL-02-006: general cap vs connector/shield, recommended prefix.
+
+    Caps sharing the same comp and classification are merged into one bullet.
+    """
+    return _gen_cap_edge_vertical(fail_rows, prefix="(권장) ", group=True)
 
 
 def _gen_02_007(fail_rows: list[dict]) -> list[str]:
@@ -447,16 +453,24 @@ def _gen_02_001(fail_rows: list[dict]) -> list[str]:
 
 
 def _gen_02_004(fail_rows: list[dict]) -> list[str]:
-    """CKL-02-004: opposite-side clearance."""
-    bullets: list[str] = []
+    """CKL-02-004: opposite-side clearance, group overlapping caps by comp."""
+    grouped: dict[str, list[str]] = defaultdict(list)
     for r in fail_rows:
+        comp = r.get("comp", "")
         opp = r.get("overlapping_cmp", "")
         part = r.get("part_name", "")
-        comp = r.get("comp", "")
-        if opp and comp:
-            bullets.append(
-                f"{opp}({part}) 는 배면 {comp}에서 0.5mm 이상 이격할 것."
-            )
+        if not comp or not opp:
+            continue
+        entry = f"{opp}({part})" if part else opp
+        if entry not in grouped[comp]:
+            grouped[comp].append(entry)
+
+    bullets: list[str] = []
+    for comp, entries in grouped.items():
+        entry_str = ", ".join(entries)
+        bullets.append(
+            f"{entry_str} 는 배면 {comp}에서 0.5mm 이상 이격할 것."
+        )
     return bullets
 
 
@@ -611,6 +625,22 @@ def _gen_03_008(fail_rows: list[dict]) -> list[str]:
     return _gen_comp_pad_via(fail_rows, "4개")
 
 
+def _gen_03_010(fail_rows: list[dict]) -> list[str]:
+    """CKL-03-010: SUS(보강판) GND pad VIA>=4, group pad by comp."""
+    grouped: dict[str, list[str]] = defaultdict(list)
+    for r in fail_rows:
+        comp = r.get("comp", "")
+        pad = r.get("pad", "")
+        if comp and pad and pad not in grouped[comp]:
+            grouped[comp].append(pad)
+
+    bullets: list[str] = []
+    for comp, pads in grouped.items():
+        pad_str = ", ".join(pads)
+        bullets.append(f"{comp}의 GND 패드 {pad_str} 는 via 4개 이상 설계할 것.")
+    return bullets
+
+
 def _gen_03_011(fail_rows: list[dict]) -> list[str]:
     """CKL-03-011: bending area placement."""
     bullets: list[str] = []
@@ -702,6 +732,7 @@ _GENERATORS: dict[str, callable] = {
     "CKL-03-007": _gen_03_007,
     "CKL-03-008": _gen_03_008,
     "CKL-03-009": _gen_03_009,
+    "CKL-03-010": _gen_03_010,
     "CKL-03-011": _gen_03_011,
     "CKL-03-012": _gen_03_012,
     "CKL-03-013": _gen_03_013,

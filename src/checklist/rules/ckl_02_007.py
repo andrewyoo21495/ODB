@@ -164,10 +164,9 @@ class CKL02007(ChecklistRule):
                                 "min_distance": MIN_CLEARANCE_MM,
                             })
 
-                # Render image only for SCs with detected inner walls.
-                if not inner_walls:
-                    continue
-
+                # Render an image for every detected shield can (even when no
+                # inner walls were found and even on PASS) so inner-wall
+                # detection can be verified visually.
                 safe = sc.comp_name.replace("/", "_")
                 img_path = image_dir / f"{safe}_{layer_name.lower()}.png"
                 n_fail = len(fail_items)

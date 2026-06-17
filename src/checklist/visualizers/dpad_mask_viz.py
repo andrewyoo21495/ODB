@@ -179,7 +179,7 @@ def render_dpad_side_image(
         if local.features:
             render_layer(
                 ax, local,
-                color="#00AA00", layer_type="SOLDER_MASK", alpha=0.35,
+                color="#0066CC", layer_type="SOLDER_MASK", alpha=0.35,
                 user_symbols=user_symbols, font=font,
                 negate_pad_rotation=is_bottom,
             )
@@ -244,7 +244,7 @@ def render_dpad_side_image(
 
     # Legend.
     legend_elements = [
-        mpatches.Patch(facecolor="#00AA00", alpha=0.35,
+        mpatches.Patch(facecolor="#0066CC", alpha=0.35,
                        label=f"{mask_layer_name} (solder mask)"),
         mpatches.Patch(facecolor="#B0C4DE", edgecolor="steelblue",
                        alpha=0.5,
