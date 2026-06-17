@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Alert,
   App as AntdApp,
@@ -15,7 +15,7 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../api/client";
 import { useJob } from "../JobContext";
-import { useJobName } from "../hooks/useJobName";
+import JobSelect from "../components/JobSelect";
 import PcbCanvas, { type Overlay } from "../components/PcbCanvas";
 import type { LayerGeometry, PolyMeta, TaskOut } from "../types";
 
@@ -34,7 +34,6 @@ function labelOf(key: string): string {
 
 export default function Viewer() {
   const { jobId } = useJob();
-  const jobName = useJobName(jobId);
   const { message } = AntdApp.useApp();
   const [overlays, setOverlays] = useState<Overlay[]>([]);
   const [loading, setLoading] = useState(0);
@@ -66,6 +65,16 @@ export default function Viewer() {
     queryFn: () => api.getComponents(jobId as string, compSide),
     enabled: !!jobId,
   });
+
+  // Switching the selected job clears the rendered scene (overlays/selections
+  // belong to the previous board).
+  useEffect(() => {
+    setOverlays([]);
+    setCompSelected([]);
+    setNetLayer(null);
+    setNetName(null);
+    setPicked(null);
+  }, [jobId]);
 
   async function loadGeom(start: () => Promise<TaskOut>): Promise<LayerGeometry> {
     const t0 = await start();
@@ -107,7 +116,14 @@ export default function Viewer() {
     setOverlays((prev) => prev.map((o) => (o.key === key ? { ...o, visible: !o.visible } : o)));
 
   if (!jobId) {
-    return <Alert type="info" showIcon message="대시보드에서 Job을 먼저 선택하세요." />;
+    return (
+      <Card title="ODB 뷰어">
+        <Space direction="vertical" style={{ width: "100%" }} size="middle">
+          <JobSelect />
+          <Alert type="info" showIcon message="조회할 데이터를 선택하세요." />
+        </Space>
+      </Card>
+    );
   }
 
   const activeLayers = overlays.filter((o) => o.key.startsWith("L:")).map((o) => o.key.slice(2));
@@ -151,8 +167,9 @@ export default function Viewer() {
     .map((l) => ({ label: l.name, value: l.name }));
 
   return (
-    <Card title={`ODB 뷰어 — ${jobName || jobId}`}>
+    <Card title="ODB 뷰어">
       <Space direction="vertical" style={{ width: "100%" }} size="middle">
+        <JobSelect />
         <Space wrap align="start">
           <div>
             <div style={{ fontSize: 12, color: "#888" }}>레이어 (다중)</div>

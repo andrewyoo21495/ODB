@@ -15,6 +15,12 @@ export function useFeature(kind: string) {
   const [taskId, setTaskId] = useState<string | null>(null);
   const task = useTask(taskId);
 
+  // Switching the selected job mid-page must drop the previous job's task so the
+  // page re-attaches/shows results for the newly chosen job (not the old run).
+  useEffect(() => {
+    setTaskId(null);
+  }, [jobId]);
+
   // Prior recorded results for this job (persisted on disk).
   const results = useQuery({
     queryKey: ["results", jobId],
