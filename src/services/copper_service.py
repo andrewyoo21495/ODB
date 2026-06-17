@@ -138,4 +138,94 @@ def run_report(cache_dir: str | Path, cache_name: str, *, html_path: Path,
 
     ratios = [r["total_ratio"] for r in layer_results if r["total_ratio"] is not None]
     avg_ratio = sum(ratios) / len(ratios) if ratios else 0.0
-    return {"layers": len(layer_results), "avg_ratio": avg_ratio, "report": html_path.name}
+    return {
+        "layers": len(layer_results), 
+        "avg_ratio": avg_ratio, 
+        "report": html_path.name,
+        "_layer_results:": layer_results,  #internal use for JSON export
+    }
+
+def batch_run_reports(cache_dir: str | Path, cache_names: list[str], output_dir: Path,
+                      n_rows: int=5, n_cols: int=5, formats: list[str] | None = None,
+                      log: LogFn | None=None,
+                      progress: ProgressFn | None=None) -> dict:
+    """Run copper ratio calculations for multiple cache entries and write reports.
+
+    For each cache_name, runs run_report() and generates reports in specified formats.
+    Individual HTML reports are writeen to output_dir/[COPPER]{cache_name}.html
+    JSON reports (if requested) are writeen to output_dir/[COPPER]{cache_name}.json
+
+    Returns:
+        {
+            'files_processed': int,
+            'avg_ratio': float,
+            'results': list[dict] # per-file details
+        }
+    """
+
+    _log = log if log is not None else (lambda m: None)
+    _progress = progress if progress is not None else (lambda f, m: None)
+
+    if formats is None:
+        formats = ["html"]
+
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    results = []
+    n_files = len(cache_names) or 1
+
+    for i, cache_name in enumerate(cache_names):
+        _progress(i / n_files, f"Processing {cache_name}...")
+        _log(f"\n[{i + 1}/{len(cache_names)}] {cache_name}")
+
+        # Per-file output paths
+        html_path = output_dir / f"[COPPER]{cache_name}.html"
+        images_dir = output_dir / f"images_{cache_name}"
+
+        # Run existing run_report()
+        summary = run_report(
+            cache_dir=cache_dir,
+            cache_name=cache_name,
+            html_path=html_path,
+            images_dir=images_dir,
+            odb_filename=cache_name,
+            n_rows=n_rows,
+            n_cols=n_cols,
+            method="vector",
+            log=_log,
+            progress=_progress
+        )
+
+        # Write JSON report if requested
+        if "json" in formats:
+            json_path = output_dir / f"[COPPER]{cache_name}.json"
+            layer_results = summary.get('_layer_results', [])
+            json_layers = [
+                {"layer_name": lr["layer_name"], "ratio": lr["total_ratio"]}
+                for lr in layer_results
+            ]
+            json_data = {
+                "average_ratio": summary.get('avg_ratio', 0),
+                "layers": json_layers,
+            }
+            with open(json_path, 'w', encoding='utf-8') as f:
+                json.dump(json_data, f, indent=2, ensure_ascii=False)
+            _log(f"JSON report: {json_path}")
+
+        results.append({
+            'cache_name': cache_name,
+            'layers': summary.get('layers', 0),
+            'avg_ratio': summary.get('avg_ratio', 0),
+            'report_path': str(html_path.relative_to(output_dir)),
+        })
+
+    avg_overall = sum(r['avg_ratio'] for r in results) / len(results) if results else 0.0
+
+    _progress(1.0, "complete")
+
+    return {
+        'files_processed': len(results),
+        'avg_ratio' : avg_overall,
+        'results' : results,
+    }
