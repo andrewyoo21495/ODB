@@ -35,12 +35,12 @@ from src.models import RuleResult
 
 MIN_CLEARANCE_MM = 0.3
 
-# Inner-wall detection inset: a shield-can pad whose minimum distance to the
-# component's own outer outline boundary is >= this value is treated as an
-# inner wall. Larger than the helper default (0.4 mm) to tolerate cases where
-# the declared pkg.outlines is slightly offset from the actual outer-wall pads,
-# which otherwise misclassifies perimeter pads as inner walls.
-INNER_WALL_INSET_MM = 1.4
+# Inner-wall detection inset: the outer component outline is eroded inward by
+# this distance and a shield-can pad that crosses the resulting inset line is
+# treated as an inner wall (see detect_inner_walls / get_inner_wall_inset_line).
+# Tuned so perimeter (outer-wall) pads stay outside the inset line while
+# inward-running partition walls cross it.
+INNER_WALL_INSET_MM = 2.0
 
 
 def _min_distance_to_inner_walls(
