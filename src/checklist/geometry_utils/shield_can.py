@@ -20,10 +20,9 @@ from src.models import ArcSegment, Component, Package, Pin
 from src.visualizer.component_overlay import transform_point
 from .clearance import build_inset_boundary
 from .orientation import get_major_axis_angle
-from .overlap import _get_pad_union
+from .overlap import _get_individual_pad_polygons, _get_pad_union
 from .polygon import (
     _get_pad_centers,
-    _outline_to_shapely,
     _resolve_outline,
 )
 
@@ -433,6 +432,7 @@ def detect_inner_walls(
     *,
     is_bottom: bool = False,
     inset_mm: float = 1.4,
+    user_symbols: dict | None = None,
 ):
     """Detect inner-wall pads of a shield can.
 
@@ -455,28 +455,24 @@ def detect_inner_walls(
     outer boundary is ~0, but they still cross the inset line as they run
     inward).
 
+    Pad geometry is resolved via ``_get_individual_pad_polygons`` — the same
+    FID-resolved ``Toeprint.geom`` path used by ``_get_pad_union`` (and by
+    CKL-01-001's pad rendering) — so the detected inner-wall pads match the
+    pads drawn in the visualization. *user_symbols* must be passed for
+    user-defined pad symbols to resolve correctly.
+
     *inset_mm* is caller-tunable.
     """
     if not _HAS_SHAPELY:
         return []
 
-    if shield_can.pkg_ref < 0 or shield_can.pkg_ref >= len(packages):
-        return []
-    pkg = packages[shield_can.pkg_ref]
-    if not pkg.pins:
-        return []
-
-    # Collect all pad geometries.
-    pad_geoms: list = []
-    for pin in pkg.pins:
-        if not pin.outlines:
-            continue
-        pad_geom = _outline_to_shapely(pin.outlines[0], shield_can,
-                                       is_bottom=is_bottom)
-        if pad_geom is None or pad_geom.is_empty:
-            continue
-        pad_geoms.append(pad_geom)
-
+    # Resolve individual pad polygons the same way _get_pad_union does
+    # (toeprint geometry first, pin-outline fallback) so the inner-wall
+    # highlight is geometrically consistent with the drawn pads.
+    pad_geoms = _get_individual_pad_polygons(
+        shield_can, packages, is_bottom=is_bottom, user_symbols=user_symbols,
+    )
+    pad_geoms = [g for g in pad_geoms if g is not None and not g.is_empty]
     if len(pad_geoms) < 4:
         return []
 
@@ -528,6 +524,7 @@ def is_near_inner_wall(
     sc_is_bottom: bool = False,
     inner_walls=None,
     boundary_tolerance: float = 0.2,
+    user_symbols: dict | None = None,
 ) -> bool:
     """Check if comp is within distance_threshold of an inner wall.
 
@@ -541,6 +538,7 @@ def is_near_inner_wall(
         inner_walls = detect_inner_walls(
             shield_can, packages,
             is_bottom=sc_is_bottom,
+            user_symbols=user_symbols,
         )
     if not inner_walls:
         return False

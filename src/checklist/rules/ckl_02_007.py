@@ -123,6 +123,7 @@ class CKL02007(ChecklistRule):
                 inner_walls = detect_inner_walls(
                     sc, packages, is_bottom=is_bottom,
                     inset_mm=INNER_WALL_INSET_MM,
+                    user_symbols=user_symbols,
                 )
                 outer_outline = get_outermost_outline(
                     sc, packages, is_bottom=is_bottom,
