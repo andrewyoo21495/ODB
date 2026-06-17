@@ -64,7 +64,13 @@ export const api = {
     const r = await fetch(`${BASE}/jobs/${id}`, { method: "DELETE", headers: userHeaders() });
     if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
   },
-  getActivity: (limit = 200) => jsonGet<ActivityOut>(`/activity?limit=${limit}`),
+  getActivity: async (limit = 200, pw = ""): Promise<ActivityOut> => {
+    const r = await fetch(`${BASE}/activity?limit=${limit}`, {
+      headers: userHeaders(pw ? { "X-Manager-Pw": pw } : undefined),
+    });
+    if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+    return r.json() as Promise<ActivityOut>;
+  },
   jobStatus: (id: string) => jsonGet<JobStatus>(`/jobs/${id}/status`),
   getResults: (id: string) => jsonGet<ResultOut[]>(`/jobs/${id}/results`),
   getLatestTask: (id: string, kind: string) =>

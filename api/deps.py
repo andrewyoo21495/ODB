@@ -9,11 +9,16 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from fastapi import Header
+from fastapi import Header, HTTPException
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 WORKSPACE_ROOT = REPO_ROOT / "workspace"
 REFERENCES_DIR = REPO_ROOT / "references"
+
+# Password gating the "사용자 현황" (activity) admin page.  Plain constant on the
+# trusted intranet (same level as the otherwise-unauthenticated deployment);
+# move to an env var / change-UI later if needed.
+MANAGER_PASSWORD = "managerpw"
 
 _USER_RE = re.compile(r"[^0-9A-Za-z가-힣 _.\-]")
 
@@ -36,3 +41,14 @@ def get_current_user(x_user: str | None = Header(default=None)) -> str:
     sanitised and length-capped; missing/blank falls back to ``anonymous``.
     """
     return sanitize_user(x_user)
+
+
+def require_manager_pw(x_manager_pw: str | None = Header(default=None)) -> None:
+    """Gate an endpoint behind the manager password (``X-Manager-Pw`` header).
+
+    Raises ``401`` when the header is missing or does not match
+    :data:`MANAGER_PASSWORD`.  Used by the activity / 사용자 현황 page so casual
+    users cannot view who connected.
+    """
+    if x_manager_pw != MANAGER_PASSWORD:
+        raise HTTPException(status_code=401, detail="비밀번호가 올바르지 않습니다.")
