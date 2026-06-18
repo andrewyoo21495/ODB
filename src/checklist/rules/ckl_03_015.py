@@ -24,6 +24,11 @@ import matplotlib.patches as mpatches
 from matplotlib.patches import Polygon as MplPolygon
 import numpy as np
 
+from src.checklist.component_classifier import (
+    find_capacitors,
+    find_ics,
+    find_inductors,
+)
 from src.checklist.engine import register_rule
 from src.checklist.geometry_utils import (
     _get_pad_union,
@@ -195,8 +200,16 @@ class CKL03015(ChecklistRule):
             (components_top, "Top"),
             (components_bot, "Bottom"),
         ]:
+            # Restrict the check to ICs, capacitors and inductors only.
+            # A component may be matched by more than one finder, so dedup
+            # by identity while preserving order.
+            targets = find_ics(comps) + find_capacitors(comps) + find_inductors(comps)
+            seen: set[int] = set()
+            target_comps = [
+                c for c in targets if id(c) not in seen and not seen.add(id(c))
+            ]
             violations = components_with_pads_in_clearance_zone(
-                comps, board_poly, inset_poly, packages
+                target_comps, board_poly, inset_poly, packages
             )
             fail_comps_for_image = []
 
