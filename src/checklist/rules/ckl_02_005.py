@@ -53,6 +53,40 @@ def _load_dpad_part_map() -> dict[str, str]:
     return out
 
 
+def _load_pad_geom_names() -> set[str]:
+    """Return the set of ``pad_geom_name`` values from capacitors_10_list.csv.
+
+    These are the approved pad geometries checked by CKL-02-001.  A D-pad
+    list capacitor that would otherwise FAIL here is exempted (treated as
+    PASS) when its package equals one of these approved geometries.
+    """
+    out: set[str] = set()
+    for r in load_reference_csv("capacitors_10_list.csv"):
+        geom = (r.get("pad_geom_name") or "").strip()
+        if geom:
+            out.add(geom)
+    return out
+
+
+def _matches_any_pad_geom(actual: str, pad_geoms: set[str]) -> bool:
+    """True if *actual* matches any approved pad geometry name.
+
+    Matching is case-insensitive and allows ``<name>_<suffix>`` variants
+    (e.g. ``HE_CAP17098`` matches ``he_cap17098_OSP``).  The underscore
+    boundary prevents accidental prefix collisions.
+    """
+    if not actual:
+        return False
+    a = actual.casefold()
+    for g in pad_geoms:
+        if not g:
+            continue
+        gl = g.casefold()
+        if a == gl or a.startswith(gl + "_"):
+            return True
+    return False
+
+
 def _pick_soldermask_layer(layers_data: dict, *, is_bottom: bool):
     """Return (layer_name, LayerFeatures) for the side's solder mask, or (None, None)."""
     if not layers_data:
@@ -113,6 +147,7 @@ class CKL02005(ChecklistRule):
         packages       = eda.packages if eda else []
 
         dpad_map = _load_dpad_part_map()
+        pad_geom_names = _load_pad_geom_names()
 
         columns = [
             "comp", "comp_layer", "part_name", "container",
@@ -172,6 +207,11 @@ class CKL02005(ChecklistRule):
                 is_dpad      = _matches_dpad(actual_pkg, expected_pkg)
 
                 passed   = (is_inside == is_dpad)
+                # Exemption: if the package uses an approved CKL-02-001 pad
+                # geometry (capacitors_10_list.csv), treat it as PASS even
+                # when the D-pad placement rule would otherwise FAIL.
+                if not passed and _matches_any_pad_geom(actual_pkg, pad_geom_names):
+                    passed = True
                 status   = "PASS" if passed else "FAIL"
                 location = "INSIDE" if is_inside else "OUTSIDE"
 
