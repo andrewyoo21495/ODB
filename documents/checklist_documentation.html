@@ -218,44 +218,16 @@
   <p>부품 배치, 이격, 방향, 클리어런스 검증을 위한 자동화된 PCB 설계 규칙 검사.</p>
 </div>
 
-<div class="stats-bar">
-  <div class="stat">
-    <div class="stat-value">30</div>
-    <div class="stat-label">총 규칙 수</div>
-  </div>
-  <div class="stat">
-    <div class="stat-value">3</div>
-    <div class="stat-label">카테고리</div>
-  </div>
-  <div class="stat">
-    <div class="stat-value">9</div>
-    <div class="stat-label">참조 CSV 파일</div>
-  </div>
-  <div class="stat">
-    <div class="stat-value">3</div>
-    <div class="stat-label">체크리스트 시리즈</div>
-  </div>
-</div>
-
 <div class="container">
 
-  <!-- Usage -->
-  <div class="usage">
-    <h2>실행 방법</h2>
-    <code><span class="cmd">python main.py check</span> <span class="arg">&lt;odb_path&gt;</span></code>
-    <code><span class="cmd">python main.py check</span> <span class="arg">&lt;odb_path&gt;</span> <span class="flag">--rules</span> <span class="arg">CKL-01-001 CKL-03-015</span></code>
-    <code><span class="cmd">python main.py check</span> <span class="arg">&lt;odb_path&gt;</span> <span class="flag">--output</span> <span class="arg">my_report.xlsx</span></code>
-    <p>결과는 콘솔에 출력되며 <strong>output/</strong> 디렉터리의 Excel 파일로 내보내집니다. 각 규칙은 자체 시트에 구조화된 결과 테이블로 기록됩니다.</p>
-  </div>
-
   <!-- ================================================================== -->
-  <div class="section-title">체크리스트 시리즈 01 &mdash; IC / PMIC / 안테나 / 센서 배치</div>
+  <div class="section-title">체크리스트 시리즈 01 &mdash; IC / PMIC / 안테나 / 센서 / 인터포저 배치</div>
 
   <!-- CKL-01-001 -->
   <div class="rule-card">
     <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
       <span class="rule-id">CKL-01-001</span>
-      <span class="rule-desc">IC 및 Filter는 반대면의 Interposer / Connector / SIM Socket / Shield Can과 패드-패드 겹침이 없어야 함</span>
+      <span class="rule-desc">IC, OSC 및 필터는 반대면의 인터포저, 커넥터, SIM 소켓, 쉴드캔과 패드 간 중첩이 없어야 합니다</span>
       <span class="badge badge-placement">Placement</span>
       <span class="toggle-icon">&#9654;</span>
     </div>
@@ -285,7 +257,7 @@
   <div class="rule-card">
     <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
       <span class="rule-id">CKL-01-002</span>
-      <span class="rule-desc">PMIC 부품의 최외곽 패드에는 VIA 설계가 적용되어야 함</span>
+      <span class="rule-desc">PMIC 부품의 최외곽 NC 패드 및 4개 코너 볼에 VIA 설계가 적용되어야 합니다</span>
       <span class="badge badge-placement">Placement</span>
       <span class="toggle-icon">&#9654;</span>
     </div>
@@ -318,7 +290,7 @@
   <div class="rule-card">
     <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
       <span class="rule-id">CKL-01-003</span>
-      <span class="rule-desc">QUALCOMM PMIC는 반대면 부품이 PMIC 외곽선 내부에 포함되도록 배치되어야 함</span>
+      <span class="rule-desc">QUALCOMM PMIC는 반대면 IC가 PMIC 외곽선 내에 포함되도록 배치해야 합니다</span>
       <span class="badge badge-placement">Placement</span>
       <span class="toggle-icon">&#9654;</span>
     </div>
@@ -349,7 +321,7 @@
   <div class="rule-card">
     <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
       <span class="rule-id">CKL-01-004</span>
-      <span class="rule-desc">안테나(ANT) C-Clip 패드는 반대면 SIM Socket 패드와 겹치지 않아야 함</span>
+      <span class="rule-desc">안테나(ANT) C-Clip 패드는 반대면 SIM 소켓 패드와 중첩되지 않아야 합니다</span>
       <span class="badge badge-placement">Placement</span>
       <span class="toggle-icon">&#9654;</span>
     </div>
@@ -377,7 +349,7 @@
   <div class="rule-card">
     <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
       <span class="rule-id">CKL-01-005</span>
-      <span class="rule-desc">AP/Memory 반대면에 겹치는 2012 이상 인덕터의 코너 배치 및 방향 검토</span>
+      <span class="rule-desc">반대면 AP/메모리와 중첩되는 2012 이상 인덕터: 코너 배치 및 방향 검토</span>
       <span class="badge badge-placement">Placement</span>
       <span class="toggle-icon">&#9654;</span>
     </div>
@@ -412,7 +384,7 @@
   <div class="rule-card">
     <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
       <span class="rule-id">CKL-01-006</span>
-      <span class="rule-desc">RF Receptacle 패드는 반대면 5핀 Filter 패드와 겹치지 않아야 함</span>
+      <span class="rule-desc">RF 리셉터클 패드는 반대면 5핀 필터 패드와 중첩되지 않아야 합니다</span>
       <span class="badge badge-placement">Placement</span>
       <span class="toggle-icon">&#9654;</span>
     </div>
@@ -440,7 +412,7 @@
   <div class="rule-card">
     <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
       <span class="rule-id">CKL-01-007</span>
-      <span class="rule-desc">기압 센서(1209-002567) 센싱 영역은 반대면의 IC / Shield Can / Connector와 겹치지 않아야 함</span>
+      <span class="rule-desc">기압 센서(1209-002567) 감지 영역은 반대면 IC 외곽선, 쉴드캔 패드 또는 커넥터 패드와 중첩되지 않아야 합니다</span>
       <span class="badge badge-placement">Placement</span>
       <span class="toggle-icon">&#9654;</span>
     </div>
@@ -464,6 +436,95 @@
     </div>
   </div>
 
+  <!-- CKL-01-008 -->
+  <div class="rule-card">
+    <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
+      <span class="rule-id">CKL-01-008</span>
+      <span class="rule-desc">인터포저의 곡선부 외곽 pin에는 SIGNAL BALL(pin map)을 설계하지 말아야 합니다 (GND만 허용)</span>
+      <span class="badge badge-placement">Placement</span>
+      <span class="toggle-icon">&#9654;</span>
+    </div>
+    <div class="rule-body">
+      <h4>검사 과정</h4>
+      <ol>
+        <li>Top 및 Bottom 레이어에서 인터포저(INP) 부품을 탐색한다.</li>
+        <li>각 인터포저의 최외곽 링 핀을 식별한다.</li>
+        <li>최외곽 핀 중 곡선부(코너) 영역에 위치한 핀을 선별한다. (외곽 핀 바운딩 박스의 각 코너로부터 15% 범위)</li>
+        <li>각 곡선부 핀에 할당된 네트를 확인한다. GND 계열(GND / GROUND / VSS 등)이면 PASS, 그 외 신호이면 FAIL.</li>
+      </ol>
+      <h4>출력 컬럼</h4>
+      <table class="col-table">
+        <tr><th>컬럼</th><th>설명</th></tr>
+        <tr><td class="col-name">comp</td><td>인터포저 부품 이름</td></tr>
+        <tr><td class="col-name">cmp_layer</td><td>인터포저가 배치된 레이어</td></tr>
+        <tr><td class="col-name">pin</td><td>곡선부 외곽 핀 이름</td></tr>
+        <tr><td class="col-name">signal</td><td>해당 핀의 네트 이름 (없으면 (none))</td></tr>
+        <tr><td class="col-name">status</td><td>PASS 또는 FAIL</td></tr>
+      </table>
+      <h4>Pass/Fail 기준</h4>
+      <div class="pass-fail-note fail-note"><strong>FAIL</strong>: 곡선부 외곽 핀에 GND가 아닌 신호 볼이 할당되면 FAIL. GND 계열이면 PASS.</div>
+    </div>
+  </div>
+
+  <!-- CKL-01-009 -->
+  <div class="rule-card">
+    <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
+      <span class="rule-id">CKL-01-009</span>
+      <span class="rule-desc">Interposer edge의 외측 ball들이 묶음 구조(grouped) 적용되어 있는지 검토 (smt 또는 smb 층 확인)</span>
+      <span class="badge badge-placement">Placement</span>
+      <span class="toggle-icon">&#9654;</span>
+    </div>
+    <div class="rule-body">
+      <h4>검사 과정</h4>
+      <ol>
+        <li>Top 및 Bottom 레이어에서 인터포저(INP) 부품을 탐색한다.</li>
+        <li>각 인터포저의 최외곽 링 핀을 식별한다.</li>
+        <li>해당 면의 솔더 마스크 레이어(Top &rarr; smt, Bottom &rarr; smb)에서 인접한 외측 패드들이 하나로 병합된 오프닝을 공유하는지 분석한다. (패드 geometry를 0.02mm 버퍼 후 union하여 2개 이상의 핀을 덮는 클러스터를 묶음으로 판정)</li>
+        <li>묶음(grouped) 패드 핀은 PASS, 묶음이 아니면서 비-GND 신호가 할당된 핀은 FAIL.</li>
+      </ol>
+      <h4>출력 컬럼</h4>
+      <table class="col-table">
+        <tr><th>컬럼</th><th>설명</th></tr>
+        <tr><td class="col-name">comp</td><td>인터포저 부품 이름</td></tr>
+        <tr><td class="col-name">cmp_layer</td><td>인터포저가 배치된 레이어</td></tr>
+        <tr><td class="col-name">pin</td><td>최외곽 핀 이름</td></tr>
+        <tr><td class="col-name">shape</td><td>패드 형태 (grouped / normal)</td></tr>
+        <tr><td class="col-name">signal</td><td>해당 핀의 네트 이름</td></tr>
+        <tr><td class="col-name">status</td><td>PASS 또는 FAIL</td></tr>
+      </table>
+      <h4>Pass/Fail 기준</h4>
+      <div class="pass-fail-note fail-note"><strong>FAIL</strong>: 외측 볼이 묶음 구조가 아니면서 비-GND 신호가 할당되면 FAIL. 묶음 구조이거나 GND이면 PASS.</div>
+    </div>
+  </div>
+
+  <!-- CKL-01-010 -->
+  <div class="rule-card">
+    <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
+      <span class="rule-id">CKL-01-010</span>
+      <span class="rule-desc">PCB 고정 SCREW 가 없을 경우 PCB 폭을 3.5 mm 이상 연장 설계할 것</span>
+      <span class="badge badge-placement">Placement</span>
+      <span class="toggle-icon">&#9654;</span>
+    </div>
+    <div class="rule-body">
+      <h4>검사 과정</h4>
+      <ol>
+        <li>PCB 프로파일 데이터로부터 보드 외곽 polygon을 구축한다.</li>
+        <li>국부 폭이 3.5mm 이하이고 본체에서 2mm 이상 돌출된 얇은 영역을 검출한다. (CKL-03-011 벤딩 검출과 동일한 morphological opening 방식)</li>
+        <li>각 좁은 영역 인근에 고정 스크류 / 홀이 있는지 확인한다.</li>
+      </ol>
+      <div class="pass-fail-note"><strong>참고</strong>: 스크류 / 관통홀 근접 검출은 현재 미구현 상태로, 검출된 좁은 영역은 모두 screw=FALSE / FAIL로 보고됩니다.</div>
+      <h4>출력 컬럼</h4>
+      <table class="col-table">
+        <tr><th>컬럼</th><th>설명</th></tr>
+        <tr><td class="col-name">region</td><td>검출된 좁은 영역 인덱스 (region1, region2, ...)</td></tr>
+        <tr><td class="col-name">screw</td><td>인근 고정 스크류 존재 여부 (TRUE / FALSE)</td></tr>
+        <tr><td class="col-name">status</td><td>PASS 또는 FAIL</td></tr>
+      </table>
+      <h4>Pass/Fail 기준</h4>
+      <div class="pass-fail-note"><strong>PASS</strong>: 좁은 영역에 고정 스크류가 있으면 PASS. 없으면 <strong>FAIL</strong> (폭 3.5mm 이상 연장 필요).</div>
+    </div>
+  </div>
+
   <!-- ================================================================== -->
   <div class="section-title">체크리스트 시리즈 02 &mdash; Capacitor / Inductor 배치</div>
 
@@ -471,7 +532,7 @@
   <div class="rule-card">
     <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
       <span class="rule-id">CKL-02-001</span>
-      <span class="rule-desc">관리 대상 Capacitor 10종은 반대면 Connector / Interposer / Shield Can과 최소 1.5mm 이격되어야 함</span>
+      <span class="rule-desc">10종 관리 캐패시터는 반대면 커넥터, 인터포저, 쉴드캔과 최소 1.5mm 이격되어야 합니다</span>
       <span class="badge badge-spacing">Spacing</span>
       <span class="toggle-icon">&#9654;</span>
     </div>
@@ -505,7 +566,7 @@
   <div class="rule-card">
     <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
       <span class="rule-id">CKL-02-002</span>
-      <span class="rule-desc">관리 대상 Capacitor 41종이 반대면 Connector에 겹치는 경우 수평 정렬되어야 함</span>
+      <span class="rule-desc">41종 관리 캐패시터가 반대면 커넥터와 중첩될 경우 수평으로 정렬되어야 합니다</span>
       <span class="badge badge-placement">Placement</span>
       <span class="toggle-icon">&#9654;</span>
     </div>
@@ -540,7 +601,7 @@
   <div class="rule-card">
     <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
       <span class="rule-id">CKL-02-003</span>
-      <span class="rule-desc">관리 대상 Capacitor 41종이 반대면 Shield Can 패드에 겹치는 경우 수평 정렬되어야 하며 코너/대각 영역은 금지</span>
+      <span class="rule-desc">41종 관리 캐패시터의 패드가 반대면 쉴드캔 패드와 중첩될 경우 수평으로 정렬되어야 하며, 코너 또는 대각선 구간에 배치되지 않아야 합니다</span>
       <span class="badge badge-placement">Placement</span>
       <span class="toggle-icon">&#9654;</span>
     </div>
@@ -574,7 +635,7 @@
   <div class="rule-card">
     <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
       <span class="rule-id">CKL-02-004</span>
-      <span class="rule-desc">관리 대상 Capacitor 41종: LED Flash 반대면 배치 금지, RF 반대면은 0.5mm 이상 이격</span>
+      <span class="rule-desc">41종 관리 캐패시터를 LED Flash 부품 반대면에 배치하지 마십시오. RF 부품 반대면에는 0.5mm 이상 이격을 유지해야 합니다.</span>
       <span class="badge badge-placement">Placement</span>
       <span class="toggle-icon">&#9654;</span>
     </div>
@@ -607,7 +668,7 @@
   <div class="rule-card">
     <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
       <span class="rule-id">CKL-02-005</span>
-      <span class="rule-desc">Shield Can / Interposer 내부의 D-pad 대상 Capacitor는 SMT/SMB 레이어에 반원(D형) 오프닝이 적용되어야 함</span>
+      <span class="rule-desc">D-pad 리스트 캐패시터는 쉴드캔/인터포저 내부에 위치할 때만 D-pad 패키지를 사용해야 하며, 외부에서는 일반 패키지를 사용해야 합니다.</span>
       <span class="badge badge-placement">Placement</span>
       <span class="toggle-icon">&#9654;</span>
     </div>
@@ -640,7 +701,7 @@
   <div class="rule-card">
     <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
       <span class="rule-id">CKL-02-006</span>
-      <span class="rule-desc">일반 Capacitor(관리 대상 51종 외)가 Connector / Shield Can에 겹치는 경우 edge · 방향 · 대각 영역 검사</span>
+      <span class="rule-desc">일반 캐패시터(51종 관리 대상 제외)가 반대면 커넥터 또는 쉴드캔과 중첩될 경우: 엣지, 방향, 대각선 영역 검사</span>
       <span class="badge badge-placement">Placement</span>
       <span class="toggle-icon">&#9654;</span>
     </div>
@@ -678,7 +739,7 @@
   <div class="rule-card">
     <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
       <span class="rule-id">CKL-02-007</span>
-      <span class="rule-desc">Shield Can 내부 벽 근처에 배치된 Capacitor / Inductor는 내부 벽과 0.3mm 이상 이격되어야 함</span>
+      <span class="rule-desc">쉴드캔 내벽과 내부 캐패시터/인덕터 간 이격 거리가 0.3 mm 이상이어야 합니다.</span>
       <span class="badge badge-spacing">Spacing</span>
       <span class="toggle-icon">&#9654;</span>
     </div>
@@ -709,7 +770,7 @@
   <div class="rule-card">
     <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
       <span class="rule-id">CKL-02-008</span>
-      <span class="rule-desc">2S Inductor(&ge;2012)가 반대면 Connector에 겹치는 경우 edge 및 방향 검사</span>
+      <span class="rule-desc">반대면 커넥터 또는 쉴드캔과 중첩되는 2012 이상 2S 인덕터: 엣지 및 방향 검사</span>
       <span class="badge badge-placement">Placement</span>
       <span class="toggle-icon">&#9654;</span>
     </div>
@@ -743,7 +804,7 @@
   <div class="rule-card">
     <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
       <span class="rule-id">CKL-02-009</span>
-      <span class="rule-desc">일반 Inductor(&ge;2012, 2S 제외): Connector는 edge/방향 검사, Shield Can은 겹침 자체가 FAIL</span>
+      <span class="rule-desc">2012 이상 일반 인덕터(2S 제외): 반대면 커넥터 대비 엣지/방향 검사, 반대면 쉴드캔 대비 회피 검사</span>
       <span class="badge badge-placement">Placement</span>
       <span class="toggle-icon">&#9654;</span>
     </div>
@@ -779,7 +840,7 @@
   <div class="rule-card">
     <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
       <span class="rule-id">CKL-02-010</span>
-      <span class="rule-desc">SIM Socket 반대면의 Capacitor / Inductor(&ge;2012)는 수평 방향으로 배치되어야 함</span>
+      <span class="rule-desc">SIM 소켓: 반대면의 캐패시터 및 2012 이상 인덕터는 수평 방향이어야 합니다</span>
       <span class="badge badge-placement">Placement</span>
       <span class="toggle-icon">&#9654;</span>
     </div>
@@ -810,7 +871,7 @@
   <div class="rule-card">
     <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
       <span class="rule-id">CKL-02-011</span>
-      <span class="rule-desc">AP/Memory 사이에 끼워진(Sandwiched) Capacitor가 AP/Memory 외곽선과 겹치면 안 됨</span>
+      <span class="rule-desc">AP/메모리 사이에 끼인 캐패시터(동일면 또는 반대면): 외곽선과 중첩될 경우 배치 문제로 표시됩니다</span>
       <span class="badge badge-placement">Placement</span>
       <span class="toggle-icon">&#9654;</span>
     </div>
@@ -843,7 +904,7 @@
   <div class="rule-card">
     <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
       <span class="rule-id">CKL-02-012</span>
-      <span class="rule-desc">Inductor(&ge;2012)가 반대면 AP/Memory와 동일 면 Shield Can에 동시 겹치는 배치는 피해야 함</span>
+      <span class="rule-desc">2012 이상 인덕터가 반대면에서 AP/메모리와 쉴드캔 모두와 중첩되는 것을 피해야 합니다</span>
       <span class="badge badge-placement">Placement</span>
       <span class="toggle-icon">&#9654;</span>
     </div>
@@ -874,13 +935,13 @@
   </div>
 
   <!-- ================================================================== -->
-  <div class="section-title">체크리스트 시리즈 03 &mdash; MCP / 센서 / OSC / MIC / 클리어런스</div>
+  <div class="section-title">체크리스트 시리즈 03 &mdash; MCP / 센서 / OSC / MIC / 실드캔 / 보강판 / 클리어런스</div>
 
   <!-- CKL-03-001 -->
   <div class="rule-card">
     <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
       <span class="rule-id">CKL-03-001</span>
-      <span class="rule-desc">MCP IC: 반대면 Connector 겹침 금지, 코너 핀에는 각각 최소 1개 이상의 VIA 필요</span>
+      <span class="rule-desc">MCP IC: 반대면 커넥터 중첩 불가, 코너 핀에는 각각 최소 1개의 VIA가 있어야 합니다</span>
       <span class="badge badge-clearance">Clearance</span>
       <span class="toggle-icon">&#9654;</span>
     </div>
@@ -915,7 +976,7 @@
   <div class="rule-card">
     <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
       <span class="rule-id">CKL-03-002</span>
-      <span class="rule-desc">중앙이 빈 BGA IC는 레진(Resin) 충전이 필요함</span>
+      <span class="rule-desc">내부 패드가 없는 BGA 타입 IC 부품은 수지 충전이 필요합니다</span>
       <span class="badge badge-placement">Placement</span>
       <span class="toggle-icon">&#9654;</span>
     </div>
@@ -939,11 +1000,40 @@
     </div>
   </div>
 
+  <!-- CKL-03-003 -->
+  <div class="rule-card">
+    <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
+      <span class="rule-id">CKL-03-003</span>
+      <span class="rule-desc">실드캔 엣지 패드는 fill-cut 부와 0mm 초과 이격하여 설계할 것</span>
+      <span class="badge badge-placement">Placement</span>
+      <span class="toggle-icon">&#9654;</span>
+    </div>
+    <div class="rule-body">
+      <h4>검사 과정</h4>
+      <ol>
+        <li>Top 및 Bottom 레이어에서 실드캔(Shield Can) 부품을 탐색한다.</li>
+        <li>각 실드캔의 개별 패드 geometry를 구축한다. (toeprint geom 우선, 없으면 EDA 핀 외곽선 사용)</li>
+        <li>모든 패드 쌍 사이의 최소 거리를 계산한다.</li>
+        <li>최소 패드 간 간격이 0.01mm 미만이면 FAIL로 플래그한다.</li>
+      </ol>
+      <h4>출력 컬럼</h4>
+      <table class="col-table">
+        <tr><th>컬럼</th><th>설명</th></tr>
+        <tr><td class="col-name">comp</td><td>실드캔 이름</td></tr>
+        <tr><td class="col-name">cmp_layer</td><td>실드캔이 배치된 레이어</td></tr>
+        <tr><td class="col-name">min_gap_mm</td><td>가장 가까운 패드 쌍의 간격 (mm)</td></tr>
+        <tr><td class="col-name">status</td><td>PASS 또는 FAIL</td></tr>
+      </table>
+      <h4>Pass/Fail 기준</h4>
+      <div class="pass-fail-note"><strong>PASS</strong>: 패드 간 최소 간격이 0.01mm 이상이면 PASS. 그 외는 <strong>FAIL</strong>.</div>
+    </div>
+  </div>
+
   <!-- CKL-03-004 -->
   <div class="rule-card">
     <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
       <span class="rule-id">CKL-03-004</span>
-      <span class="rule-desc">Hall IC의 모든 패드는 각각 최소 1개 이상의 VIA가 있어야 함</span>
+      <span class="rule-desc">Hall IC 각 패드에는 최소 1개의 VIA가 있어야 합니다</span>
       <span class="badge badge-placement">Placement</span>
       <span class="toggle-icon">&#9654;</span>
     </div>
@@ -974,7 +1064,7 @@
   <div class="rule-card">
     <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
       <span class="rule-id">CKL-03-005</span>
-      <span class="rule-desc">3축 / 6축 센서의 모든 패드는 각각 최소 1개 이상의 VIA가 있어야 함</span>
+      <span class="rule-desc">축 센서 각 패드에는 최소 1개의 VIA가 있어야 합니다</span>
       <span class="badge badge-placement">Placement</span>
       <span class="toggle-icon">&#9654;</span>
     </div>
@@ -1001,11 +1091,71 @@
     </div>
   </div>
 
+  <!-- CKL-03-006 -->
+  <div class="rule-card">
+    <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
+      <span class="rule-id">CKL-03-006</span>
+      <span class="rule-desc">Washer solder mask 는 결합될 bothhole의 solder mask 와 overlap 되지 않도록 설계할 것</span>
+      <span class="badge badge-placement">Placement</span>
+      <span class="toggle-icon">&#9654;</span>
+    </div>
+    <div class="rule-body">
+      <h4>검사 과정</h4>
+      <ol>
+        <li>Top 및 Bottom 레이어에서 Washer 부품을 탐색한다. (part_name이 &ldquo;3712-&rdquo; 로 시작하거나 comp_name이 &ldquo;SUS&rdquo; 로 시작, ANT 부품은 제외)</li>
+        <li>각 Washer의 원형 패드(CR / CT 외곽선 타입)를 식별한다.</li>
+        <li>각 원형 패드 geometry가 동일 부품 내 다른 패드와 교차/접촉(0.001mm 허용)하는지 확인한다.</li>
+        <li>원형 패드가 고립되어 있으면 PASS, 다른 패드와 겹치면 FAIL. (원형 패드가 없으면 PASS)</li>
+      </ol>
+      <h4>출력 컬럼</h4>
+      <table class="col-table">
+        <tr><th>컬럼</th><th>설명</th></tr>
+        <tr><td class="col-name">comp</td><td>Washer 부품 이름</td></tr>
+        <tr><td class="col-name">cmp_layer</td><td>Washer가 배치된 레이어</td></tr>
+        <tr><td class="col-name">part_name</td><td>Washer part_name</td></tr>
+        <tr><td class="col-name">status</td><td>PASS 또는 FAIL</td></tr>
+      </table>
+      <h4>Pass/Fail 기준</h4>
+      <div class="pass-fail-note fail-note"><strong>FAIL</strong>: Washer의 원형 패드가 동일 부품 내 다른 패드와 겹치면 FAIL.</div>
+    </div>
+  </div>
+
+  <!-- CKL-03-007 -->
+  <div class="rule-card">
+    <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
+      <span class="rule-id">CKL-03-007</span>
+      <span class="rule-desc">5핀 RF Filter의 GND 패드 당 VIA 1개 이상 적용할 것</span>
+      <span class="badge badge-placement">Placement</span>
+      <span class="toggle-icon">&#9654;</span>
+    </div>
+    <div class="rule-body">
+      <h4>검사 과정</h4>
+      <ol>
+        <li>Top 및 Bottom 레이어에서 Filter 부품을 탐색한다.</li>
+        <li>핀(패드)이 정확히 5개인 Filter만 필터링한다.</li>
+        <li>각 패드의 네트가 GND(접지)인지 판정한다.</li>
+        <li>GND 패드에 대해 VIA가 1개 이상 적용되었는지 확인한다.</li>
+      </ol>
+      <h4>출력 컬럼</h4>
+      <table class="col-table">
+        <tr><th>컬럼</th><th>설명</th></tr>
+        <tr><td class="col-name">comp</td><td>5핀 Filter 이름</td></tr>
+        <tr><td class="col-name">cmp_layer</td><td>Filter가 배치된 레이어</td></tr>
+        <tr><td class="col-name">pad</td><td>패드 이름 / 번호</td></tr>
+        <tr><td class="col-name">signal</td><td>해당 패드의 네트 이름</td></tr>
+        <tr><td class="col-name">via</td><td>해당 패드 위치의 VIA 수</td></tr>
+        <tr><td class="col-name">status</td><td>PASS 또는 FAIL</td></tr>
+      </table>
+      <h4>Pass/Fail 기준</h4>
+      <div class="pass-fail-note"><strong>PASS</strong>: 비-GND 패드는 PASS, GND 패드는 VIA가 1개 이상이면 PASS. GND 패드에 VIA가 없으면 <strong>FAIL</strong>.</div>
+    </div>
+  </div>
+
   <!-- CKL-03-008 -->
   <div class="rule-card">
     <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
       <span class="rule-id">CKL-03-008</span>
-      <span class="rule-desc">일반 센서 부품의 모든 패드에는 최소 1개 이상의 VIA가 적용되어야 함</span>
+      <span class="rule-desc">센서 부품 각 패드에는 최소 4개의 VIA가 적용되어야 합니다</span>
       <span class="badge badge-placement">Placement</span>
       <span class="toggle-icon">&#9654;</span>
     </div>
@@ -1023,12 +1173,13 @@
         <tr><th>컬럼</th><th>설명</th></tr>
         <tr><td class="col-name">comp</td><td>센서 부품 이름</td></tr>
         <tr><td class="col-name">cmp_layer</td><td>센서가 배치된 레이어</td></tr>
+        <tr><td class="col-name">part_name</td><td>센서 part_name</td></tr>
         <tr><td class="col-name">pad</td><td>패드 이름 / 번호</td></tr>
         <tr><td class="col-name">via</td><td>해당 패드 위치의 VIA 수</td></tr>
         <tr><td class="col-name">status</td><td>PASS 또는 FAIL</td></tr>
       </table>
       <h4>Pass/Fail 기준</h4>
-      <div class="pass-fail-note fail-note"><strong>FAIL</strong>: 패드에 VIA가 0개면 FAIL. 1개 이상이면 <strong>PASS</strong>.</div>
+      <div class="pass-fail-note"><strong>PASS</strong>: 패드의 VIA 수가 4개 이상이면 PASS. 그 외는 <strong>FAIL</strong>.</div>
     </div>
   </div>
 
@@ -1036,7 +1187,7 @@
   <div class="rule-card">
     <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
       <span class="rule-id">CKL-03-009</span>
-      <span class="rule-desc">SIM Socket의 최외곽(Perimeter) 패드에는 찢김 방지를 위해 최소 4개 이상의 VIA가 필요함</span>
+      <span class="rule-desc">SIM 소켓 최외곽 GND 패드에는 인열 저항을 위해 최소 4개의 VIA가 있어야 합니다</span>
       <span class="badge badge-placement">Placement</span>
       <span class="toggle-icon">&#9654;</span>
     </div>
@@ -1045,19 +1196,52 @@
       <ol>
         <li>Top 및 Bottom 레이어에서 SIM Socket을 탐색한다.</li>
         <li>각 SIM Socket 패키지의 핀 배열 중 상/하/좌/우 네 방향 모두에 이웃 핀이 있는 내부 핀을 제외하여 외곽 핀을 선별한다. (핀 피치는 최소 핀 간격의 40% 허용 오차 기반으로 판정)</li>
-        <li>각 외곽 핀 위치에서 VIA 수를 카운트한다.</li>
+        <li>외곽 핀 중 GND(접지) 네트에 연결된 패드만 검사 대상으로 선별한다.</li>
+        <li>각 외곽 GND 패드 위치에서 VIA 수를 카운트한다.</li>
       </ol>
       <h4>출력 컬럼</h4>
       <table class="col-table">
         <tr><th>컬럼</th><th>설명</th></tr>
         <tr><td class="col-name">comp</td><td>SIM Socket 이름</td></tr>
         <tr><td class="col-name">cmp_layer</td><td>SIM Socket이 배치된 레이어</td></tr>
-        <tr><td class="col-name">pad</td><td>외곽 패드 이름 / 번호</td></tr>
+        <tr><td class="col-name">pad</td><td>외곽 GND 패드 이름 / 번호</td></tr>
+        <tr><td class="col-name">signal</td><td>해당 패드의 네트 이름 (GND 계열)</td></tr>
         <tr><td class="col-name">via</td><td>해당 패드 위치의 VIA 수</td></tr>
         <tr><td class="col-name">status</td><td>PASS 또는 FAIL</td></tr>
       </table>
       <h4>Pass/Fail 기준</h4>
-      <div class="pass-fail-note"><strong>PASS</strong>: 외곽 패드의 VIA 수가 4개 이상인 경우. 그 외는 <strong>FAIL</strong>.</div>
+      <div class="pass-fail-note"><strong>PASS</strong>: 외곽 GND 패드의 VIA 수가 4개 이상인 경우. 그 외는 <strong>FAIL</strong>.</div>
+    </div>
+  </div>
+
+  <!-- CKL-03-010 -->
+  <div class="rule-card">
+    <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
+      <span class="rule-id">CKL-03-010</span>
+      <span class="rule-desc">보강판(SUS) 패드는 강성 보강을 위해 FLOOD 처리하여 GND와 연결하고, GND 패드에는 최소 4개의 VIA를 적용해야 합니다</span>
+      <span class="badge badge-placement">Placement</span>
+      <span class="toggle-icon">&#9654;</span>
+    </div>
+    <div class="rule-body">
+      <h4>검사 과정</h4>
+      <ol>
+        <li>Top 및 Bottom 레이어에서 보강판(SUS) 부품을 탐색한다. (comp_name이 &ldquo;SUS&rdquo; 로 시작)</li>
+        <li>각 SUS 부품의 패드 중 GND(접지) 네트에 연결된 패드만 선별한다.</li>
+        <li>각 GND 패드 위치에서 VIA 수를 카운트한다.</li>
+        <li>GND 패드의 VIA가 4개 미만이면 FAIL로 플래그한다.</li>
+      </ol>
+      <h4>출력 컬럼</h4>
+      <table class="col-table">
+        <tr><th>컬럼</th><th>설명</th></tr>
+        <tr><td class="col-name">comp</td><td>보강판(SUS) 부품 이름</td></tr>
+        <tr><td class="col-name">cmp_layer</td><td>보강판이 배치된 레이어</td></tr>
+        <tr><td class="col-name">pad</td><td>GND 패드 이름 / 번호</td></tr>
+        <tr><td class="col-name">signal</td><td>해당 패드의 네트 이름 (GND 계열)</td></tr>
+        <tr><td class="col-name">via</td><td>해당 패드 위치의 VIA 수</td></tr>
+        <tr><td class="col-name">status</td><td>PASS 또는 FAIL</td></tr>
+      </table>
+      <h4>Pass/Fail 기준</h4>
+      <div class="pass-fail-note"><strong>PASS</strong>: GND 패드의 VIA 수가 4개 이상이면 PASS. 그 외는 <strong>FAIL</strong>.</div>
     </div>
   </div>
 
@@ -1065,7 +1249,7 @@
   <div class="rule-card">
     <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
       <span class="rule-id">CKL-03-011</span>
-      <span class="rule-desc">OSC 부품은 굽힘 취약 영역(bending-vulnerable area)에 배치되면 안 됨</span>
+      <span class="rule-desc">OSC 부품은 벤딩 취약 영역에 배치되지 않아야 합니다</span>
       <span class="badge badge-clearance">Clearance</span>
       <span class="toggle-icon">&#9654;</span>
     </div>
@@ -1093,7 +1277,7 @@
   <div class="rule-card">
     <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
       <span class="rule-id">CKL-03-012</span>
-      <span class="rule-desc">OSC는 PCB 외곽 및 BOTHHOLE 부품과 최소 1mm 이격되어야 하며, Shield Can 내부 배치 여부도 기록</span>
+      <span class="rule-desc">OSC 부품은 PCB 가장자리 및 BOTHHOLE 부품과 최소 1mm 이격되어야 합니다</span>
       <span class="badge badge-clearance">Clearance</span>
       <span class="toggle-icon">&#9654;</span>
     </div>
@@ -1124,7 +1308,7 @@
   <div class="rule-card">
     <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
       <span class="rule-id">CKL-03-013</span>
-      <span class="rule-desc">MIC 부품의 모든 패드에는 각각 최소 1개 이상의 VIA가 있어야 함</span>
+      <span class="rule-desc">각 MIC 패드에는 최소 1개의 VIA가 있어야 합니다</span>
       <span class="badge badge-placement">Placement</span>
       <span class="toggle-icon">&#9654;</span>
     </div>
@@ -1149,11 +1333,41 @@
     </div>
   </div>
 
+  <!-- CKL-03-014 -->
+  <div class="rule-card">
+    <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
+      <span class="rule-id">CKL-03-014</span>
+      <span class="rule-desc">실드캔 강성 개선 패드 하단에 위치한 SIGNAL 패턴들은 PAD fill cut 기준으로 0.2mm 이격할 것</span>
+      <span class="badge badge-placement">Placement</span>
+      <span class="toggle-icon">&#9654;</span>
+    </div>
+    <div class="rule-body">
+      <h4>검사 과정</h4>
+      <ol>
+        <li>Top 및 Bottom 레이어에서 실드캔(Shield Can) 부품을 탐색한다.</li>
+        <li>각 실드캔에서 강성 개선용 십자(cross) 형태 패드를 식별한다. (심볼명이 &ldquo;cross&rdquo; 로 시작하거나, 12개 꼭짓점의 CONTOUR 외곽선)</li>
+        <li>강성 개선 패드가 있으면 해당 면 바로 아래 신호 레이어(Top &rarr; 상단에서 2번째 신호층, Bottom &rarr; 하단에서 2번째 신호층)에서 패드로부터 0.2mm 이내에 신호 패턴이 있는지 검사한다.</li>
+        <li>클리어런스 영역(0.2mm) 내에서 발견된 신호를 보고한다.</li>
+      </ol>
+      <h4>출력 컬럼</h4>
+      <table class="col-table">
+        <tr><th>컬럼</th><th>설명</th></tr>
+        <tr><td class="col-name">comp</td><td>실드캔 이름</td></tr>
+        <tr><td class="col-name">cmp_layer</td><td>실드캔이 배치된 레이어</td></tr>
+        <tr><td class="col-name">enhanced_pad</td><td>강성 개선(십자형) 패드 이름</td></tr>
+        <tr><td class="col-name">signal</td><td>0.2mm 이내에서 발견된 신호 패턴 (없으면 &ldquo;&ndash;&rdquo;)</td></tr>
+        <tr><td class="col-name">status</td><td>PASS 또는 FAIL</td></tr>
+      </table>
+      <h4>Pass/Fail 기준</h4>
+      <div class="pass-fail-note fail-note"><strong>FAIL</strong>: 강성 개선 패드 하단 0.2mm 이내에 SIGNAL 패턴이 있으면 FAIL.</div>
+    </div>
+  </div>
+
   <!-- CKL-03-015 -->
   <div class="rule-card">
     <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
       <span class="rule-id">CKL-03-015</span>
-      <span class="rule-desc">부품 패드는 PCB 외곽에서 최소 0.65mm 이상 이격되어야 함</span>
+      <span class="rule-desc">부품은 PCB 외곽선으로부터 최소 0.65mm 이격되어야 합니다</span>
       <span class="badge badge-clearance">Clearance</span>
       <span class="toggle-icon">&#9654;</span>
     </div>
@@ -1183,7 +1397,7 @@
   <div class="rule-card">
     <div class="rule-header" onclick="this.parentElement.classList.toggle('open')">
       <span class="rule-id">CKL-03-016</span>
-      <span class="rule-desc">Interposer / Shield Can / SIM Socket / Connector는 OSC 부품의 반대면과 겹치면 안 됨</span>
+      <span class="rule-desc">인터포저, 쉴드캔, SIM 소켓, 커넥터, 안테나는 OSC 부품의 반대면과 패드 중첩이 없어야 합니다</span>
       <span class="badge badge-placement">Placement</span>
       <span class="toggle-icon">&#9654;</span>
     </div>
@@ -1191,8 +1405,8 @@
       <h4>검사 과정</h4>
       <ol>
         <li>Top 및 Bottom 레이어에서 OSC 부품을 탐색한다.</li>
-        <li>각 OSC의 반대면에서 Interposer(INP), Shield Can(SC), SIM Socket(SIM), Connector 부품을 수집한다.</li>
-        <li>해당 부품들이 OSC의 footprint 와 겹치는지 확인한다.</li>
+        <li>각 OSC의 반대면에서 Interposer(INP), Shield Can(SC), SIM Socket(SIM), Connector, 안테나(ANT) 부품을 수집한다.</li>
+        <li>해당 부품들이 OSC의 패드와 패드-패드로 겹치는지 확인한다. 인터포저는 패드-링 외곽선 침범도 함께 검사한다. (외곽선만 겹치는 경우는 PASS)</li>
         <li>겹치는 부품별로 한 행씩 보고하고, 겹침이 없는 OSC는 PASS로 기록한다.</li>
       </ol>
       <h4>출력 컬럼</h4>
@@ -1200,12 +1414,13 @@
         <tr><th>컬럼</th><th>설명</th></tr>
         <tr><td class="col-name">comp</td><td>OSC 부품 이름</td></tr>
         <tr><td class="col-name">cmp_layer</td><td>OSC가 배치된 레이어</td></tr>
-        <tr><td class="col-name">overlapping_cmp</td><td>반대면에서 겹치는 부품 이름 (INP / SC / SIM / Connector), 없으면 &ldquo;&ndash;&rdquo;</td></tr>
+        <tr><td class="col-name">overlapping_cmp</td><td>반대면에서 겹치는 부품 이름 (INP / SC / SIM / Connector / ANT), 없으면 &ldquo;&ndash;&rdquo;</td></tr>
         <tr><td class="col-name">part_name</td><td>반대면 부품의 part_name, 없으면 &ldquo;&ndash;&rdquo;</td></tr>
+        <tr><td class="col-name">overlap_type</td><td>겹침 유형 (패드-패드 / 외곽선 침범)</td></tr>
         <tr><td class="col-name">status</td><td>PASS 또는 FAIL</td></tr>
       </table>
       <h4>Pass/Fail 기준</h4>
-      <div class="pass-fail-note fail-note"><strong>FAIL</strong>: INP, SC, SIM, Connector 중 어느 것이라도 OSC 반대면에 겹치면 FAIL.</div>
+      <div class="pass-fail-note fail-note"><strong>FAIL</strong>: INP / SC / SIM / Connector / ANT 중 어느 것이라도 OSC 반대면 패드와 겹치면 FAIL. (외곽선만 겹치는 경우는 PASS)</div>
     </div>
   </div>
 

@@ -8,6 +8,7 @@ import {
   Select,
   Space,
 } from "antd";
+import { ReadOutlined } from "@ant-design/icons";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { api } from "../api/client";
 import { useFeature } from "../hooks/useFeature";
@@ -32,7 +33,19 @@ export default function Checklist() {
   const done = status === "done";
 
   return (
-    <Card title="체크리스트">
+    <Card
+      title="체크리스트"
+      extra={
+        <Button
+          icon={<ReadOutlined />}
+          href="/api/docs/checklist"
+          target="_blank"
+          rel="noopener"
+        >
+          검토기준
+        </Button>
+      }
+    >
       <Space direction="vertical" style={{ width: "100%" }} size="middle">
         <JobSelect />
         {!jobId ? (
