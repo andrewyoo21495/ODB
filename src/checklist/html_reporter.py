@@ -15,6 +15,14 @@ from src.models import RuleResult
 
 
 # ---------------------------------------------------------------------------
+# Hidden rules — 결과 HTML에서 임시로 숨길 룰 ID.
+# 검증이 끝나 다시 노출하려면 해당 ID를 set에서 빼면 된다 (비우면 전부 노출).
+# ---------------------------------------------------------------------------
+
+HIDDEN_RULE_IDS: set[str] = {"CKL-03-015"}
+
+
+# ---------------------------------------------------------------------------
 # Sorting helper (same logic as reporter._rule_sort_key)
 # ---------------------------------------------------------------------------
 
@@ -249,6 +257,8 @@ def generate_html_report(
     Signature mirrors ``generate_report()`` from *reporter.py* for drop-in
     usage.  Does **not** call ``_cleanup_images()`` — the caller handles that.
     """
+    # 숨김 처리된 룰은 통계/ToC/Summary/섹션 어디에도 노출되지 않도록 먼저 제거.
+    results = [r for r in results if r.rule_id not in HIDDEN_RULE_IDS]
     sorted_results = sorted(results, key=_rule_sort_key)
 
     # Pre-encode all images before anything else
