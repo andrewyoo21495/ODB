@@ -146,6 +146,7 @@ class CKL01005(ChecklistRule):
                         layer_name=ap_layer,
                         primary_label="AP/Memory",
                         overlap_label="Inductor",
+                        show_edge_segments=True,
                     )
                     images.append({"path": img_path,
                                    "title": f"{ap.comp_name} ({ap_layer})",

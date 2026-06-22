@@ -21,6 +21,7 @@ from .polygon import (
     get_container_interior,
     get_outer_outline_filled,
     is_on_edge,
+    get_edge_segments,
     get_nearest_outline_edge_angle,
     is_on_outline_edge,
     does_pad_overlap_outline,

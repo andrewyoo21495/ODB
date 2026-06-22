@@ -138,6 +138,7 @@ class CKL02008(ChecklistRule):
                         primary_is_bottom=ref_is_bottom,
                         overlap_is_bottom=opp_is_bottom,
                         user_symbols=user_symbols,
+                        show_edge_segments=True,
                     )
                     images.append({"path": img_path,
                                    "title": f"{conn.comp_name} ({ref_layer})",
@@ -204,6 +205,7 @@ class CKL02008(ChecklistRule):
                         primary_is_bottom=ref_is_bottom,
                         overlap_is_bottom=opp_is_bottom,
                         user_symbols=user_symbols,
+                        show_edge_segments=True,
                     )
                     images.append({"path": img_path,
                                    "title": f"{sc.comp_name} ({ref_layer})",

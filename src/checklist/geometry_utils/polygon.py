@@ -889,6 +889,43 @@ def _point_seg_dist_sq(
     return (px - nx) ** 2 + (py - ny) ** 2
 
 
+def _edge_segments_from_hull(
+    hull: ShapelyPolygon,
+) -> list[tuple[tuple[float, float], tuple[float, float]]]:
+    """Return the edge segments of a pad convex *hull*.
+
+    Single source of truth shared by the on-edge judgment
+    (``_pads_near_edge_segments``) and the visualization
+    (``get_edge_segments``), so the drawn lines always match the decision.
+    """
+    coords = _extract_outline_coords(hull)
+    corners = _find_corner_vertices(coords)
+    if not corners:
+        return []
+    return _find_edge_segments(coords, corners, hull.bounds)
+
+
+def get_edge_segments(
+    comp: Component,
+    packages: list[Package],
+    *,
+    is_bottom: bool = False,
+) -> list[tuple[tuple[float, float], tuple[float, float]]]:
+    """Return *comp*'s edge segments in board coordinates.
+
+    These are exactly the segments used by ``is_on_edge`` /
+    ``is_on_outline_edge`` to decide whether an opposite-side component lies
+    on the edge — useful for overlaying the edge on result images.
+    Returns ``[]`` when geometry is unavailable.
+    """
+    if not _HAS_SHAPELY:
+        return []
+    hull = _build_pad_convex_hull(comp, packages, is_bottom=is_bottom)
+    if hull is None:
+        return []
+    return _edge_segments_from_hull(hull)
+
+
 def _pads_near_edge_segments(
     pad_centers_a: list[tuple[float, float]],
     hull_b: ShapelyPolygon,
@@ -897,12 +934,7 @@ def _pads_near_edge_segments(
     """Return True if any pad in *pad_centers_a* lies within *tolerance* of an
     edge segment of *hull_b* (corner diagonals, or short sides as fallback).
     """
-    coords = _extract_outline_coords(hull_b)
-    corners = _find_corner_vertices(coords)
-    if not corners:
-        return False
-
-    edge_segments = _find_edge_segments(coords, corners, hull_b.bounds)
+    edge_segments = _edge_segments_from_hull(hull_b)
     if not edge_segments:
         return False
 

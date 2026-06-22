@@ -202,6 +202,7 @@ class CKL02009(ChecklistRule):
                         primary_label="Connector",
                         overlap_label="General Inductor",
                         user_symbols=user_symbols,
+                        show_edge_segments=True,
                     )
                     images.append({"path": img_path,
                                    "title": f"{conn.comp_name} ({conn_layer}) – Connector",
@@ -296,6 +297,7 @@ class CKL02009(ChecklistRule):
                         primary_is_bottom=sc_is_bottom,
                         overlap_is_bottom=ind_is_bottom,
                         user_symbols=user_symbols,
+                        show_edge_segments=True,
                     )
                     images.append({"path": img_path,
                                    "title": f"{sc.comp_name} ({sc_layer}) – Shield Can",
