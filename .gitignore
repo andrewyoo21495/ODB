@@ -216,4 +216,5 @@ output/*
 references/*
 tests/*
 workspace/*
+frontend/workspace/*
 .playwright-mcp/

@@ -26,7 +26,32 @@ _TABLE_COLUMNS: list[tuple[str, str]] = [
     ("mirror", "Mirror"),
     ("device_type", "Device Type"),
     ("type", "Type"),
+    ("pin_count", "Pins"),
 ]
+
+# Columns shown in the per-component pin/pad detail sub-table.
+_PIN_COLUMNS: list[tuple[str, str]] = [
+    ("pin_num", "Pin"),
+    ("name", "Name"),
+    ("net", "Net"),
+    ("pad", "Pad"),
+    ("x", "X"),
+    ("y", "Y"),
+    ("rotation", "Rot"),
+    ("mirror", "Mirror"),
+]
+
+# Extra CSS (appended after the shared report CSS) for the collapsible pin rows.
+_PIN_CSS = """
+tr.comp-row.has-pins { cursor: pointer; }
+tr.comp-row.has-pins:hover { background: #f0f6ff; }
+tr.comp-row .pin-toggle { display: inline-block; width: 0.9em; color: #1677ff; }
+tr.pin-detail { display: none; }
+tr.pin-detail.show { display: table-row; }
+tr.pin-detail > td { background: #fafafa; padding: 4px 8px; }
+table.pin-table { width: 100%; margin: 2px 0; font-size: 0.85em; }
+table.pin-table th { background: #eef3fb; }
+"""
 
 
 def generate_extract_html_report(
@@ -81,7 +106,7 @@ def _build_head(title: str) -> str:
         '<meta charset="UTF-8">\n'
         '<meta name="viewport" content="width=device-width, initial-scale=1.0">\n'
         f'<title>Parts Extraction Report - {safe}</title>\n'
-        f'<style>\n{_CSS}\n</style>\n</head>\n<body>'
+        f'<style>\n{_CSS}\n{_PIN_CSS}\n</style>\n</head>\n<body>'
     )
 
 
@@ -156,23 +181,53 @@ def _build_side_section(side: str, parts: list[dict], png: Path | None) -> str:
         lines.append('</div>')
 
     if parts:
+        ncols = len(_TABLE_COLUMNS)
         header_cells = "".join(f"<th>{html.escape(lbl)}</th>"
                                for _, lbl in _TABLE_COLUMNS)
         lines.append('<table class="data-table"><thead><tr>')
         lines.append(header_cells)
         lines.append('</tr></thead><tbody>')
         for p in parts:
-            cells = "".join(
-                f'<td>{html.escape(str(p.get(key, "")))}</td>'
-                for key, _ in _TABLE_COLUMNS
-            )
-            lines.append(f"<tr>{cells}</tr>")
+            pins = p.get("pins") or []
+            cells = ""
+            for key, _ in _TABLE_COLUMNS:
+                val = html.escape(str(p.get(key, "")))
+                if key == "pin_count" and pins:
+                    val = f'<span class="pin-toggle">&#9654;</span>{val}'
+                cells += f"<td>{val}</td>"
+            if pins:
+                lines.append(
+                    '<tr class="comp-row has-pins" '
+                    'onclick="togglePins(this)">' + cells + '</tr>')
+                lines.append(
+                    f'<tr class="pin-detail"><td colspan="{ncols}">'
+                    + _build_pin_table(pins) + '</td></tr>')
+            else:
+                lines.append(f'<tr class="comp-row">{cells}</tr>')
         lines.append('</tbody></table>')
     else:
         lines.append('<p class="muted" style="padding:8px 0;">No parts.</p>')
 
     lines.append('</div></section>')
     return "\n".join(lines)
+
+
+def _build_pin_table(pins: list[dict]) -> str:
+    header = "".join(f"<th>{html.escape(lbl)}</th>" for _, lbl in _PIN_COLUMNS)
+    rows = []
+    for pin in pins:
+        cells = "".join(
+            f'<td>{html.escape(str(pin.get(key, "")))}</td>'
+            for key, _ in _PIN_COLUMNS
+        )
+        rows.append(f"<tr>{cells}</tr>")
+    return (
+        '<table class="pin-table data-table"><thead><tr>'
+        + header
+        + '</tr></thead><tbody>'
+        + "".join(rows)
+        + '</tbody></table>'
+    )
 
 
 def _build_footer() -> str:
@@ -192,6 +247,13 @@ function toggleAllSections(expand) {
     if (expand) s.classList.remove('collapsed');
     else s.classList.add('collapsed');
   });
+}
+function togglePins(row) {
+  var detail = row.nextElementSibling;
+  if (!detail) return;
+  var open = detail.classList.toggle('show');
+  var icon = row.querySelector('.pin-toggle');
+  if (icon) icon.innerHTML = open ? '\\u25BC' : '\\u25B6';
 }
 </script>"""
 

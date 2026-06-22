@@ -96,7 +96,8 @@ _CATEGORY_COLOR = {
     "Inductor": "#fa8c16",
     "Connector": "#722ed1",
     "SIM_Socket": "#13c2c2",
-    "INP": "#eb2f96",
+    "Shield Can": "#eb2f96",
+    "Interposer": "#f5222d",
     "Unknown": "#8c8c8c",
 }
 

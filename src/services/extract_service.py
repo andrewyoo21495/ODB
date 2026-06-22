@@ -34,8 +34,28 @@ _HIGHLIGHT = "#1677ff"
 _UNKNOWN = ComponentCategory.UNKNOWN.value
 
 
-def _part_dict(comp, category: str, side: str) -> dict:
+def _pin_dict(tp, net_names: list[str]) -> dict:
+    """One pin/pad record from a component toeprint.
+
+    ``net_names`` is positional (``net_num`` indexes ``eda.nets``); ``pad`` is the
+    FID-resolved pad symbol name when available.
+    """
+    net = net_names[tp.net_num] if 0 <= tp.net_num < len(net_names) else ""
+    return {
+        "pin_num": tp.pin_num,
+        "name": tp.name,
+        "net": net,
+        "pad": tp.geom.symbol_name if tp.geom else "",
+        "x": round(tp.x, 4),
+        "y": round(tp.y, 4),
+        "rotation": tp.rotation,
+        "mirror": tp.mirror,
+    }
+
+
+def _part_dict(comp, category: str, side: str, net_names: list[str]) -> dict:
     props = comp.properties or {}
+    pins = [_pin_dict(tp, net_names) for tp in (comp.toeprints or [])]
     return {
         "refdes": comp.comp_name,
         "part_name": comp.part_name,
@@ -47,6 +67,8 @@ def _part_dict(comp, category: str, side: str) -> dict:
         "mirror": comp.mirror,
         "device_type": props.get("DEVICE_TYPE", ""),
         "type": props.get("TYPE", ""),
+        "pin_count": len(pins),
+        "pins": pins,
         "properties": dict(props),
     }
 
@@ -97,6 +119,8 @@ def run_extract(cache_dir: str | Path, cache_name: str, *, out_dir: Path,
     eda = data.get("eda_data")
     packages = eda.packages if eda else None
     user_symbols = data.get("user_symbols", {})
+    # net_num on a toeprint is a positional index into eda.nets.
+    net_names = [n.name for n in eda.nets] if eda else []
 
     # Drop "Unknown" from any explicit selection; when nothing is selected
     # ("전체"), keep every confidently-classified category but still exclude
@@ -119,8 +143,8 @@ def run_extract(cache_dir: str | Path, cache_name: str, *, out_dir: Path,
          f"(categories={sorted(selected) if selected else 'all'})")
 
     parts = (
-        [_part_dict(c, cat, "top") for c, cat in top]
-        + [_part_dict(c, cat, "bottom") for c, cat in bot]
+        [_part_dict(c, cat, "top", net_names) for c, cat in top]
+        + [_part_dict(c, cat, "bottom", net_names) for c, cat in bot]
     )
 
     by_category: dict[str, int] = {}

@@ -22,7 +22,8 @@ const CATEGORIES = [
   "Inductor",
   "Connector",
   "SIM_Socket",
-  "INP",
+  "Shield Can",
+  "Interposer",
 ];
 
 type Mode = "specified" | "full";

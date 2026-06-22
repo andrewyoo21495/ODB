@@ -18,10 +18,11 @@ from src.models import Component, Package
 class ComponentCategory(str, Enum):
     CONNECTOR = "Connector"
     SIM_SOCKET = "SIM_Socket"
+    SHIELD_CAN = "Shield Can"
     INDUCTOR = "Inductor"
     CAPACITOR = "Capacitor"
     IC = "IC"
-    INP = "INP"
+    INP = "Interposer"
     UNKNOWN = "Unknown"
 
 
@@ -32,13 +33,14 @@ def classify_component(comp: Component) -> ComponentCategory:
         1. Unknown    – comp_name starts with "ANT" (antenna, not connector)
         2. Connector  – comp_name starts with "SOC" OR DEVICE_TYPE == "connector"
         3. SIM_Socket – comp_name starts with "SIM"
-        4. Inductor   – properties TYPE or DEVICE_TYPE == "inductor" (case-insensitive),
+        4. Shield Can – comp_name starts with "SC" (case-insensitive)
+        5. Inductor   – properties TYPE or DEVICE_TYPE == "inductor" (case-insensitive),
                         OR part_name starts with "2703-"
-        5. Capacitor  – properties TYPE or DEVICE_TYPE == "capacitor" (case-insensitive),
+        6. Capacitor  – properties TYPE or DEVICE_TYPE == "capacitor" (case-insensitive),
                         OR part_name starts with "2203-" or "CAP"
-        6. IC         – comp_name starts with "U" but NOT "USB"
-        7. INP        – comp_name starts with "INP" or "INT"
-        8. Unknown    – everything else
+        7. IC         – comp_name starts with "U" but NOT "USB"
+        8. Interposer – comp_name starts with "INP" or "INT"
+        9. Unknown    – everything else
     """
     name = comp.comp_name or ""
     part = comp.part_name or ""
@@ -55,6 +57,9 @@ def classify_component(comp: Component) -> ComponentCategory:
 
     if name.startswith("SIM"):
         return ComponentCategory.SIM_SOCKET
+
+    if name.upper().startswith("SC"):
+        return ComponentCategory.SHIELD_CAN
 
     if comp_type == "inductor" or device_type == "inductor" or part.startswith("2703-"):
         return ComponentCategory.INDUCTOR
