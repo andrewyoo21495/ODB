@@ -5,7 +5,7 @@ Provides:
 - Board-coordinate shapely polygon construction (footprint / outline)
 - Resolver helpers (_resolve_outline, _resolve_footprint)
 - Pad-centre collection (_get_pad_centers)
-- Edge/corner detection (is_on_edge)
+- Edge detection (is_on_edge — corner-diagonal segments of the pad hull)
 """
 
 from __future__ import annotations
@@ -809,16 +809,123 @@ def _find_corner_vertices(
     return corners
 
 
+# Corner-diagonal segments are the hull segments (between two consecutive
+# corner vertices) whose length is below this fraction of the longest such
+# segment.  These short "bridge" segments are the chamfer/notch at each
+# physical corner of a connector — the region we treat as the true edge.
+_CORNER_SEG_RATIO = 0.4
+
+
+def _find_edge_segments(
+    hull_coords: list[tuple[float, float]],
+    corners: list[tuple[float, float]],
+    bounds: tuple[float, float, float, float],
+) -> list[tuple[tuple[float, float], tuple[float, float]]]:
+    """Return the line segments that define a connector's "edge".
+
+    Walks the convex-hull ring through its corner vertices and builds the
+    segment between each pair of consecutive corners.  Those clearly shorter
+    than the longest segment are the corner diagonals (chamfer/notch) and are
+    returned as the edge.
+
+    Fallback: when no short corner-diagonal exists (a sharp-cornered
+    rectangle), the two **short sides** of the hull bounding box are returned
+    instead — that is the connector's mating edge.
+
+    Args:
+        hull_coords: Convex-hull exterior vertices (no closing duplicate).
+        corners: Corner vertices found by ``_find_corner_vertices``.
+        bounds: ``(minx, miny, maxx, maxy)`` of the hull.
+
+    Returns:
+        List of ``(p1, p2)`` segments, or ``[]`` when geometry is degenerate.
+    """
+    corner_set = set(corners)
+    corner_idx = [i for i, p in enumerate(hull_coords) if p in corner_set]
+
+    segments: list[tuple[tuple[float, float], tuple[float, float], float]] = []
+    m = len(corner_idx)
+    for k in range(m):
+        a = hull_coords[corner_idx[k]]
+        b = hull_coords[corner_idx[(k + 1) % m]]
+        length = math.hypot(b[0] - a[0], b[1] - a[1])
+        segments.append((a, b, length))
+
+    longest = max((s[2] for s in segments), default=0.0)
+    if longest > 0.0:
+        short = [(a, b) for a, b, length in segments
+                 if length <= _CORNER_SEG_RATIO * longest]
+        if short:
+            return short
+
+    # Fallback: sharp rectangle → two short sides of the bounding box.
+    minx, miny, maxx, maxy = bounds
+    width = maxx - minx
+    height = maxy - miny
+    if width < 1e-9 and height < 1e-9:
+        return []
+    if width <= height:  # vertical → top & bottom are the short sides
+        return [((minx, miny), (maxx, miny)),
+                ((minx, maxy), (maxx, maxy))]
+    # horizontal → left & right are the short sides
+    return [((minx, miny), (minx, maxy)),
+            ((maxx, miny), (maxx, maxy))]
+
+
+def _point_seg_dist_sq(
+    px: float, py: float,
+    x1: float, y1: float, x2: float, y2: float,
+) -> float:
+    """Return the squared distance from point (px, py) to segment (p1, p2)."""
+    seg_dx = x2 - x1
+    seg_dy = y2 - y1
+    seg_len_sq = seg_dx * seg_dx + seg_dy * seg_dy
+    if seg_len_sq < 1e-18:
+        return (px - x1) ** 2 + (py - y1) ** 2
+    t = ((px - x1) * seg_dx + (py - y1) * seg_dy) / seg_len_sq
+    t = max(0.0, min(1.0, t))
+    nx = x1 + t * seg_dx
+    ny = y1 + t * seg_dy
+    return (px - nx) ** 2 + (py - ny) ** 2
+
+
+def _pads_near_edge_segments(
+    pad_centers_a: list[tuple[float, float]],
+    hull_b: ShapelyPolygon,
+    tolerance: float,
+) -> bool:
+    """Return True if any pad in *pad_centers_a* lies within *tolerance* of an
+    edge segment of *hull_b* (corner diagonals, or short sides as fallback).
+    """
+    coords = _extract_outline_coords(hull_b)
+    corners = _find_corner_vertices(coords)
+    if not corners:
+        return False
+
+    edge_segments = _find_edge_segments(coords, corners, hull_b.bounds)
+    if not edge_segments:
+        return False
+
+    tol_sq = tolerance * tolerance
+    for px, py in pad_centers_a:
+        for (x1, y1), (x2, y2) in edge_segments:
+            if _point_seg_dist_sq(px, py, x1, y1, x2, y2) <= tol_sq:
+                return True
+    return False
+
+
 def is_on_edge(comp_a: Component, comp_b: Component,
                packages: list[Package],
                tolerance: float = 0.4) -> bool:
-    """Return True if any pad of comp_a is near a corner vertex of comp_b.
+    """Return True if any pad of comp_a lies on the edge of comp_b.
 
-    "Corner vertex" = a point on *comp_b*'s component outline where the
-    outline changes direction (angle deviation >= 20° from straight).
+    The "edge" is the set of corner-diagonal segments of *comp_b*'s pad
+    convex hull (the chamfer/notch at each physical corner).  A sharp-cornered
+    rectangle has no such diagonal, so its two short sides are used instead.
+    See ``_find_edge_segments``.
 
     Args:
-        tolerance: Radius in mm around each corner vertex.
+        tolerance: Distance in mm from an edge segment that counts as "on edge".
     """
     if not _HAS_SHAPELY:
         return False
@@ -831,20 +938,7 @@ def is_on_edge(comp_a: Component, comp_b: Component,
     if hull_b is None:
         return False
 
-    coords = _extract_outline_coords(hull_b)
-    corners = _find_corner_vertices(coords)
-    if not corners:
-        return False
-
-    tol_sq = tolerance * tolerance
-    for px, py in pad_centers_a:
-        for cx, cy in corners:
-            dx = px - cx
-            dy = py - cy
-            if dx * dx + dy * dy <= tol_sq:
-                return True
-
-    return False
+    return _pads_near_edge_segments(pad_centers_a, hull_b, tolerance)
 
 
 # ---------------------------------------------------------------------------
@@ -925,13 +1019,14 @@ def is_on_outline_edge(
     is_bottom_b: bool = False,
     tolerance: float = 0.4,
 ) -> bool:
-    """Return True if *comp_a*'s pads are near a corner vertex of *comp_b*.
+    """Return True if *comp_a*'s pads lie on the edge of *comp_b*.
 
-    "Corner vertex" = a point on *comp_b*'s component outline where the
-    outline changes direction (angle deviation >= 20° from straight).
+    Same edge definition as ``is_on_edge`` (corner-diagonal segments of the
+    pad convex hull, with short sides as the sharp-rectangle fallback), but
+    honouring the *is_bottom_a* / *is_bottom_b* placement flags.
 
     Args:
-        tolerance: Radius in mm around each corner vertex.
+        tolerance: Distance in mm from an edge segment that counts as "on edge".
     """
     if not _HAS_SHAPELY:
         return False
@@ -940,25 +1035,12 @@ def is_on_outline_edge(
     if hull_b is None:
         return False
 
-    coords = _extract_outline_coords(hull_b)
-    corners = _find_corner_vertices(coords)
-    if not corners:
-        return False
-
     pad_centers_a = _get_pad_centers(
         comp_a, packages, is_bottom=is_bottom_a)
     if not pad_centers_a:
         return False
 
-    tol_sq = tolerance * tolerance
-    for px, py in pad_centers_a:
-        for cx, cy in corners:
-            dx = px - cx
-            dy = py - cy
-            if dx * dx + dy * dy <= tol_sq:
-                return True
-
-    return False
+    return _pads_near_edge_segments(pad_centers_a, hull_b, tolerance)
 
 
 def does_pad_overlap_outline(
