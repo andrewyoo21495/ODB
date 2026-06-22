@@ -38,5 +38,9 @@ def checklist_doc() -> FileResponse:
             _CHECKLIST_REFERENCE,
             media_type="text/html",
             content_disposition_type="inline",
+            # Force revalidation so a replaced reference file shows up
+            # immediately — without this the browser heuristically caches the
+            # inline HTML and serves a stale copy without asking the server.
+            headers={"Cache-Control": "no-cache"},
         )
     raise HTTPException(status_code=404, detail="검토기준 문서가 아직 준비되지 않았습니다.")
