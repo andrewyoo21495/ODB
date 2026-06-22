@@ -78,6 +78,8 @@ export const api = {
   // Report served by job+kind (independent of an in-memory task).
   reportByKindUrl: (id: string, kind: string) => `${BASE}/jobs/${id}/report/${kind}`,
   jobArtifactUrl: (id: string, name: string) => `${BASE}/jobs/${id}/artifact/${name}`,
+  // Whole JSON cache folder as a ZIP (전체 데이터 추출).
+  cacheZipUrl: (id: string) => `${BASE}/jobs/${id}/cache.zip`,
   getRules: () => jsonGet<RuleInfo[]>("/rules"),
   runChecklist: (id: string, ruleIds: string[] | null) =>
     jsonPost<TaskOut>(`/jobs/${id}/checklist`, { rule_ids: ruleIds }),

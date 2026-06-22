@@ -43,6 +43,7 @@ _REPORTS_SUBDIR = "reports"
 _META_FILE = "meta.json"
 _RESULTS_FILE = "results.json"
 _SOURCE_FILE = "source.tgz"
+_CACHE_ZIP_FILE = "cache_export.zip"
 _LOCK_DIR = ".lock"
 
 # Serialises read-modify-write of results.json within this process (the server
@@ -86,6 +87,30 @@ def reports_dir(job_id: str, *, workspace_root: str | Path = DEFAULT_WORKSPACE_R
 def cache_args(job_id: str, *, workspace_root: str | Path = DEFAULT_WORKSPACE_ROOT) -> tuple[Path, str]:
     """Return ``(cache_dir, cache_name)`` to pass to ``data_service`` functions."""
     return job_dir(job_id, workspace_root=workspace_root), CACHE_NAME
+
+
+def export_cache_zip(job_id: str, *,
+                     workspace_root: str | Path = DEFAULT_WORKSPACE_ROOT) -> Path:
+    """Zip the job's JSON cache folder and return the archive path.
+
+    Powers the hub's "전체 데이터 추출": the whole ``cache/`` directory (all parsed
+    JSON incl. ``copper_data.json``) is packaged for download.  Because ``job_id``
+    is the content hash the cache is immutable, so a previously built archive is
+    reused instead of re-zipping.
+
+    Raises:
+        FileNotFoundError: if the job has no cache yet.
+    """
+    cache_dir = cache_json_dir(job_id, workspace_root=workspace_root)
+    if not _cache_present(job_id, workspace_root=workspace_root):
+        raise FileNotFoundError(f"No cache for job_id={job_id} under {cache_dir}")
+    zip_path = job_dir(job_id, workspace_root=workspace_root) / _CACHE_ZIP_FILE
+    if zip_path.exists():
+        return zip_path
+    # make_archive needs the base name without the .zip suffix.
+    base = zip_path.with_suffix("")
+    shutil.make_archive(str(base), "zip", root_dir=cache_dir)
+    return zip_path
 
 
 # --------------------------------------------------------------------------- #

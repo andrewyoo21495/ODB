@@ -183,6 +183,22 @@ def job_artifact(job_id: str, name: str, user: str = Depends(get_current_user)):
     return FileResponse(path, filename=name)
 
 
+@router.get("/jobs/{job_id}/cache.zip")
+def download_cache(job_id: str, user: str = Depends(get_current_user)):
+    """전체 데이터 추출: download the job's JSON cache folder as a ZIP archive."""
+    try:
+        zip_path = job_store.export_cache_zip(job_id, workspace_root=WORKSPACE_ROOT)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="job not found or not ready")
+    try:
+        stem = Path(job_store.get_meta(job_id, workspace_root=WORKSPACE_ROOT)
+                    .get("original_filename", job_id)).stem
+    except FileNotFoundError:
+        stem = job_id
+    return FileResponse(zip_path, media_type="application/zip",
+                        filename=f"{stem or job_id}_cache.zip")
+
+
 @router.get("/jobs/{job_id}/tasks/{kind}", response_model=TaskOut | None)
 def latest_task(job_id: str, kind: str, user: str = Depends(get_current_user)):
     """Most recent in-memory task of *kind* for this job (to re-attach a page to

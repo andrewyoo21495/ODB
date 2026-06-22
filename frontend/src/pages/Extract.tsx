@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Alert, App as AntdApp, Button, Card, Select, Space } from "antd";
+import { Alert, App as AntdApp, Button, Card, Segmented, Select, Space } from "antd";
 import { DownloadOutlined } from "@ant-design/icons";
 import { useMutation } from "@tanstack/react-query";
 import { api } from "../api/client";
@@ -25,8 +25,11 @@ const CATEGORIES = [
   "INP",
 ];
 
+type Mode = "specified" | "full";
+
 export default function Extract() {
   const { message } = AntdApp.useApp();
+  const [mode, setMode] = useState<Mode>("specified");
   const [categories, setCategories] = useState<string[]>([]);
   const { jobId, taskId, setTaskId, task, prior } = useFeature("extract");
 
@@ -50,6 +53,33 @@ export default function Extract() {
         {!jobId ? (
           <Alert type="info" showIcon message="추출할 데이터를 선택하세요." />
         ) : (
+          <Space direction="vertical" style={{ width: "100%" }} size="middle">
+            <Segmented<Mode>
+              value={mode}
+              onChange={setMode}
+              options={[
+                { label: "지정 데이터 추출", value: "specified" },
+                { label: "전체 데이터 추출", value: "full" },
+              ]}
+            />
+
+            {mode === "full" ? (
+              <Space direction="vertical" style={{ width: "100%" }} size="middle">
+                <Alert
+                  type="info"
+                  showIcon
+                  message="선택한 데이터의 전체 JSON 캐시 폴더를 ZIP으로 다운로드합니다."
+                />
+                <Button
+                  type="primary"
+                  icon={<DownloadOutlined />}
+                  href={api.cacheZipUrl(jobId)}
+                  target="_blank"
+                >
+                  전체 데이터 ZIP 다운로드
+                </Button>
+              </Space>
+            ) : (
           <Space direction="vertical" style={{ width: "100%" }} size="middle">
             <Space.Compact style={{ width: "100%" }}>
               <Button style={{ cursor: "default" }} disabled>
@@ -106,6 +136,8 @@ export default function Extract() {
                 </Button>
                 <ReportView src={api.reportByKindUrl(jobId, "extract")} downloadName={`extract_${jobId}.html`} />
               </>
+            )}
+          </Space>
             )}
           </Space>
         )}
