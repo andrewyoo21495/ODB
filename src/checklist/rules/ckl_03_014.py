@@ -32,8 +32,10 @@ import numpy as np
 
 from src.checklist.component_classifier import find_shield_cans
 from src.checklist.engine import register_rule
-from src.checklist.geometry_utils.polygon import _outline_to_shapely
+from src.checklist.geometry_utils import _resolve_outline
+from src.checklist.geometry_utils.overlap import _get_pad_union_for_indices
 from src.checklist.rule_base import ChecklistRule
+from src.checklist.visualizers.overlap_viz import _rings_to_arrays
 from src.models import (
     ArcRecord,
     Component,
@@ -370,14 +372,22 @@ def _shapely_to_arrays(geom):
 def _render_enhanced_pad_image(
     comp: Component,
     pkg: Package,
+    packages: list[Package],
     cross_indices: list[int],
     nearby_signals: dict[int, list[str]],
     is_bottom: bool,
     output_path: Path,
     *,
     rule_id: str,
+    user_symbols: dict | None = None,
 ) -> Path:
-    """Render a shield can highlighting enhanced pads and signal violations."""
+    """Render a shield can highlighting enhanced pads and signal violations.
+
+    Uses the same symbol-aware geometry helpers as the overlap rules
+    (CKL-02-006): the shield-can outline is the container frame
+    (``_resolve_outline``) and pads come from ``_get_pad_union_for_indices``,
+    so cross/enhanced pads render cleanly instead of from raw per-pin contours.
+    """
     fig, ax = plt.subplots(1, 1, figsize=(10, 10))
     layer_str = "Bottom" if is_bottom else "Top"
     has_fail = any(len(sigs) > 0 for sigs in nearby_signals.values())
@@ -391,31 +401,42 @@ def _render_enhanced_pad_image(
     ax.grid(True, alpha=0.3)
 
     all_xs, all_ys = [], []
+
+    # Pad index groups by category (same symbol-aware path as the overlap rules).
     cross_set = set(cross_indices)
+    normal_idx = {i for i in range(len(pkg.pins)) if i not in cross_set}
+    ok_cross = {i for i in cross_indices if not nearby_signals.get(i)}
+    fail_cross = {i for i in cross_indices if nearby_signals.get(i)}
 
-    for i, pin in enumerate(pkg.pins):
-        for outline in pin.outlines:
-            g = _outline_to_shapely(outline, comp, is_bottom=is_bottom)
-            if g is not None and not g.is_empty:
-                if i in cross_set:
-                    sigs = nearby_signals.get(i, [])
-                    if sigs:
-                        fc, ec = "#FFB0B0", "darkred"
-                    else:
-                        fc, ec = "#FFFACD", "orange"
-                else:
-                    fc, ec = "#D0D0D0", "gray"
+    for indices, fc, ec in [
+        (normal_idx, "#D0D0D0", "gray"),
+        (ok_cross,   "#FFFACD", "orange"),
+        (fail_cross, "#FFB0B0", "darkred"),
+    ]:
+        if not indices:
+            continue
+        geom = _get_pad_union_for_indices(
+            comp, pkg, indices, is_bottom=is_bottom, user_symbols=user_symbols)
+        if geom is None or geom.is_empty:
+            continue
+        for xs, ys in _shapely_to_arrays(geom):
+            verts = list(zip(xs, ys))
+            ax.add_patch(MplPolygon(
+                verts, closed=True,
+                facecolor=fc, edgecolor=ec,
+                alpha=0.6, linewidth=1.0, zorder=4,
+            ))
+            all_xs.extend(xs)
+            all_ys.extend(ys)
 
-                for xs, ys in _shapely_to_arrays(g):
-                    verts = list(zip(xs, ys))
-                    ax.add_patch(MplPolygon(
-                        verts, closed=True,
-                        facecolor=fc, edgecolor=ec,
-                        alpha=0.55, linewidth=1.0,
-                    ))
-                    all_xs.extend(xs)
-                    all_ys.extend(ys)
-                break
+    # Shield-can container-frame outline (dashed), like CKL-02-006.
+    frame = _resolve_outline(comp, packages, is_bottom=is_bottom)
+    if frame is not None and not frame.is_empty:
+        for xs, ys in _rings_to_arrays(frame):
+            ax.plot(xs, ys, color="#444444", linewidth=1.2, linestyle="--",
+                    zorder=3)
+            all_xs.extend(xs)
+            all_ys.extend(ys)
 
     # Draw clearance circles around cross pads
     for ci in cross_indices:
@@ -446,15 +467,18 @@ def _render_enhanced_pad_image(
 
     # Legend
     legend_elements = [
-        mpatches.Patch(facecolor="#D0D0D0", edgecolor="gray", alpha=0.55,
+        mpatches.Patch(facecolor="#D0D0D0", edgecolor="gray", alpha=0.6,
                        label="Normal pad"),
-        mpatches.Patch(facecolor="#FFFACD", edgecolor="orange", alpha=0.55,
+        mpatches.Patch(facecolor="#FFFACD", edgecolor="orange", alpha=0.6,
                        label="Enhanced pad (cross) - OK"),
     ]
     if has_fail:
         legend_elements.append(
             mpatches.Patch(facecolor="#FFB0B0", edgecolor="darkred",
-                           alpha=0.55, label="Enhanced pad - signal too close"))
+                           alpha=0.6, label="Enhanced pad - signal too close"))
+    legend_elements.append(
+        plt.Line2D([], [], color="#444444", linewidth=1.2, linestyle="--",
+                   label="Shield can outline"))
     legend_elements.append(
         plt.Line2D([], [], color="red", linewidth=1, linestyle="--",
                    label=f"Clearance zone ({_CLEARANCE_MM} mm)"))
@@ -487,6 +511,7 @@ class CKL03014(ChecklistRule):
         eda = job_data.get("eda_data")
         packages = eda.packages if eda else []
         layers_data = job_data.get("layers_data", {})
+        user_symbols: dict = job_data.get("user_symbols") or {}
 
         columns = ["comp", "cmp_layer", "enhanced_pad", "signal", "status"]
         rows: list[dict] = []
@@ -571,9 +596,10 @@ class CKL03014(ChecklistRule):
                 safe_name = comp.comp_name.replace("/", "_")
                 img_path = image_dir / f"{safe_name}_{layer_name}.png"
                 _render_enhanced_pad_image(
-                    comp, pkg, cross_indices, nearby_signals,
+                    comp, pkg, packages, cross_indices, nearby_signals,
                     is_bottom, img_path,
                     rule_id=self.rule_id,
+                    user_symbols=user_symbols,
                 )
                 images.append({
                     "path": img_path,
