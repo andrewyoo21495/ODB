@@ -254,6 +254,7 @@ class CKL02005(ChecklistRule):
                 is_bottom=is_bottom,
                 user_symbols=user_symbols,
                 font=font,
+                annotate_pass=False,
             )
             n_fail = sum(1 for it in cap_items if it["status"] == "FAIL")
             images.append({

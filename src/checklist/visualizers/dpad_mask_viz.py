@@ -108,6 +108,7 @@ def render_dpad_side_image(
     user_symbols: dict | None = None,
     font=None,
     margin: float = 2.0,
+    annotate_pass: bool = True,
 ) -> Path:
     """Render one side's D-pad evaluation as a single PNG.
 
@@ -129,6 +130,10 @@ def render_dpad_side_image(
     is_bottom : bool
         Indicates which board side is being shown. Used only for the
         image title; all coordinates are in native board coords regardless.
+    annotate_pass : bool
+        When False, PASS caps are drawn as green geometry only, without the
+        per-cap text label/arrow (FAIL caps still get a red label). Defaults
+        to True (label every cap).
     """
     # Resolve geometries — all in top-view board coordinates.
     cont_hulls:  list[tuple] = []
@@ -226,6 +231,9 @@ def render_dpad_side_image(
             facecolor=fill, edgecolor=edge,
             alpha=0.7, linewidth=1.4, zorder=5,
         )
+        # When annotate_pass is False, PASS caps show colour only (no tag).
+        if not fail and not annotate_pass:
+            continue
         label = f"{cap.comp_name}\n{item['location']}/{item['status']}"
         ax.annotate(
             label,
