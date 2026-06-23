@@ -51,6 +51,33 @@ def _shapely_to_arrays(geom):
         yield from _shapely_to_arrays(geom.buffer(0.01))
 
 
+def _rings_to_arrays(geom):
+    """Yield (xs, ys) arrays for *every* ring of a geometry — exterior AND
+    interior rings (holes).
+
+    Unlike :func:`_shapely_to_arrays` (exteriors only, for fills), this is used
+    to *stroke* frame outlines that may be donut/frame shaped, e.g. an
+    interposer's container-frame outline whose inner ring must also be drawn.
+    """
+    if geom is None or geom.is_empty:
+        return
+    if geom.geom_type == "Polygon":
+        xs, ys = geom.exterior.xy
+        yield np.array(xs), np.array(ys)
+        for interior in geom.interiors:
+            ixs, iys = interior.xy
+            yield np.array(ixs), np.array(iys)
+    elif geom.geom_type in ("MultiPolygon", "GeometryCollection"):
+        for part in geom.geoms:
+            yield from _rings_to_arrays(part)
+    elif geom.geom_type == "LineString":
+        xs, ys = geom.xy
+        yield np.array(xs), np.array(ys)
+    elif geom.geom_type == "MultiLineString":
+        for part in geom.geoms:
+            yield from _rings_to_arrays(part)
+
+
 def _draw_geom(ax, geom, facecolor, edgecolor, alpha=0.45, label=None,
                linewidth=0.8):
     """Fill a Shapely geometry on *ax*."""
@@ -103,6 +130,7 @@ def render_overlap_image(
     interposer_inner_outline=None,
     show_edge_segments: bool = False,
     annotate_pass: bool = True,
+    annotate_primary: bool = False,
 ) -> Path:
     """Render a single primary component with overlapping opposite-side parts.
 
@@ -143,6 +171,10 @@ def render_overlap_image(
         without the per-component text label/arrow (FAIL items still get a
         red label). Keeps cluttered images readable when only failures need
         callouts. Defaults to True (label every item).
+    annotate_primary : bool
+        When True, draw the *primary* component's name as a text label next to
+        its centre marker (by default the primary has only a marker, no tag).
+        Defaults to False.
 
     Returns
     -------
@@ -182,6 +214,16 @@ def render_overlap_image(
     # Primary centre marker
     ax.plot(primary.x, primary.y, "s", color="navy", markersize=8,
             markeredgewidth=2, zorder=4)
+    if annotate_primary:
+        ax.annotate(
+            primary.comp_name,
+            (primary.x, primary.y),
+            textcoords="offset points", xytext=(0, -16),
+            fontsize=8, fontweight="bold", color="navy", ha="center",
+            bbox=dict(boxstyle="round,pad=0.3", facecolor="white",
+                      edgecolor="navy", alpha=0.9),
+            zorder=7,
+        )
 
     # --- draw edge segments (red dashed; debug overlay of the edge decision) --
     # Disabled for now (kept for future debugging). Re-enable this block and the
@@ -235,21 +277,23 @@ def render_overlap_image(
             _first_inset = False
 
     # --- draw interposer outer / inner border outlines (dashed) ---------------
+    # Drawn with _rings_to_arrays so a frame-shaped (donut) outline strokes
+    # both its outer and inner rings — the container-frame interposer outline.
     _has_inp_outer = (interposer_outer_outline is not None
                       and not interposer_outer_outline.is_empty)
     if _has_inp_outer:
         _first = True
-        for xs, ys in _shapely_to_arrays(interposer_outer_outline):
+        for xs, ys in _rings_to_arrays(interposer_outer_outline):
             ax.plot(xs, ys, color="black", linewidth=1.5, linestyle="--",
                     zorder=6,
-                    label="Interposer outer outline" if _first else None)
+                    label="Interposer outline" if _first else None)
             _first = False
 
     _has_inp_inner = (interposer_inner_outline is not None
                       and not interposer_inner_outline.is_empty)
     if _has_inp_inner:
         _first = True
-        for xs, ys in _shapely_to_arrays(interposer_inner_outline):
+        for xs, ys in _rings_to_arrays(interposer_inner_outline):
             ax.plot(xs, ys, color="black", linewidth=1.5, linestyle="--",
                     zorder=6,
                     label="Interposer inner outline" if _first else None)
@@ -403,7 +447,7 @@ def render_overlap_image(
     if _has_inp_outer:
         legend_elements.append(
             plt.Line2D([0], [0], color="black", linewidth=1.5,
-                       linestyle="--", label="Interposer outer outline")
+                       linestyle="--", label="Interposer outline")
         )
     if _has_inp_inner:
         legend_elements.append(

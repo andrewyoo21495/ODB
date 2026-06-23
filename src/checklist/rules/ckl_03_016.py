@@ -29,6 +29,7 @@ from src.checklist.component_classifier import (
 from src.checklist.engine import register_rule
 from src.checklist.geometry_utils import (
     _get_pad_union,
+    _resolve_outline,
     build_interposer_outline,
     find_overlapping_components,
     find_pad_overlapping_components,
@@ -86,8 +87,8 @@ class CKL03016(ChecklistRule):
 
             for osc in oscs:
                 overlap_items: list[dict] = []
-                inp_outer_polys: list = []
-                inp_inner_polys: list = []
+                # Container-frame outlines for visualization (CKL-02-005 style).
+                inp_frames: list = []
 
                 # -------------------------------------------------------
                 # Non-interposer targets: existing logic
@@ -137,15 +138,18 @@ class CKL03016(ChecklistRule):
                 # Interposer targets: outline-based logic
                 # -------------------------------------------------------
                 for inp in opp_interposers:
+                    # outer_poly drives the FAIL/PASS detection below; the
+                    # container-frame outline (_resolve_outline) is used only
+                    # for drawing so the inner/outer rings render cleanly.
                     outer_poly, inner_poly = build_interposer_outline(
                         inp, packages,
                         is_bottom=opp_is_bottom,
                         user_symbols=user_symbols,
                     )
-                    if outer_poly is not None:
-                        inp_outer_polys.append(outer_poly)
-                    if inner_poly is not None:
-                        inp_inner_polys.append(inner_poly)
+                    frame = _resolve_outline(
+                        inp, packages, is_bottom=opp_is_bottom)
+                    if frame is not None and not frame.is_empty:
+                        inp_frames.append(frame)
 
                     pad_union_osc = _get_pad_union(
                         osc, packages,
@@ -221,10 +225,8 @@ class CKL03016(ChecklistRule):
                     )
                     safe = osc.comp_name.replace("/", "_")
                     img_path = image_dir / f"{safe}_{osc_layer}.png"
-                    inp_outer = (unary_union(inp_outer_polys)
-                                 if inp_outer_polys else None)
-                    inp_inner = (unary_union(inp_inner_polys)
-                                 if inp_inner_polys else None)
+                    inp_outer = (unary_union(inp_frames)
+                                 if inp_frames else None)
                     render_overlap_image(
                         osc, packages, overlap_items, opp_comps, img_path,
                         rule_id=self.rule_id,
@@ -235,7 +237,8 @@ class CKL03016(ChecklistRule):
                         overlap_is_bottom=opp_is_bottom,
                         user_symbols=user_symbols,
                         interposer_outer_outline=inp_outer,
-                        interposer_inner_outline=inp_inner,
+                        interposer_inner_outline=None,
+                        annotate_primary=True,
                     )
                     images.append({"path": img_path,
                                    "title": f"{osc.comp_name} ({osc_layer})",
