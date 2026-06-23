@@ -861,13 +861,43 @@ def _get_pad_union_for_indices(
     *,
     is_bottom: bool = False,
     user_symbols: dict | None = None,
+    prefer_toeprint_geom: bool = False,
 ) -> "ShapelyPolygon | None":
-    """Build a Shapely union of pads for specific pin indices."""
+    """Build a Shapely union of pads for specific pin indices.
+
+    When *prefer_toeprint_geom* is True, each pad is first resolved from the
+    FID-populated ``Toeprint.geom`` (the accurate ODB++ pad geometry, the same
+    primary path used by :func:`_get_pad_union` / CKL-02-006), falling back to
+    the package pin outline only when no toeprint geometry exists. Toeprints
+    are matched to *pin_indices* positionally (``comp.toeprints[idx]``), the
+    same indexing the cross-pad detection in CKL-03-014 relies on. The default
+    (False) keeps the original pin-outline-only behaviour for existing callers.
+    """
     if not _HAS_SHAPELY or not pkg.pins or not pin_indices:
         return None
 
+    user_symbols = user_symbols or {}
     pad_polys = []
     for pin_idx in pin_indices:
+        # Toeprint-first (accurate, FID-resolved) — positional alignment.
+        if prefer_toeprint_geom and 0 <= pin_idx < len(comp.toeprints):
+            geom = comp.toeprints[pin_idx].geom
+            if geom is not None:
+                pad_rot = -geom.rotation if is_bottom else geom.rotation
+                if geom.is_user_symbol and geom.symbol_name in user_symbols:
+                    g = _user_symbol_to_shapely(
+                        user_symbols[geom.symbol_name],
+                        geom.x, geom.y, pad_rot, geom.mirror,
+                    )
+                else:
+                    g = _symbol_to_shapely(
+                        geom.symbol_name, geom.x, geom.y, pad_rot, geom.mirror,
+                        geom.units, geom.unit_override, geom.resize_factor,
+                    )
+                if g is not None and not g.is_empty:
+                    pad_polys.append(g)
+                    continue
+
         if pin_idx >= len(pkg.pins):
             continue
         pin = pkg.pins[pin_idx]

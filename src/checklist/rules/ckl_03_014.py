@@ -54,7 +54,7 @@ try:
 except ImportError:
     _HAS_SHAPELY = False
 
-_CLEARANCE_MM = 0.2  # required minimum clearance in mm
+_CLEARANCE_MM = 0.001  # required minimum clearance in mm
 
 
 # ---------------------------------------------------------------------------
@@ -416,7 +416,8 @@ def _render_enhanced_pad_image(
         if not indices:
             continue
         geom = _get_pad_union_for_indices(
-            comp, pkg, indices, is_bottom=is_bottom, user_symbols=user_symbols)
+            comp, pkg, indices, is_bottom=is_bottom, user_symbols=user_symbols,
+            prefer_toeprint_geom=True)
         if geom is None or geom.is_empty:
             continue
         for xs, ys in _shapely_to_arrays(geom):
