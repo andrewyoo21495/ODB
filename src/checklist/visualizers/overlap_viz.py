@@ -102,6 +102,7 @@ def render_overlap_image(
     interposer_outer_outline=None,
     interposer_inner_outline=None,
     show_edge_segments: bool = False,
+    annotate_pass: bool = True,
 ) -> Path:
     """Render a single primary component with overlapping opposite-side parts.
 
@@ -137,6 +138,11 @@ def render_overlap_image(
         When True, overlay *primary*'s edge segments (the exact lines used by
         ``is_on_edge`` / ``is_on_outline_edge``) as red dashed lines, so the
         edge decision can be verified visually. Used by the edge-based rules.
+    annotate_pass : bool
+        When False, PASS overlap items are drawn as green geometry only,
+        without the per-component text label/arrow (FAIL items still get a
+        red label). Keeps cluttered images readable when only failures need
+        callouts. Defaults to True (label every item).
 
     Returns
     -------
@@ -337,6 +343,9 @@ def render_overlap_image(
                 pass
 
         # --- annotation text ------------------------------------------------
+        # When annotate_pass is False, PASS items show colour only (no tag).
+        if is_pass and not annotate_pass:
+            continue
         detail = item.get("detail", "")
         label_text = f"{comp.comp_name}\n{item['status']}"
         if detail:

@@ -403,6 +403,7 @@ class CKL01001(ChecklistRule):
                 user_symbols=user_symbols,
                 interposer_outer_outline=inp_outer_outline,
                 interposer_inner_outline=inp_inner_outline,
+                annotate_pass=False,
             )
             images.append({"path": img_path,
                            "title": f"{ovl_name} ({opp_layer})",
