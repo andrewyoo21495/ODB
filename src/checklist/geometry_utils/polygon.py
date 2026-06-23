@@ -815,22 +815,41 @@ def _find_corner_vertices(
 # physical corner of a connector — the region we treat as the true edge.
 _CORNER_SEG_RATIO = 0.4
 
+# How close (mm) a pad centre must be to an edge segment to count as "on edge".
+_EDGE_TOLERANCE_MM = 0.15
+
+# Angle (deg) within which a segment is considered axis-aligned (a straight
+# side) rather than a diagonal chamfer.
+_SIDE_ANGLE_DEG = 10.0
+
+
+def _seg_kind(a: tuple[float, float], b: tuple[float, float]) -> str:
+    """Classify a segment as a diagonal chamfer ("diag") or a straight side.
+
+    Axis-aligned (horizontal/vertical within ``_SIDE_ANGLE_DEG``) → "side";
+    otherwise → "diag".
+    """
+    ang = math.degrees(math.atan2(b[1] - a[1], b[0] - a[0])) % 180.0
+    if (ang < _SIDE_ANGLE_DEG or ang > 180.0 - _SIDE_ANGLE_DEG
+            or abs(ang - 90.0) < _SIDE_ANGLE_DEG):
+        return "side"
+    return "diag"
+
 
 def _find_edge_segments(
     hull_coords: list[tuple[float, float]],
     corners: list[tuple[float, float]],
     bounds: tuple[float, float, float, float],
-) -> list[tuple[tuple[float, float], tuple[float, float]]]:
+) -> list[tuple[tuple[float, float], tuple[float, float], str]]:
     """Return the line segments that define a connector's "edge".
 
     Walks the convex-hull ring through its corner vertices and builds the
     segment between each pair of consecutive corners.  Those clearly shorter
-    than the longest segment are the corner diagonals (chamfer/notch) and are
-    returned as the edge.
+    than the longest segment are kept; each is tagged "diag" (a corner
+    chamfer/notch bridge) or "side" (a short straight mating end).
 
-    Fallback: when no short corner-diagonal exists (a sharp-cornered
-    rectangle), the two **short sides** of the hull bounding box are returned
-    instead — that is the connector's mating edge.
+    Fallback: when no short segment exists (a sharp-cornered rectangle), the
+    two **short sides** of the hull bounding box are returned as "side".
 
     Args:
         hull_coords: Convex-hull exterior vertices (no closing duplicate).
@@ -838,7 +857,8 @@ def _find_edge_segments(
         bounds: ``(minx, miny, maxx, maxy)`` of the hull.
 
     Returns:
-        List of ``(p1, p2)`` segments, or ``[]`` when geometry is degenerate.
+        List of ``(p1, p2, kind)`` where *kind* is "diag" or "side", or ``[]``
+        when geometry is degenerate.
     """
     corner_set = set(corners)
     corner_idx = [i for i, p in enumerate(hull_coords) if p in corner_set]
@@ -853,7 +873,7 @@ def _find_edge_segments(
 
     longest = max((s[2] for s in segments), default=0.0)
     if longest > 0.0:
-        short = [(a, b) for a, b, length in segments
+        short = [(a, b, _seg_kind(a, b)) for a, b, length in segments
                  if length <= _CORNER_SEG_RATIO * longest]
         if short:
             return short
@@ -865,11 +885,11 @@ def _find_edge_segments(
     if width < 1e-9 and height < 1e-9:
         return []
     if width <= height:  # vertical → top & bottom are the short sides
-        return [((minx, miny), (maxx, miny)),
-                ((minx, maxy), (maxx, maxy))]
+        return [((minx, miny), (maxx, miny), "side"),
+                ((minx, maxy), (maxx, maxy), "side")]
     # horizontal → left & right are the short sides
-    return [((minx, miny), (minx, maxy)),
-            ((maxx, miny), (maxx, maxy))]
+    return [((minx, miny), (minx, maxy), "side"),
+            ((maxx, miny), (maxx, maxy), "side")]
 
 
 def _point_seg_dist_sq(
@@ -889,10 +909,36 @@ def _point_seg_dist_sq(
     return (px - nx) ** 2 + (py - ny) ** 2
 
 
+def _point_seg_dist_sq_interior(
+    px: float, py: float,
+    x1: float, y1: float, x2: float, y2: float,
+) -> float | None:
+    """Squared perpendicular distance from (px, py) to segment (p1, p2),
+    but only when the perpendicular foot falls *within* the segment.
+
+    Returns ``None`` when the foot lies beyond either end — i.e. the point is
+    off the end of the segment, not alongside it.  This makes a diagonal
+    chamfer's tolerance zone flat-ended (a band alongside the diagonal) rather
+    than capsule-shaped, so a pad sitting on the adjacent straight side just
+    past the corner is not counted.
+    """
+    seg_dx = x2 - x1
+    seg_dy = y2 - y1
+    seg_len_sq = seg_dx * seg_dx + seg_dy * seg_dy
+    if seg_len_sq < 1e-18:
+        return None
+    t = ((px - x1) * seg_dx + (py - y1) * seg_dy) / seg_len_sq
+    if t < 0.0 or t > 1.0:
+        return None
+    nx = x1 + t * seg_dx
+    ny = y1 + t * seg_dy
+    return (px - nx) ** 2 + (py - ny) ** 2
+
+
 def _edge_segments_from_hull(
     hull: ShapelyPolygon,
-) -> list[tuple[tuple[float, float], tuple[float, float]]]:
-    """Return the edge segments of a pad convex *hull*.
+) -> list[tuple[tuple[float, float], tuple[float, float], str]]:
+    """Return the edge segments of a pad convex *hull* as ``(p1, p2, kind)``.
 
     Single source of truth shared by the on-edge judgment
     (``_pads_near_edge_segments``) and the visualization
@@ -911,7 +957,7 @@ def get_edge_segments(
     *,
     is_bottom: bool = False,
 ) -> list[tuple[tuple[float, float], tuple[float, float]]]:
-    """Return *comp*'s edge segments in board coordinates.
+    """Return *comp*'s edge segments (``(p1, p2)`` pairs) in board coordinates.
 
     These are exactly the segments used by ``is_on_edge`` /
     ``is_on_outline_edge`` to decide whether an opposite-side component lies
@@ -923,7 +969,7 @@ def get_edge_segments(
     hull = _build_pad_convex_hull(comp, packages, is_bottom=is_bottom)
     if hull is None:
         return []
-    return _edge_segments_from_hull(hull)
+    return [(a, b) for a, b, _kind in _edge_segments_from_hull(hull)]
 
 
 def _pads_near_edge_segments(
@@ -932,7 +978,13 @@ def _pads_near_edge_segments(
     tolerance: float,
 ) -> bool:
     """Return True if any pad in *pad_centers_a* lies within *tolerance* of an
-    edge segment of *hull_b* (corner diagonals, or short sides as fallback).
+    edge segment of *hull_b*.
+
+    Diagonal (chamfer) segments use a **flat-ended** zone — a pad only counts
+    when its perpendicular foot lies within the segment, so a pad off the end
+    of the diagonal (on the adjacent straight side) is not flagged.  Straight
+    "side" segments (a connector's short mating end) use the full segment,
+    including its ends.
     """
     edge_segments = _edge_segments_from_hull(hull_b)
     if not edge_segments:
@@ -940,15 +992,20 @@ def _pads_near_edge_segments(
 
     tol_sq = tolerance * tolerance
     for px, py in pad_centers_a:
-        for (x1, y1), (x2, y2) in edge_segments:
-            if _point_seg_dist_sq(px, py, x1, y1, x2, y2) <= tol_sq:
-                return True
+        for (x1, y1), (x2, y2), kind in edge_segments:
+            if kind == "diag":
+                d_sq = _point_seg_dist_sq_interior(px, py, x1, y1, x2, y2)
+                if d_sq is not None and d_sq <= tol_sq:
+                    return True
+            else:
+                if _point_seg_dist_sq(px, py, x1, y1, x2, y2) <= tol_sq:
+                    return True
     return False
 
 
 def is_on_edge(comp_a: Component, comp_b: Component,
                packages: list[Package],
-               tolerance: float = 0.4,
+               tolerance: float = _EDGE_TOLERANCE_MM,
                *,
                is_bottom_a: bool = False,
                is_bottom_b: bool = False) -> bool:
@@ -1052,7 +1109,7 @@ def is_on_outline_edge(
     *,
     is_bottom_a: bool = False,
     is_bottom_b: bool = False,
-    tolerance: float = 0.4,
+    tolerance: float = _EDGE_TOLERANCE_MM,
 ) -> bool:
     """Return True if *comp_a*'s pads lie on the edge of *comp_b*.
 
