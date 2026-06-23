@@ -15,7 +15,6 @@ Headless matplotlib (Agg) is forced at import (server threads, no GUI).
 
 from __future__ import annotations
 
-import math
 from pathlib import Path
 from typing import Callable
 
@@ -27,50 +26,12 @@ import matplotlib.pyplot as plt
 
 from src.checklist.component_classifier import find_interposers
 from src.services import data_service
+from src.services.component_area import component_area as _component_area
+from src.services.component_area import outline_area as _outline_area
 
 LogFn = Callable[[str], None]
 
 _HIGHLIGHT = "#fa541c"
-
-
-def _outline_area(outline) -> float:
-    """Area (mm^2) of a single package outline in package-local space.
-
-    Area is invariant under the placement transform (mirror/rotate/translate),
-    so the local shape is sufficient.
-    """
-    p = outline.params or {}
-    t = outline.type
-    if t in ("CR", "CT"):
-        r = p.get("radius", 0.0)
-        return math.pi * r * r
-    if t == "RC":
-        return abs(p.get("width", 0.0) * p.get("height", 0.0))
-    if t == "SQ":
-        hs = p.get("half_side", 0.0)
-        return (2 * hs) * (2 * hs)
-    if t == "CONTOUR" and outline.contour is not None:
-        from src.visualizer.symbol_renderer import contour_to_vertices
-        verts = contour_to_vertices(outline.contour)
-        if len(verts) >= 3:
-            try:
-                from shapely.geometry import Polygon as SPoly
-                return abs(SPoly(verts).area)
-            except Exception:
-                return 0.0
-    return 0.0
-
-
-def _component_area(comp, pkg) -> float:
-    """Interposer footprint area: largest package outline, else bbox area."""
-    if pkg and getattr(pkg, "outlines", None):
-        largest = max((_outline_area(o) for o in pkg.outlines), default=0.0)
-        if largest > 0:
-            return largest
-    if pkg and getattr(pkg, "bbox", None):
-        b = pkg.bbox
-        return abs((b.xmax - b.xmin) * (b.ymax - b.ymin))
-    return 0.0
 
 
 def _pcb_area(profile) -> float:

@@ -88,6 +88,7 @@ export const api = {
   runExtract: (id: string, categories: string[] | null) =>
     jsonPost<TaskOut>(`/jobs/${id}/extract`, { categories }),
   runInterposer: (id: string) => jsonPost<TaskOut>(`/jobs/${id}/interposer`),
+  runVolume: (id: string) => jsonPost<TaskOut>(`/jobs/${id}/volume`),
   runCompare: (oldJobId: string, newJobId: string) =>
     jsonPost<TaskOut>(`/compare`, { old_job_id: oldJobId, new_job_id: newJobId }),
   getLayers: (id: string) => jsonGet<LayerInfo[]>(`/jobs/${id}/layers`),

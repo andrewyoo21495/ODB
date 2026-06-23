@@ -27,6 +27,7 @@ from api.deps import WORKSPACE_ROOT, sanitize_user
 from api.routers import (
     activity as activity_router,
     checklist, compare, copper, extract, interposer, jobs, meta, tasks, viewer,
+    volume,
 )
 
 app = FastAPI(title="ODB++ 자동화 허브 API", version="0.1.0")
@@ -68,6 +69,7 @@ app.include_router(checklist.router, prefix="/api")
 app.include_router(copper.router, prefix="/api")
 app.include_router(extract.router, prefix="/api")
 app.include_router(interposer.router, prefix="/api")
+app.include_router(volume.router, prefix="/api")
 app.include_router(compare.router, prefix="/api")
 app.include_router(viewer.router, prefix="/api")
 app.include_router(tasks.router, prefix="/api")
