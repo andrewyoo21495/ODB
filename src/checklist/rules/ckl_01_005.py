@@ -110,7 +110,9 @@ class CKL01005(ChecklistRule):
                         })
                         continue
 
-                    on_edge = is_on_edge(ind, ap, packages)
+                    on_edge = is_on_edge(ind, ap, packages,
+                                         is_bottom_a=opp_is_bottom,
+                                         is_bottom_b=ap_is_bottom)
                     orientation = get_component_orientation(ind, packages)
                     edge_str = "TRUE" if on_edge else "FALSE"
 
@@ -146,6 +148,8 @@ class CKL01005(ChecklistRule):
                         layer_name=ap_layer,
                         primary_label="AP/Memory",
                         overlap_label="Inductor",
+                        primary_is_bottom=ap_is_bottom,
+                        overlap_is_bottom=opp_is_bottom,
                         show_edge_segments=True,
                     )
                     images.append({"path": img_path,

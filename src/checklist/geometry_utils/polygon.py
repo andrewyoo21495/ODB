@@ -948,7 +948,10 @@ def _pads_near_edge_segments(
 
 def is_on_edge(comp_a: Component, comp_b: Component,
                packages: list[Package],
-               tolerance: float = 0.4) -> bool:
+               tolerance: float = 0.4,
+               *,
+               is_bottom_a: bool = False,
+               is_bottom_b: bool = False) -> bool:
     """Return True if any pad of comp_a lies on the edge of comp_b.
 
     The "edge" is the set of corner-diagonal segments of *comp_b*'s pad
@@ -956,21 +959,21 @@ def is_on_edge(comp_a: Component, comp_b: Component,
     rectangle has no such diagonal, so its two short sides are used instead.
     See ``_find_edge_segments``.
 
+    Thin wrapper over :func:`is_on_outline_edge`.  Callers MUST pass
+    *is_bottom_a* / *is_bottom_b* matching each component's layer; otherwise a
+    bottom-side component is evaluated in the wrong (un-mirrored) frame and may
+    be judged on-edge while drawn nowhere near the edge.
+
     Args:
         tolerance: Distance in mm from an edge segment that counts as "on edge".
+        is_bottom_a: True when *comp_a* sits on the bottom layer.
+        is_bottom_b: True when *comp_b* sits on the bottom layer.
     """
-    if not _HAS_SHAPELY:
-        return False
-
-    pad_centers_a = _get_pad_centers(comp_a, packages)
-    if not pad_centers_a:
-        return False
-
-    hull_b = _build_pad_convex_hull(comp_b, packages)
-    if hull_b is None:
-        return False
-
-    return _pads_near_edge_segments(pad_centers_a, hull_b, tolerance)
+    return is_on_outline_edge(
+        comp_a, comp_b, packages,
+        is_bottom_a=is_bottom_a, is_bottom_b=is_bottom_b,
+        tolerance=tolerance,
+    )
 
 
 # ---------------------------------------------------------------------------

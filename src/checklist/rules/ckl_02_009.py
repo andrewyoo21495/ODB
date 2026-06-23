@@ -146,6 +146,8 @@ class CKL02009(ChecklistRule):
             (components_top, "Top", components_bot),
             (components_bot, "Bottom", components_top),
         ]:
+            conn_is_bottom = (conn_layer == "Bottom")
+            ind_is_bottom = not conn_is_bottom
             connectors = find_connectors(conn_comps)
             opp_all_ind = find_inductors(opp_comps)
             opp_general_ind = [
@@ -165,7 +167,9 @@ class CKL02009(ChecklistRule):
 
                 overlap_items: list[dict] = []
                 for ind, sz in filtered:
-                    on_edge = is_on_edge(ind, conn, packages)
+                    on_edge = is_on_edge(ind, conn, packages,
+                                         is_bottom_a=ind_is_bottom,
+                                         is_bottom_b=conn_is_bottom)
                     orientation = get_component_orientation(ind, packages)
                     edge_str = "TRUE" if on_edge else "FALSE"
                     status = (
@@ -201,6 +205,8 @@ class CKL02009(ChecklistRule):
                         layer_name=conn_layer,
                         primary_label="Connector",
                         overlap_label="General Inductor",
+                        primary_is_bottom=conn_is_bottom,
+                        overlap_is_bottom=ind_is_bottom,
                         user_symbols=user_symbols,
                         show_edge_segments=True,
                     )

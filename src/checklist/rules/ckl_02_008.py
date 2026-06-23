@@ -99,7 +99,9 @@ class CKL02008(ChecklistRule):
 
                 overlap_items: list[dict] = []
                 for ind, sz in filtered:
-                    on_edge = is_on_edge(ind, conn, packages)
+                    on_edge = is_on_edge(ind, conn, packages,
+                                         is_bottom_a=opp_is_bottom,
+                                         is_bottom_b=ref_is_bottom)
                     orientation = get_pair_orientation(ind, conn, packages)
                     edge_str = "TRUE" if on_edge else "FALSE"
                     status = (
