@@ -8,7 +8,7 @@ from pathlib import Path
 from fastapi import APIRouter, BackgroundTasks, Depends, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
-from api.deps import WORKSPACE_ROOT, get_current_user
+from api.deps import WORKSPACE_ROOT, get_current_user, require_manager_pw
 from api.schemas import (
     ActiveJob, JobMetaUpdate, JobOut, JobStatus, MetaOptions, ResultOut, TaskOut,
 )
@@ -137,8 +137,13 @@ def update_job_meta(job_id: str, body: JobMetaUpdate,
 
 
 @router.delete("/jobs/{job_id}")
-def delete_job(job_id: str, user: str = Depends(get_current_user)) -> dict:
-    """Delete a job and all its data (source, cache, reports)."""
+def delete_job(job_id: str, user: str = Depends(get_current_user),
+               _: None = Depends(require_manager_pw)) -> dict:
+    """Delete a job and all its data (source, cache, reports).
+
+    Gated behind the manager password (``X-Manager-Pw``) so casual users on the
+    shared server cannot remove others' data.
+    """
     removed = job_store.delete_job(job_id, workspace_root=WORKSPACE_ROOT)
     if not removed:
         raise HTTPException(status_code=404, detail="job not found")

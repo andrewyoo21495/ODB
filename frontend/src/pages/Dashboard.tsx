@@ -1,29 +1,67 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+  Alert,
   App as AntdApp,
   Button,
   Card,
   Empty,
-  Popconfirm,
-  Segmented,
+  Input,
+  Modal,
+  Select,
   Space,
   Spin,
   Table,
   Tag,
   Upload,
 } from "antd";
-import { DeleteOutlined, DownloadOutlined, EditOutlined, InboxOutlined } from "@ant-design/icons";
+import {
+  DeleteOutlined,
+  DownloadOutlined,
+  EditOutlined,
+  InboxOutlined,
+  LockOutlined,
+} from "@ant-design/icons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api/client";
 import JobMetaModal from "../components/JobMetaModal";
 import { useJob } from "../JobContext";
-import { useUser } from "../UserContext";
 import type { JobMeta, JobOut } from "../types";
 
 // A table row is a fetched job, optionally an in-progress upload placeholder
 // (_pending) carrying its live build progress (0–1).
 type JobRow = JobOut & { _pending?: boolean; _progress?: number };
+
+// Verified manager password cached for the browser session so repeated deletes
+// don't re-prompt (same key/flow as the 사용자 현황 page).
+const PW_KEY = "odbhub.managerpw";
+
+// Searchable fields for the dashboard filter (default = 파일).
+const SEARCH_FIELDS: { label: string; value: keyof JobOut }[] = [
+  { label: "파일", value: "original_filename" },
+  { label: "과제", value: "project" },
+  { label: "모델", value: "model" },
+  { label: "타입", value: "board_type" },
+];
+
+// Format a UTC ISO timestamp as Korean local time "YYYY-MM-DD / HH:MM:SS".
+function fmtKST(iso: string): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return iso;
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Seoul",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(d);
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
+  return `${get("year")}-${get("month")}-${get("day")} / ${get("hour")}:${get("minute")}:${get("second")}`;
+}
 
 const KIND_LABEL: Record<string, string> = {
   extract: "데이터 추출",
@@ -75,12 +113,17 @@ export default function Dashboard() {
   const qc = useQueryClient();
   const nav = useNavigate();
   const { jobId: currentJobId, setJobId } = useJob();
-  const { user } = useUser();
   const { message } = AntdApp.useApp();
-  const [scope, setScope] = useState<"mine" | "all">("all");
+  // Search filter (left select + term).
+  const [searchField, setSearchField] = useState<keyof JobOut>("original_filename");
+  const [searchTerm, setSearchTerm] = useState("");
   // File awaiting metadata entry before upload; job row being edited.
   const [pendingFile, setPendingFile] = useState<File | null>(null);
   const [editJob, setEditJob] = useState<JobOut | null>(null);
+  // Job pending deletion (awaiting password confirmation).
+  const [deleteTarget, setDeleteTarget] = useState<JobRow | null>(null);
+  const [pwInput, setPwInput] = useState("");
+  const [pwError, setPwError] = useState("");
 
   const jobs = useQuery({ queryKey: ["jobs"], queryFn: api.listJobs });
   const metaOptions = useQuery({ queryKey: ["metaOptions"], queryFn: api.getMetaOptions });
@@ -134,14 +177,30 @@ export default function Dashboard() {
   });
 
   const remove = useMutation({
-    mutationFn: (id: string) => api.deleteJob(id),
-    onSuccess: (_d, id) => {
+    mutationFn: ({ id, pw }: { id: string; pw: string }) => api.deleteJob(id, pw),
+    onSuccess: (_d, vars) => {
+      sessionStorage.setItem(PW_KEY, vars.pw);
       message.success("삭제되었습니다");
-      if (currentJobId === id) setJobId(null);
+      if (currentJobId === vars.id) setJobId(null);
+      setDeleteTarget(null);
+      setPwInput("");
+      setPwError("");
       qc.invalidateQueries({ queryKey: ["jobs"] });
     },
-    onError: (e) => message.error(String(e)),
+    onError: (e) =>
+      setPwError(
+        String(e).includes("401") ? "비밀번호가 올바르지 않습니다." : String(e),
+      ),
   });
+
+  const openDelete = (r: JobRow) => {
+    setPwInput(sessionStorage.getItem(PW_KEY) || "");
+    setPwError("");
+    setDeleteTarget(r);
+  };
+  const confirmDelete = () => {
+    if (deleteTarget && pwInput) remove.mutate({ id: deleteTarget.job_id, pw: pwInput });
+  };
 
   const dim = (v: string) => v || <span style={{ color: "#bbb" }}>—</span>;
 
@@ -165,12 +224,7 @@ export default function Dashboard() {
     { title: "타입", dataIndex: "board_type", render: (v: string) => (v ? <Tag>{v}</Tag> : dim(v)) },
     { title: "리비전", dataIndex: "revision", render: dim },
     { title: "단위", dataIndex: "units", render: (u: string) => (u ? <Tag>{u}</Tag> : dim(u)) },
-    {
-      title: "업로더",
-      dataIndex: "uploaded_by",
-      render: (u: string) => <Tag color={u && u === user ? "blue" : "default"}>{u || "anonymous"}</Tag>,
-    },
-    { title: "업로드", dataIndex: "uploaded_at" },
+    { title: "업로드", dataIndex: "uploaded_at", render: (t: string) => fmtKST(t) || dim(t) },
     {
       title: "",
       key: "action",
@@ -194,29 +248,31 @@ export default function Dashboard() {
               title="과제/모델/타입/리비전 수정"
               onClick={() => setEditJob(r)}
             />
-            <Popconfirm
-              title="이 데이터를 삭제할까요?"
-              description="소스/캐시/리포트가 모두 삭제됩니다."
-              okText="삭제"
-              okButtonProps={{ danger: true, loading: remove.isPending }}
-              cancelText="취소"
-              onConfirm={() => remove.mutate(r.job_id)}
-            >
-              <Button type="text" danger icon={<DeleteOutlined />} />
-            </Popconfirm>
+            <Button
+              type="text"
+              danger
+              icon={<DeleteOutlined />}
+              title="삭제 (비밀번호 필요)"
+              onClick={() => openDelete(r)}
+            />
           </Space>
         ),
     },
   ];
 
   // Merge server-tracked in-progress uploads on top of the fetched jobs.
+  // Jobs are filtered by the search box and sorted by upload time (newest first);
+  // in-progress uploads always stay pinned on top.
   const rows = useMemo<JobRow[]>(() => {
-    const inScope = (uploadedBy: string) =>
-      scope === "all" || !user || uploadedBy === user;
-    const base = (jobs.data ?? []).filter((j) => inScope(j.uploaded_by));
+    const term = searchTerm.trim().toLowerCase();
+    const match = (j: Pick<JobOut, keyof JobOut>) =>
+      !term || String((j[searchField] ?? "")).toLowerCase().includes(term);
+    const base = (jobs.data ?? [])
+      .filter(match)
+      .sort((a, b) => (b.uploaded_at || "").localeCompare(a.uploaded_at || ""));
     const baseIds = new Set(base.map((j) => j.job_id));
     const pending: JobRow[] = (active.data ?? [])
-      .filter((a) => !baseIds.has(a.job_id) && inScope(a.uploaded_by))
+      .filter((a) => !baseIds.has(a.job_id))
       .map((a) => ({
         job_id: a.job_id,
         original_filename: a.original_filename,
@@ -232,9 +288,10 @@ export default function Dashboard() {
         uploaded_at: "",
         _pending: true,
         _progress: a.progress,
-      }));
+      }))
+      .filter((r) => match(r));
     return [...pending, ...base];
-  }, [jobs.data, active.data, scope, user]);
+  }, [jobs.data, active.data, searchField, searchTerm]);
 
   return (
     <Card title="대시보드 — ODB++ 업로드 & Job">
@@ -291,14 +348,22 @@ export default function Dashboard() {
       />
 
       <div style={{ marginTop: 16, display: "flex", justifyContent: "flex-end" }}>
-        <Segmented
-          value={scope}
-          onChange={(v) => setScope(v as "mine" | "all")}
-          options={[
-            { label: "내 작업", value: "mine" },
-            { label: "전체", value: "all" },
-          ]}
-          disabled={!user}
+        <Input.Search
+          allowClear
+          enterButton="검색"
+          placeholder="검색어 입력"
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          onSearch={(v) => setSearchTerm(v)}
+          addonBefore={
+            <Select
+              value={searchField}
+              onChange={setSearchField}
+              options={SEARCH_FIELDS}
+              style={{ width: 88 }}
+            />
+          }
+          style={{ maxWidth: 440 }}
         />
       </div>
 
@@ -314,6 +379,34 @@ export default function Dashboard() {
           rowExpandable: (r: JobRow) => !r._pending,
         }}
       />
+
+      <Modal
+        open={!!deleteTarget}
+        title="데이터 삭제"
+        okText="삭제"
+        okButtonProps={{ danger: true, loading: remove.isPending, disabled: !pwInput }}
+        cancelText="취소"
+        onOk={confirmDelete}
+        onCancel={() => setDeleteTarget(null)}
+      >
+        <p>
+          <b>{deleteTarget?.original_filename}</b> 을(를) 삭제합니다. 소스/캐시/리포트가 모두
+          삭제됩니다.
+        </p>
+        <p style={{ color: "#888" }}>삭제하려면 관리자 비밀번호를 입력하세요.</p>
+        <Input.Password
+          prefix={<LockOutlined />}
+          placeholder="비밀번호"
+          value={pwInput}
+          onChange={(e) => {
+            setPwInput(e.target.value);
+            setPwError("");
+          }}
+          onPressEnter={confirmDelete}
+          autoFocus
+        />
+        {pwError && <Alert type="error" message={pwError} style={{ marginTop: 12 }} />}
+      </Modal>
     </Card>
   );
 }

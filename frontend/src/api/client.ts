@@ -61,8 +61,11 @@ export const api = {
   getMetaOptions: () => jsonGet<MetaOptions>("/jobs/meta/options"),
   updateJobMeta: (id: string, fields: JobMeta) =>
     jsonPatch<JobOut>(`/jobs/${id}/meta`, fields),
-  deleteJob: async (id: string): Promise<void> => {
-    const r = await fetch(`${BASE}/jobs/${id}`, { method: "DELETE", headers: userHeaders() });
+  deleteJob: async (id: string, pw = ""): Promise<void> => {
+    const r = await fetch(`${BASE}/jobs/${id}`, {
+      method: "DELETE",
+      headers: userHeaders(pw ? { "X-Manager-Pw": pw } : undefined),
+    });
     if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
   },
   getActivity: async (limit = 200, pw = ""): Promise<ActivityOut> => {

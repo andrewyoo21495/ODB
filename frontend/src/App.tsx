@@ -1,4 +1,4 @@
-import { Input, Layout, Menu, Tooltip } from "antd";
+import { Layout, Menu } from "antd";
 import {
   DashboardOutlined,
   ExportOutlined,
@@ -8,11 +8,9 @@ import {
   ColumnHeightOutlined,
   EyeOutlined,
   DiffOutlined,
-  UserOutlined,
   TeamOutlined,
 } from "@ant-design/icons";
 import { Link, Route, Routes, useLocation } from "react-router-dom";
-import { useUser } from "./UserContext";
 import Dashboard from "./pages/Dashboard";
 import Checklist from "./pages/Checklist";
 import Copper from "./pages/Copper";
@@ -40,7 +38,6 @@ function selectedKey(pathname: string): string {
 export default function App() {
   const loc = useLocation();
   const selected = selectedKey(loc.pathname);
-  const { user, setUserName } = useUser();
 
   return (
     <Layout style={{ minHeight: "100vh" }}>
@@ -50,23 +47,11 @@ export default function App() {
           fontWeight: 600,
           display: "flex",
           alignItems: "center",
-          justifyContent: "space-between",
         }}
       >
         <Link to="/" style={{ color: "#fff" }}>
           ODB++ 자동화 허브
         </Link>
-        <Tooltip title="사용자 이름 (작업 소유자 표시 / 내 작업 필터에 사용)">
-          <Input
-            size="small"
-            prefix={<UserOutlined />}
-            placeholder="사용자 이름"
-            defaultValue={user}
-            onBlur={(e) => setUserName(e.target.value)}
-            onPressEnter={(e) => setUserName((e.target as HTMLInputElement).value)}
-            style={{ width: 180 }}
-          />
-        </Tooltip>
       </Header>
       <Layout>
         <Sider width={230} theme="light">
