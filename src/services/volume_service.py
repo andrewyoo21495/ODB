@@ -40,12 +40,15 @@ _NO_HEIGHT = "#bbbbbb"
 def _mean_height(comp) -> float | None:
     """Mean component height (mm) from properties, or None if data is absent.
 
-    ``comp_height_max`` / ``comp_height_min`` are stored as strings (when
-    present at all).  Returns None when either value is missing or unparseable.
+    Reads ``COMP_HEIGHT_MAX`` / ``COMP_HEIGHT_MIN`` from the component
+    ``properties`` (stored as strings) and averages them.  The lookup is
+    case-insensitive (keys are upper-case on real boards).  Returns None when
+    either value is missing or unparseable.
     """
     props = getattr(comp, "properties", None) or {}
-    raw_max = props.get("comp_height_max")
-    raw_min = props.get("comp_height_min")
+    lookup = {str(k).lower(): v for k, v in props.items()}
+    raw_max = lookup.get("comp_height_max")
+    raw_min = lookup.get("comp_height_min")
     if raw_max is None or raw_min is None:
         return None
     try:
