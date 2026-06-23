@@ -161,6 +161,7 @@ export default function Dashboard() {
         ),
     },
     { title: "과제", dataIndex: "project", render: dim },
+    { title: "모델", dataIndex: "model", render: dim },
     { title: "타입", dataIndex: "board_type", render: (v: string) => (v ? <Tag>{v}</Tag> : dim(v)) },
     { title: "리비전", dataIndex: "revision", render: dim },
     { title: "단위", dataIndex: "units", render: (u: string) => (u ? <Tag>{u}</Tag> : dim(u)) },
@@ -190,7 +191,7 @@ export default function Dashboard() {
             <Button
               type="text"
               icon={<EditOutlined />}
-              title="과제/타입/리비전 수정"
+              title="과제/모델/타입/리비전 수정"
               onClick={() => setEditJob(r)}
             />
             <Popconfirm
@@ -221,6 +222,7 @@ export default function Dashboard() {
         original_filename: a.original_filename,
         job_name: "",
         project: a.project,
+        model: a.model,
         board_type: a.board_type,
         revision: a.revision,
         units: "",
@@ -250,7 +252,7 @@ export default function Dashboard() {
           <InboxOutlined />
         </p>
         <p className="ant-upload-text">ODB++ .tgz 파일을 드래그하거나 클릭하여 업로드</p>
-        <p className="ant-upload-hint">업로드 시 과제 · 타입 · 리비전을 입력합니다 (생략 가능)</p>
+        <p className="ant-upload-hint">업로드 시 과제 · 모델 · 타입 · 리비전을 입력합니다 (생략 가능)</p>
       </Upload.Dragger>
 
       <JobMetaModal
@@ -268,11 +270,16 @@ export default function Dashboard() {
 
       <JobMetaModal
         open={!!editJob}
-        title="과제 · 타입 · 리비전 수정"
+        title="과제 · 모델 · 타입 · 리비전 수정"
         okText="저장"
         initial={
           editJob
-            ? { project: editJob.project, board_type: editJob.board_type, revision: editJob.revision }
+            ? {
+                project: editJob.project,
+                model: editJob.model,
+                board_type: editJob.board_type,
+                revision: editJob.revision,
+              }
             : undefined
         }
         options={metaOptions.data}

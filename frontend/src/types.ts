@@ -6,6 +6,7 @@ export interface JobOut {
   original_filename: string;
   job_name: string;
   project: string; // 과제 (user-entered)
+  model: string; // 모델 (user-entered)
   board_type: string; // 타입 (user-entered)
   revision: string; // 리비전 (user-entered)
   units: string;
@@ -15,9 +16,10 @@ export interface JobOut {
   uploaded_at: string;
 }
 
-// User-entered job metadata (과제/타입/리비전).
+// User-entered job metadata (과제/모델/타입/리비전).
 export interface JobMeta {
   project: string;
+  model: string;
   board_type: string;
   revision: string;
 }
@@ -25,6 +27,7 @@ export interface JobMeta {
 // Previously-used values per field, for input-history autocomplete.
 export interface MetaOptions {
   projects: string[];
+  models: string[];
   board_types: string[];
   revisions: string[];
 }
@@ -34,6 +37,7 @@ export interface ActiveJob {
   job_id: string;
   original_filename: string;
   project: string;
+  model: string;
   board_type: string;
   revision: string;
   uploaded_by: string;

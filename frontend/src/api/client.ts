@@ -48,6 +48,7 @@ export const api = {
     const fd = new FormData();
     fd.append("file", file);
     if (meta?.project) fd.append("project", meta.project);
+    if (meta?.model) fd.append("model", meta.model);
     if (meta?.board_type) fd.append("board_type", meta.board_type);
     if (meta?.revision) fd.append("revision", meta.revision);
     const r = await fetch(BASE + "/jobs", { method: "POST", body: fd, headers: userHeaders() });

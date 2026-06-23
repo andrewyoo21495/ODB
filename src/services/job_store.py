@@ -54,7 +54,7 @@ _RESULTS_LOCK = threading.Lock()
 _META_LOCK = threading.Lock()
 
 # User-entered metadata fields (not derived from parsing) — editable via the UI.
-EDITABLE_META = ("project", "board_type", "revision")
+EDITABLE_META = ("project", "model", "board_type", "revision")
 
 _JOB_ID_LEN = 16
 
@@ -175,6 +175,7 @@ def _write_meta(jdir: Path, *, job_id: str, original_filename: str,
         "job_name": getattr(job_info, "job_name", "") if job_info else "",
         # User-entered metadata (manually editable, used for filtering).
         "project": str(mf.get("project", "") or ""),
+        "model": str(mf.get("model", "") or ""),
         "board_type": str(mf.get("board_type", "") or ""),
         "revision": str(mf.get("revision", "") or ""),
         "units": getattr(job_info, "units", "") if job_info else "",
@@ -311,6 +312,7 @@ def meta_options(*, workspace_root: str | Path = DEFAULT_WORKSPACE_ROOT) -> dict
 
     return {
         "projects": distinct("project"),
+        "models": distinct("model"),
         "board_types": distinct("board_type"),
         "revisions": distinct("revision"),
     }

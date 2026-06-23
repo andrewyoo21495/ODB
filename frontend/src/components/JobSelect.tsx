@@ -10,7 +10,7 @@ import { useJob } from "../JobContext";
 import type { JobOut } from "../types";
 
 function jobLabel(j: JobOut): string {
-  const extra = [j.project, j.revision ? `rev ${j.revision}` : ""]
+  const extra = [j.project, j.model, j.revision ? `rev ${j.revision}` : ""]
     .filter(Boolean)
     .join(" · ");
   return extra ? `${j.original_filename} — ${extra}` : j.original_filename;

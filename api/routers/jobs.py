@@ -42,17 +42,19 @@ def _build_job(temp_path: str, original_filename: str, task_id: str,
 
 @router.post("/jobs", response_model=JobStatus)
 async def upload_job(file: UploadFile, background: BackgroundTasks,
-                     project: str = Form(""), board_type: str = Form(""),
-                     revision: str = Form(""),
+                     project: str = Form(""), model: str = Form(""),
+                     board_type: str = Form(""), revision: str = Form(""),
                      user: str = Depends(get_current_user)) -> JobStatus:
     """Upload an ODB++ ``.tgz``; build its cache in the background.
 
     The response carries the content-addressed ``job_id`` immediately.  If the
     same content was uploaded before, it is reused (status ``ready``).  The
-    optional ``project``/``board_type``/``revision`` form fields are user-entered
-    metadata (과제/타입/리비전); blank values never overwrite existing ones.
+    optional ``project``/``model``/``board_type``/``revision`` form fields are
+    user-entered metadata (과제/모델/타입/리비전); blank values never overwrite
+    existing ones.
     """
-    meta_fields = {"project": project, "board_type": board_type, "revision": revision}
+    meta_fields = {"project": project, "model": model,
+                   "board_type": board_type, "revision": revision}
 
     suffix = Path(file.filename or "upload.tgz").suffix or ".tgz"
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
@@ -73,7 +75,8 @@ async def upload_job(file: UploadFile, background: BackgroundTasks,
 
     task = registry.create("cache", job_id=job_id, info={
         "original_filename": file.filename or "",
-        "project": project, "board_type": board_type, "revision": revision,
+        "project": project, "model": model,
+        "board_type": board_type, "revision": revision,
         "uploaded_by": user,
     })
     background.add_task(_build_job, tmp.name, file.filename or "", task.id, user,
@@ -96,6 +99,7 @@ def active_jobs(user: str = Depends(get_current_user)) -> list[ActiveJob]:
             job_id=t.job_id or "",
             original_filename=info.get("original_filename", ""),
             project=info.get("project", ""),
+            model=info.get("model", ""),
             board_type=info.get("board_type", ""),
             revision=info.get("revision", ""),
             uploaded_by=info.get("uploaded_by", ""),

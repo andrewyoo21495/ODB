@@ -12,7 +12,7 @@ const PRESET_TYPES = ["Main", "Secondary", "Sub", "IF Sub", "FPCB"];
 // Common revisions seeded as suggestions (free entry still allowed).
 const PRESET_REVISIONS = ["0.0", "0.1", "0.2", "0.3", "0.4", "0.5", "0.6", "0.7", "0.8", "FINAL"];
 
-const EMPTY: JobMeta = { project: "", board_type: "", revision: "" };
+const EMPTY: JobMeta = { project: "", model: "", board_type: "", revision: "" };
 
 function toOptions(values: string[]): { value: string }[] {
   return values.map((v) => ({ value: v }));
@@ -60,6 +60,7 @@ export default function JobMetaModal({
     const v = form.getFieldsValue();
     onConfirm({
       project: (v.project ?? "").trim(),
+      model: (v.model ?? "").trim(),
       board_type: (v.board_type ?? "").trim(),
       revision: (v.revision ?? "").trim(),
     });
@@ -82,6 +83,14 @@ export default function JobMetaModal({
             options={toOptions(options?.projects ?? [])}
             filterOption={filterOption}
             placeholder="과제명 입력 또는 기존 값 선택"
+            allowClear
+          />
+        </Form.Item>
+        <Form.Item label="모델" name="model">
+          <AutoComplete
+            options={toOptions(options?.models ?? [])}
+            filterOption={filterOption}
+            placeholder="모델명 입력 또는 기존 값 선택"
             allowClear
           />
         </Form.Item>

@@ -15,6 +15,7 @@ class JobOut(BaseModel):
     original_filename: str = ""
     job_name: str = ""
     project: str = ""          # 과제 (user-entered)
+    model: str = ""            # 모델 (user-entered)
     board_type: str = ""       # 타입 (user-entered: Main/Secondary/Sub/...)
     revision: str = ""         # 리비전 (user-entered)
     units: str = ""
@@ -28,6 +29,7 @@ class JobMetaUpdate(BaseModel):
     """User-editable job metadata. Omitted (None) fields are left unchanged;
     an empty string clears the field."""
     project: str | None = None
+    model: str | None = None
     board_type: str | None = None
     revision: str | None = None
 
@@ -35,6 +37,7 @@ class JobMetaUpdate(BaseModel):
 class MetaOptions(BaseModel):
     """Previously-used values per field, for input-history autocomplete."""
     projects: list[str] = []
+    models: list[str] = []
     board_types: list[str] = []
     revisions: list[str] = []
 
@@ -47,6 +50,7 @@ class ActiveJob(BaseModel):
     job_id: str
     original_filename: str = ""
     project: str = ""
+    model: str = ""
     board_type: str = ""
     revision: str = ""
     uploaded_by: str = ""
