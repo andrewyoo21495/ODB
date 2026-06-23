@@ -33,6 +33,7 @@ try:
         Point as ShapelyPoint,
         Polygon as ShapelyPolygon,
     )
+    from shapely.ops import unary_union
     from shapely import concave_hull as _concave_hull
     _HAS_SHAPELY = True
 except ImportError:
@@ -554,6 +555,143 @@ def is_near_inner_wall(
             return True
 
     return False
+
+
+# ---------------------------------------------------------------------------
+# Inner-wall compartment classification (inside / outside)
+# ---------------------------------------------------------------------------
+
+def _extract_polygons(geom) -> list:
+    """Return a flat list of non-empty Polygon parts from *geom*."""
+    if geom is None or geom.is_empty:
+        return []
+    if geom.geom_type == "Polygon":
+        return [geom]
+    if hasattr(geom, "geoms"):
+        return [g for g in geom.geoms
+                if g.geom_type == "Polygon" and not g.is_empty]
+    return []
+
+
+def split_interior_by_inner_walls(
+    shield_can: Component,
+    packages: list[Package],
+    inner_walls,
+    *,
+    is_bottom: bool = False,
+    min_room_ratio: float = 0.02,
+):
+    """Partition a shield can's interior into outside / inside compartments.
+
+    The inner-wall pads, together with the outer wall, enclose a smaller
+    pocket inside the shield can.  This splits the filled interior into
+    connected "rooms": the largest room is the main area (**outside**) and any
+    remaining rooms form the enclosed pocket (**inside**).
+
+    The inner-wall pads usually leave a small gap to the outer wall (and to
+    each other), so a plain ``difference`` with the raw walls would not
+    disconnect the interior.  The walls are therefore buffered by a
+    progressively larger bridge distance until the interior splits into two or
+    more meaningful rooms.
+
+    Returns ``(outside_region, inside_region)``:
+    - ``outside_region`` — Shapely (Multi)Polygon, or ``None`` when the
+      interior cannot be resolved.
+    - ``inside_region``  — Shapely (Multi)Polygon for the enclosed pocket(s),
+      or ``None`` when the interior could not be split (no inner walls, or the
+      walls do not enclose a pocket). Callers should treat the
+      ``inside_region is None`` case as "everything is outside".
+
+    *min_room_ratio* ignores sliver rooms smaller than this fraction of the
+    total interior area.
+    """
+    if not _HAS_SHAPELY:
+        return (None, None)
+
+    interior = get_outermost_outline(shield_can, packages, is_bottom=is_bottom)
+    if interior is None or interior.is_empty:
+        return (None, None)
+
+    walls_list = [w for w in (inner_walls or []) if w is not None and not w.is_empty]
+    if not walls_list:
+        return (interior, None)
+
+    walls = unary_union(walls_list)
+    if walls.is_empty:
+        return (interior, None)
+
+    min_area = interior.area * min_room_ratio
+    rooms: list = []
+    for bridge in (0.0, 0.05, 0.1, 0.2, 0.3, 0.5, 0.75, 1.0):
+        cut_walls = walls.buffer(bridge) if bridge > 0 else walls
+        try:
+            cut = interior.difference(cut_walls)
+        except Exception:
+            continue
+        polys = [p for p in _extract_polygons(cut) if p.area >= min_area]
+        if len(polys) >= 2:
+            rooms = polys
+            break
+
+    if len(rooms) < 2:
+        return (interior, None)
+
+    rooms.sort(key=lambda p: p.area, reverse=True)
+    outside_region = rooms[0]
+    inside_region = unary_union(rooms[1:])
+    return (outside_region, inside_region)
+
+
+def classify_inner_region(
+    comp: Component,
+    packages: list[Package],
+    outside_region,
+    inside_region,
+    *,
+    is_bottom: bool = False,
+    user_symbols: dict | None = None,
+) -> str:
+    """Classify *comp* as ``"inside"`` or ``"outside"`` the inner-wall pocket.
+
+    ``inside``  — the component lies in the enclosed pocket (*inside_region*).
+    ``outside`` — the component lies in the main shield area, or the inside
+                  region is unavailable / undeterminable.
+
+    The component's pad union is used (component centre as fallback). When the
+    geometry overlaps both regions, the region with the larger overlap area
+    wins; with no area overlap (point geometry, or a component sitting in a
+    bridged gap) the nearer region wins. Defaults to ``"outside"``.
+    """
+    if not _HAS_SHAPELY or inside_region is None or inside_region.is_empty:
+        return "outside"
+
+    geom = _get_pad_union(
+        comp, packages, is_bottom=is_bottom, user_symbols=user_symbols,
+    )
+    if geom is None or geom.is_empty:
+        geom = ShapelyPoint(comp.x, comp.y)
+
+    has_outside = outside_region is not None and not outside_region.is_empty
+
+    in_area = 0.0
+    out_area = 0.0
+    try:
+        in_area = inside_region.intersection(geom).area
+    except Exception:
+        in_area = 0.0
+    if has_outside:
+        try:
+            out_area = outside_region.intersection(geom).area
+        except Exception:
+            out_area = 0.0
+
+    if in_area > 0.0 or out_area > 0.0:
+        return "inside" if in_area > out_area else "outside"
+
+    # No area overlap — decide by proximity.
+    in_d = inside_region.distance(geom)
+    out_d = outside_region.distance(geom) if has_outside else float("inf")
+    return "inside" if in_d < out_d else "outside"
 
 
 # ---------------------------------------------------------------------------

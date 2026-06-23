@@ -126,6 +126,7 @@ def render_overlap_image(
     inner_walls: list | None = None,
     outer_outline=None,
     inset_line=None,
+    inside_region=None,
     interposer_outer_outline=None,
     interposer_inner_outline=None,
     show_edge_segments: bool = False,
@@ -162,6 +163,10 @@ def render_overlap_image(
     inset_line : LineString | MultiLineString | None
         Optional inner-wall inset line (outer outline eroded inward). Drawn
         as a solid red line for debugging inner-wall detection.
+    inside_region : Polygon | MultiPolygon | None
+        Optional "inside" compartment of a shield can (the pocket enclosed by
+        an inner wall). Drawn as a faint fill so the inside/outside split can
+        be verified without obscuring the pads above it.
     show_edge_segments : bool
         When True, overlay *primary*'s edge segments (the exact lines used by
         ``is_on_edge`` / ``is_on_outline_edge``) as red dashed lines, so the
@@ -298,6 +303,17 @@ def render_overlap_image(
                     zorder=6,
                     label="Interposer inner outline" if _first else None)
             _first = False
+
+    # --- draw inside compartment (faint fill, for inside/outside verification) -
+    # The enclosed pocket of a shield can (the "inside" of an inner wall).
+    # Kept low-alpha so the pads / components drawn afterwards stay readable.
+    _has_inside_region = (inside_region is not None and not inside_region.is_empty)
+    if _has_inside_region:
+        _first_inside = True
+        for xs, ys in _shapely_to_arrays(inside_region):
+            ax.fill(xs, ys, color="#8A2BE2", alpha=0.12, zorder=2,
+                    label="Inner wall inside" if _first_inside else None)
+            _first_inside = False
 
     # --- draw inner wall pads (orange/red to distinguish from perimeter) ------
     if inner_walls:
@@ -453,6 +469,11 @@ def render_overlap_image(
         legend_elements.append(
             plt.Line2D([0], [0], color="black", linewidth=1.5,
                        linestyle="--", label="Interposer inner outline")
+        )
+    if _has_inside_region:
+        legend_elements.append(
+            mpatches.Patch(facecolor="#8A2BE2", alpha=0.12,
+                           label="Inner wall inside")
         )
     if inner_walls:
         legend_elements.append(

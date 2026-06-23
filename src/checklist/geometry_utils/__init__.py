@@ -109,6 +109,8 @@ from .shield_can import (
     get_inner_wall_inset_line,
     find_nearest_inner_wall,
     is_near_inner_wall,
+    split_interior_by_inner_walls,
+    classify_inner_region,
     detect_fill_cuts,
     is_on_curved_edge,
 )

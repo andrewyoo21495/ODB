@@ -4,11 +4,14 @@ For each Shield Can on Top and Bottom layers:
 
 1. Detect inner-wall pads — SC pads that do NOT follow the outer component
    outline (i.e. they run inward, subdividing the interior).
-2. Find capacitors and inductors located inside the SC.
-3. Verify that each such component maintains at least 0.3 mm clearance
-   from the nearest inner wall pad.
+2. Split the SC interior into an "outside" (main) compartment and an
+   "inside" pocket enclosed by the inner wall.
+3. Find capacitors and inductors located inside the SC.
+4. Verify clearance from the nearest inner wall pad: components in the inside
+   pocket must keep at least 0.2 mm, components in the outside compartment at
+   least 0.3 mm.
 
-Components closer than the threshold are reported as FAIL.
+Components closer than the applicable threshold are reported as FAIL.
 """
 
 from __future__ import annotations
@@ -26,14 +29,18 @@ from src.checklist.geometry_utils import (
     _resolve_container_interior,
     get_outermost_outline,
     detect_inner_walls,
-    get_inner_wall_inset_line,
+    split_interior_by_inner_walls,
+    classify_inner_region,
     _get_pad_union,
 )
 from src.checklist.rule_base import ChecklistRule
 from src.checklist.visualizers.overlap_viz import render_overlap_image
 from src.models import RuleResult
 
-MIN_CLEARANCE_MM = 0.3
+# Clearance thresholds differ by which side of the inner wall a component
+# sits on: tighter inside the enclosed pocket, looser in the main area.
+INSIDE_CLEARANCE_MM = 0.2
+OUTSIDE_CLEARANCE_MM = 0.3
 
 # Inner-wall detection inset: the outer component outline is eroded inward by
 # this distance and a shield-can pad that crosses the resulting inset line is
@@ -87,8 +94,9 @@ def _min_distance_to_inner_walls(
 class CKL02007(ChecklistRule):
     rule_id = "CKL-02-007"
     description = (
-        "쉴드캔 내벽과 내부 캐패시터/인덕터 간 이격 거리가 "
-        f"{MIN_CLEARANCE_MM} mm 이상이어야 합니다."
+        "쉴드캔 내벽과 내부 캐패시터/인덕터 간 이격 거리는 "
+        f"내벽 안쪽 {INSIDE_CLEARANCE_MM} mm, 바깥쪽 {OUTSIDE_CLEARANCE_MM} mm "
+        "이상이어야 합니다."
     )
     category = "Placement"
 
@@ -100,7 +108,8 @@ class CKL02007(ChecklistRule):
         packages = eda.packages if eda else []
 
         columns = [
-            "comp", "comp_layer", "shield_can", "distance_mm", "status",
+            "comp", "comp_layer", "shield_can", "region",
+            "distance_mm", "required_mm", "status",
         ]
         rows: list[dict] = []
         images: list[dict] = []
@@ -128,9 +137,13 @@ class CKL02007(ChecklistRule):
                 outer_outline = get_outermost_outline(
                     sc, packages, is_bottom=is_bottom,
                 )
-                inset_line = get_inner_wall_inset_line(
-                    sc, packages, is_bottom=is_bottom,
-                    inset_mm=INNER_WALL_INSET_MM,
+
+                # Split the interior into outside (main) / inside (pocket)
+                # compartments so per-side clearance thresholds can apply.
+                # inside_region is None when the walls do not enclose a pocket
+                # (or no inner walls) → every component is treated as outside.
+                outside_region, inside_region = split_interior_by_inner_walls(
+                    sc, packages, inner_walls, is_bottom=is_bottom,
                 )
 
                 # Check clearance for targets inside this SC (only if inner walls exist).
@@ -153,21 +166,33 @@ class CKL02007(ChecklistRule):
                             if dist is None:
                                 continue
 
-                            if dist >= MIN_CLEARANCE_MM:
+                            region = classify_inner_region(
+                                t, packages, outside_region, inside_region,
+                                is_bottom=is_bottom, user_symbols=user_symbols,
+                            )
+                            required = (
+                                INSIDE_CLEARANCE_MM if region == "inside"
+                                else OUTSIDE_CLEARANCE_MM
+                            )
+
+                            if dist >= required:
                                 continue
 
                             rows.append({
                                 "comp": t.comp_name,
                                 "comp_layer": layer_name,
                                 "shield_can": sc.comp_name,
+                                "region": region,
                                 "distance_mm": round(dist, 3),
+                                "required_mm": required,
                                 "status": "FAIL",
                             })
                             fail_items.append({
                                 "comp": t,
                                 "status": "FAIL",
                                 "distance": dist,
-                                "min_distance": MIN_CLEARANCE_MM,
+                                "min_distance": required,
+                                "detail": f"{region}, ≥{required} mm",
                             })
 
                 # Render an image for every detected shield can (even when no
@@ -189,7 +214,7 @@ class CKL02007(ChecklistRule):
                     user_symbols=user_symbols,
                     inner_walls=inner_walls,
                     outer_outline=outer_outline,
-                    inset_line=inset_line,
+                    inside_region=inside_region,
                 )
                 images.append({
                     "path": img_path,
@@ -205,13 +230,15 @@ class CKL02007(ChecklistRule):
 
         if passed_all:
             message = (
-                "모든 캐패시터/인덕터가 쉴드캔 내벽과 "
-                f"{MIN_CLEARANCE_MM} mm 이상 이격되어 있습니다."
+                "모든 캐패시터/인덕터가 쉴드캔 내벽과 기준 이격 거리"
+                f"(안쪽 {INSIDE_CLEARANCE_MM} mm / 바깥쪽 {OUTSIDE_CLEARANCE_MM} mm)"
+                " 이상 이격되어 있습니다."
             )
         else:
             message = (
-                f"{fail_count}개의 부품이 쉴드캔 내벽과 "
-                f"{MIN_CLEARANCE_MM} mm 미만으로 이격되어 있습니다."
+                f"{fail_count}개의 부품이 쉴드캔 내벽과 기준 이격 거리"
+                f"(안쪽 {INSIDE_CLEARANCE_MM} mm / 바깥쪽 {OUTSIDE_CLEARANCE_MM} mm)"
+                " 미만으로 이격되어 있습니다."
             )
 
         return RuleResult(
