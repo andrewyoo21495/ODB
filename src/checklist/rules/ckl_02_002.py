@@ -200,7 +200,7 @@ class CKL02002(ChecklistRule):
                         primary_is_bottom=conn_is_bottom,
                         overlap_is_bottom=cap_is_bottom,
                         user_symbols=user_symbols,
-                        show_edge_segments=True,
+                        # show_edge_segments=True,  # disabled (kept for future use)
                     )
                     images.append({
                         "path": img_path,

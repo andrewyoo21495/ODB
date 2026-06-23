@@ -178,19 +178,22 @@ def render_overlap_image(
             markeredgewidth=2, zorder=4)
 
     # --- draw edge segments (red dashed; debug overlay of the edge decision) --
+    # Disabled for now (kept for future debugging). Re-enable this block and the
+    # legend entry below, plus the show_edge_segments=True args in the rules.
     # The exact segments is_on_edge / is_on_outline_edge test against, so the
     # operator can verify which part of the connector counts as the "edge".
-    edge_segments = (
-        get_edge_segments(primary, packages, is_bottom=primary_is_bottom)
-        if show_edge_segments else []
-    )
-    _has_edge_segs = bool(edge_segments)
-    _first_edge = True
-    for (x1, y1), (x2, y2) in edge_segments:
-        ax.plot([x1, x2], [y1, y2], color="red", linewidth=2.0,
-                linestyle="--", zorder=7,
-                label="Edge (review line)" if _first_edge else None)
-        _first_edge = False
+    # edge_segments = (
+    #     get_edge_segments(primary, packages, is_bottom=primary_is_bottom)
+    #     if show_edge_segments else []
+    # )
+    # _has_edge_segs = bool(edge_segments)
+    # _first_edge = True
+    # for (x1, y1), (x2, y2) in edge_segments:
+    #     ax.plot([x1, x2], [y1, y2], color="red", linewidth=2.0,
+    #             linestyle="--", zorder=7,
+    #             label="Edge (review line)" if _first_edge else None)
+    #     _first_edge = False
+    _has_edge_segs = False
 
     # --- draw outermost outline boundary (black dashed) -------------------------
     # outer_outline is the filled unary_union of all pkg.outlines — the
@@ -372,11 +375,12 @@ def render_overlap_image(
         mpatches.Patch(facecolor="#6495ED", edgecolor="navy", alpha=0.35,
                        label=f"{primary_label} pads"),
     ]
-    if _has_edge_segs:
-        legend_elements.append(
-            plt.Line2D([0], [0], color="red", linewidth=2.0,
-                       linestyle="--", label="Edge (review line)")
-        )
+    # Edge (review line) legend entry — disabled with the overlay above.
+    # if _has_edge_segs:
+    #     legend_elements.append(
+    #         plt.Line2D([0], [0], color="red", linewidth=2.0,
+    #                    linestyle="--", label="Edge (review line)")
+    #     )
     if _has_outer_outline:
         legend_elements.append(
             plt.Line2D([0], [0], color="#444444", linewidth=1.2,

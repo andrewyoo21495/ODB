@@ -150,7 +150,7 @@ class CKL01005(ChecklistRule):
                         overlap_label="Inductor",
                         primary_is_bottom=ap_is_bottom,
                         overlap_is_bottom=opp_is_bottom,
-                        show_edge_segments=True,
+                        # show_edge_segments=True,  # disabled (kept for future use)
                     )
                     images.append({"path": img_path,
                                    "title": f"{ap.comp_name} ({ap_layer})",
