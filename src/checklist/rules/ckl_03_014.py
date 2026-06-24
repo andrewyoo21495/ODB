@@ -61,66 +61,107 @@ _CLEARANCE_MM = 0.001  # required minimum clearance in mm
 # Cross-shaped pad detection
 # ---------------------------------------------------------------------------
 
-def _is_cross_pad_by_symbol(comp: Component, pin_idx: int) -> bool:
-    """Check if the toeprint's resolved symbol is a cross type."""
-    if pin_idx >= len(comp.toeprints):
-        return False
-    tp = comp.toeprints[pin_idx]
-    if tp.geom is None:
-        return False
-    sym_name = (tp.geom.symbol_name or "").lower()
-    return sym_name.startswith("cross")
+def _polygon_is_cross(poly) -> bool:
+    """Return True if a pad polygon has a plus / cross (+) shape.
 
+    A '+' is geometrically a rectangle with its four corners removed.  We test
+    exactly that, independent of size, proportion, rotation and corner
+    rounding:
 
-def _is_cross_pad_by_outline(pin) -> bool:
-    """Check if the pin outline is a CONTOUR with cross-like vertex count.
-
-    A cross (plus) shape has 12 outer vertices (3 per arm × 4 arms).
-    We check for CONTOUR outlines with 10-14 vertices (allowing tolerance)
-    whose bounding box is roughly square (aspect ratio near 1.0).
+    1. Take the pad's minimum rotated rectangle ``B`` (handles rotated pads).
+    2. ``B`` must be roughly square (enhanced rigidity pads are square crosses).
+    3. The pad must fill clearly less than ``B`` (corners removed) but not be a
+       thin sliver.
+    4. The pad must be clearly concave (low convex-hull solidity) — this
+       rejects convex shapes such as an octagon, whose four clipped corners
+       would otherwise look like notches.
+    5. ``convex_hull - pad`` must leave **exactly four** separate pockets — the
+       gaps between the four arms.  A rectangle/octagon leave 0, an L-shape 1,
+       a T/U/H 2, so only a true '+' passes.  Using the convex hull (rather
+       than the bounding rectangle) keeps this robust to rotation and rounded
+       corners.
     """
-    from src.visualizer.symbol_renderer import contour_to_vertices
+    if poly is None or poly.is_empty:
+        return False
+    if poly.geom_type == "MultiPolygon":
+        poly = max(poly.geoms, key=lambda g: g.area)
+    if poly.geom_type != "Polygon" or poly.area <= 0:
+        return False
 
-    for outline in pin.outlines:
-        if outline.type == "CONTOUR" and outline.contour is not None:
-            verts = contour_to_vertices(outline.contour)
-            n = len(verts)
-            if 10 <= n <= 14:
-                if n >= 3:
-                    xs = [v[0] for v in verts]
-                    ys = [v[1] for v in verts]
-                    w = max(xs) - min(xs)
-                    h = max(ys) - min(ys)
-                    if w > 0 and h > 0:
-                        ratio = min(w, h) / max(w, h)
-                        if ratio > 0.5:  # roughly square bounding box
-                            return True
-        # A cross can also use a user-defined symbol via "cross" type
-        if outline.type in ("CR", "CT", "RC", "SQ"):
-            return False  # simple shapes are not cross
-    return False
+    mrr = poly.minimum_rotated_rectangle
+    if mrr is None or mrr.is_empty or mrr.geom_type != "Polygon" or mrr.area <= 0:
+        return False
+
+    # 2. Square-ish bounding rectangle.
+    coords = list(mrr.exterior.coords)
+    side1 = math.hypot(coords[1][0] - coords[0][0], coords[1][1] - coords[0][1])
+    side2 = math.hypot(coords[2][0] - coords[1][0], coords[2][1] - coords[1][1])
+    if side1 <= 0 or side2 <= 0:
+        return False
+    if min(side1, side2) / max(side1, side2) < 0.6:
+        return False
+
+    # 3. Fill ratio: corners removed → clearly < 1, but not a sliver.
+    fill = poly.area / mrr.area
+    if not (0.30 <= fill <= 0.92):
+        return False
+
+    # 4. Concavity: a '+' is strongly non-convex.  Reject convex shapes
+    #    (e.g. an octagon) whose clipped corners would mimic notches.
+    hull = poly.convex_hull
+    if hull.is_empty or hull.area <= 0 or poly.area / hull.area > 0.92:
+        return False
+
+    # 5. The four arms must leave exactly four convex-hull pockets between
+    #    them (rotation- and rounding-robust, unlike a bounding-box notch).
+    pockets = hull.difference(poly)
+    if pockets.is_empty:
+        return False
+    min_pocket = hull.area * 0.02
+    parts = list(pockets.geoms) if hasattr(pockets, "geoms") else [pockets]
+    big = [g for g in parts if getattr(g, "area", 0.0) >= min_pocket]
+    return len(big) == 4
 
 
-def _is_cross_pad(comp: Component, pkg: Package, pin_idx: int) -> bool:
-    """Return True if the pin at *pin_idx* is a cross-shaped (enhanced) pad."""
-    if _is_cross_pad_by_symbol(comp, pin_idx):
-        return True
-    if pin_idx < len(pkg.pins):
-        return _is_cross_pad_by_outline(pkg.pins[pin_idx])
-    return False
+def _is_cross_pad(
+    comp: Component, pkg: Package, pin_idx: int,
+    *, is_bottom: bool = False, user_symbols: dict | None = None,
+) -> bool:
+    """Return True if the pad at *pin_idx* has a cross (+) shape (enhanced pad).
+
+    Detection is purely geometric: resolve the pad's actual polygon — FID
+    ``Toeprint.geom`` first (same accurate path used for rendering), pin
+    outline as fallback — and test whether that shape is a plus.
+    """
+    if not _HAS_SHAPELY:
+        return False
+    poly = _get_pad_union_for_indices(
+        comp, pkg, {pin_idx}, is_bottom=is_bottom,
+        user_symbols=user_symbols, prefer_toeprint_geom=True,
+    )
+    return _polygon_is_cross(poly)
 
 
-def _has_any_cross_pad(comp: Component, pkg: Package) -> bool:
+def _has_any_cross_pad(
+    comp: Component, pkg: Package,
+    *, is_bottom: bool = False, user_symbols: dict | None = None,
+) -> bool:
     """Return True if the shield can has at least one cross-shaped pad."""
-    for i in range(len(pkg.pins)):
-        if _is_cross_pad(comp, pkg, i):
-            return True
-    return False
+    return any(
+        _is_cross_pad(comp, pkg, i, is_bottom=is_bottom, user_symbols=user_symbols)
+        for i in range(len(pkg.pins))
+    )
 
 
-def _get_cross_pad_indices(comp: Component, pkg: Package) -> list[int]:
+def _get_cross_pad_indices(
+    comp: Component, pkg: Package,
+    *, is_bottom: bool = False, user_symbols: dict | None = None,
+) -> list[int]:
     """Return indices of cross-shaped (enhanced rigidity) pads."""
-    return [i for i in range(len(pkg.pins)) if _is_cross_pad(comp, pkg, i)]
+    return [
+        i for i in range(len(pkg.pins))
+        if _is_cross_pad(comp, pkg, i, is_bottom=is_bottom, user_symbols=user_symbols)
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -548,7 +589,8 @@ class CKL03014(ChecklistRule):
                 if not pkg.pins:
                     continue
 
-                cross_indices = _get_cross_pad_indices(comp, pkg)
+                cross_indices = _get_cross_pad_indices(
+                    comp, pkg, is_bottom=is_bottom, user_symbols=user_symbols)
                 has_enhanced = len(cross_indices) > 0
 
                 if not has_enhanced:
